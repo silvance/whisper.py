@@ -36,6 +36,10 @@ jobs:
           pip install --upgrade pre-commit
           pre-commit install --install-hooks
           pre-commit run --all-files
+      - name: mypy
+        run: |
+          pip install --upgrade mypy
+          mypy whisper
   whisper-test:
     needs: pre-commit
     runs-on: ubuntu-latest
@@ -43,15 +47,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - python-version: '3.8'
-            pytorch-version: 1.10.1
-            numpy-requirement: "'numpy<2'"
-          - python-version: '3.8'
-            pytorch-version: 1.13.1
-            numpy-requirement: "'numpy<2'"
-          - python-version: '3.8'
-            pytorch-version: 2.0.1
-            numpy-requirement: "'numpy<2'"
           - python-version: '3.9'
             pytorch-version: 2.1.2
             numpy-requirement: "'numpy<2'"
@@ -76,4 +71,4 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - run: echo "$CONDA/envs/test/bin" >> $GITHUB_PATH
       - run: pip3 install .["dev"] ${{ matrix.numpy-requirement }} torch==${{ matrix.pytorch-version }}+cpu --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
-      - run: pytest --durations=0 -vv -k 'not test_transcribe or test_transcribe[tiny] or test_transcribe[tiny.en]' -m 'not requires_cuda'
+      - run: pytest --durations=0 -vv -k 'not test_transcribe or test_transcribe[tiny] or test_transcribe[tiny.en]' -m 'not requires_cuda' --cov=whisper --cov-report=term-missing

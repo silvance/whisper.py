@@ -210,7 +210,10 @@ class MaximumLikelihoodRanker(SequenceRanker):
 
         # get the sequence with the highest score
         lengths = [[len(t) for t in s] for s in tokens]
-        return [np.argmax(scores(p, l)) for p, l in zip(sum_logprobs, lengths)]
+        return [
+            np.argmax(scores(p, seq_lengths))
+            for p, seq_lengths in zip(sum_logprobs, lengths)
+        ]
 
 
 class TokenDecoder:
@@ -313,9 +316,9 @@ class BeamSearchDecoder(TokenDecoder):
         self.max_candidates: int = round(beam_size * self.patience)
         self.finished_sequences = None
 
-        assert (
-            self.max_candidates > 0
-        ), f"Invalid beam size ({beam_size}) or patience ({patience})"
+        assert self.max_candidates > 0, (
+            f"Invalid beam size ({beam_size}) or patience ({patience})"
+        )
 
     def reset(self):
         self.finished_sequences = None

@@ -4,16 +4,15 @@ build-backend = "setuptools.build_meta"
 requires = [ "setuptools>=61.2" ]
 
 [project]
-name = "openai-whisper"
-description = "Robust Speech Recognition via Large-Scale Weak Supervision"
+name = "silvance-whisper"
+description = "Robust Speech Recognition via Large-Scale Weak Supervision (Silvance fork of openai-whisper)"
 readme.content-type = "text/markdown"
 readme.file = "README.md"
 license = { text = "MIT" }
-authors = [ { name = "OpenAI" } ]
-requires-python = ">=3.8"
+authors = [ { name = "Silvance" }, { name = "OpenAI" } ]
+requires-python = ">=3.9"
 classifiers = [
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.8",
   "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
@@ -30,8 +29,8 @@ dependencies = [
   "tqdm",
   "triton>=2; (platform_machine=='x86_64' and sys_platform=='linux') or sys_platform=='linux2'",
 ]
-optional-dependencies.dev = [ "black", "flake8", "isort", "pytest", "scipy" ]
-urls = { Homepage = "https://github.com/openai/whisper" }
+optional-dependencies.dev = [ "mypy", "pytest", "pytest-cov", "ruff", "scipy" ]
+urls = { Homepage = "https://github.com/silvance/whisper.py" }
 scripts.whisper = "whisper.transcribe:cli"
 
 [tool.setuptools]
@@ -45,10 +44,41 @@ version = { attr = "whisper.version.__version__" }
 exclude = [ "tests*" ]
 namespaces = false
 
-[tool.black]
+[tool.ruff]
+line-length = 88
+target-version = "py39"
 
-[tool.isort]
-profile = "black"
-include_trailing_comma = true
-line_length = 88
-multi_line_output = 3
+[tool.ruff.lint]
+# E/W: pycodestyle, F: pyflakes, I: isort
+select = [ "E", "F", "I", "W" ]
+# E203 (whitespace before punctuation) conflicts with the formatter;
+# E501 (line length) is enforced by the formatter instead.
+ignore = [ "E203", "E501" ]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = [ "F401" ]
+
+[tool.ruff.lint.isort]
+known-first-party = [ "whisper" ]
+
+[tool.mypy]
+python_version = "3.9"
+ignore_missing_imports = true
+# Triton kernel source is built from string templates with placeholder identifiers
+# (e.g. LOAD_ALL_ROWS_HERE) that are not valid Python until substituted at runtime.
+exclude = [ "whisper/triton_ops.py" ]
+
+# Incremental typing backlog: these modules still have type errors inherited from
+# upstream. mypy is enforced everywhere else (and on all new code); remove entries
+# here as each module is annotated and made clean.
+[[tool.mypy.overrides]]
+module = [
+  "whisper.decoding",
+  "whisper.normalizers.english",
+  "whisper.audio",
+  "whisper.utils",
+  "whisper.timing",
+  "whisper.transcribe",
+  "whisper.model",
+]
+ignore_errors = true
