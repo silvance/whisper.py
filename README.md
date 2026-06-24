@@ -2,32 +2,37 @@
 
 [[Blog]](https://openai.com/blog/whisper)
 [[Paper]](https://arxiv.org/abs/2212.04356)
-[[Model card]](https://github.com/openai/whisper/blob/main/model-card.md)
-[[Colab example]](https://colab.research.google.com/github/openai/whisper/blob/master/notebooks/LibriSpeech.ipynb)
+[[Model card]](https://github.com/silvance/whisper.py/blob/main/model-card.md)
+[[Colab example]](https://colab.research.google.com/github/silvance/whisper.py/blob/main/notebooks/LibriSpeech.ipynb)
 
 Whisper is a general-purpose speech recognition model. It is trained on a large dataset of diverse audio and is also a multitasking model that can perform multilingual speech recognition, speech translation, and language identification.
+
+> **About this fork.** This repository (`silvance-whisper`) is a maintained fork of
+> [openai/whisper](https://github.com/openai/whisper). The model architecture and weights are
+> unchanged from upstream; this fork focuses on packaging and developer-tooling improvements
+> (a single `ruff` lint/format pipeline, `mypy` type checking, a modernized CI matrix, and a
+> single source of truth for dependencies in `pyproject.toml`). All original credit belongs to
+> OpenAI; see [LICENSE](LICENSE).
 
 
 ## Approach
 
-![Approach](https://raw.githubusercontent.com/openai/whisper/main/approach.png)
+![Approach](https://raw.githubusercontent.com/silvance/whisper.py/main/approach.png)
 
 A Transformer sequence-to-sequence model is trained on various speech processing tasks, including multilingual speech recognition, speech translation, spoken language identification, and voice activity detection. These tasks are jointly represented as a sequence of tokens to be predicted by the decoder, allowing a single model to replace many stages of a traditional speech-processing pipeline. The multitask training format uses a set of special tokens that serve as task specifiers or classification targets.
 
 
 ## Setup
 
-We used Python 3.9.9 and [PyTorch](https://pytorch.org/) 1.10.1 to train and test our models, but the codebase is expected to be compatible with Python 3.8-3.11 and recent PyTorch versions. The codebase also depends on a few Python packages, most notably [OpenAI's tiktoken](https://github.com/openai/tiktoken) for their fast tokenizer implementation. You can download and install (or update to) the latest release of Whisper with the following command:
+The original models were trained and tested with Python 3.9.9 and [PyTorch](https://pytorch.org/) 1.10.1; this fork supports Python 3.9-3.13 and recent PyTorch versions. The codebase also depends on a few Python packages, most notably [OpenAI's tiktoken](https://github.com/openai/tiktoken) for their fast tokenizer implementation. The following command will pull and install the latest commit from this repository, along with its Python dependencies:
 
-    pip install -U openai-whisper
-
-Alternatively, the following command will pull and install the latest commit from this repository, along with its Python dependencies:
-
-    pip install git+https://github.com/openai/whisper.git 
+    pip install git+https://github.com/silvance/whisper.py.git
 
 To update the package to the latest version of this repository, please run:
 
-    pip install --upgrade --no-deps --force-reinstall git+https://github.com/openai/whisper.git
+    pip install --upgrade --no-deps --force-reinstall git+https://github.com/silvance/whisper.py.git
+
+This fork is published as `silvance-whisper`; the importable package name remains `whisper`, so existing code (`import whisper`) keeps working unchanged.
 
 It also requires the command-line tool [`ffmpeg`](https://ffmpeg.org/) to be installed on your system, which is available from most package managers:
 
@@ -75,7 +80,7 @@ Additionally, the `turbo` model is an optimized version of `large-v3` that offer
 
 Whisper's performance varies widely depending on the language. The figure below shows a performance breakdown of `large-v3` and `large-v2` models by language, using WERs (word error rates) or CER (character error rates, shown in *Italic*) evaluated on the Common Voice 15 and Fleurs datasets. Additional WER/CER metrics corresponding to the other models and datasets can be found in Appendix D.1, D.2, and D.4 of [the paper](https://arxiv.org/abs/2212.04356), as well as the BLEU (Bilingual Evaluation Understudy) scores for translation in Appendix D.3.
 
-![WER breakdown by language](https://github.com/openai/whisper/assets/266841/f4619d66-1058-4005-8f67-a9d811b77c62)
+![WER breakdown by language](https://raw.githubusercontent.com/silvance/whisper.py/main/language-breakdown.svg)
 
 ## Command-line usage
 
@@ -107,7 +112,7 @@ Run the following to view all available options:
 whisper --help
 ```
 
-See [tokenizer.py](https://github.com/openai/whisper/blob/main/whisper/tokenizer.py) for the list of all available languages.
+See [tokenizer.py](https://github.com/silvance/whisper.py/blob/main/whisper/tokenizer.py) for the list of all available languages.
 
 
 ## Python usage
@@ -157,4 +162,4 @@ Please use the [🙌 Show and tell](https://github.com/openai/whisper/discussion
 
 ## License
 
-Whisper's code and model weights are released under the MIT License. See [LICENSE](https://github.com/openai/whisper/blob/main/LICENSE) for further details.
+Whisper's code and model weights are released under the MIT License. See [LICENSE](https://github.com/silvance/whisper.py/blob/main/LICENSE) for further details.

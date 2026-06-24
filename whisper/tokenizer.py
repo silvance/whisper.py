@@ -136,7 +136,7 @@ class Tokenizer:
     num_languages: int
     language: Optional[str] = None
     task: Optional[str] = None
-    sot_sequence: Tuple[int] = ()
+    sot_sequence: Tuple[int, ...] = ()
     special_tokens: Dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -223,7 +223,7 @@ class Tokenizer:
         raise KeyError(f"Language {language} not found in tokenizer.")
 
     @cached_property
-    def all_language_tokens(self) -> Tuple[int]:
+    def all_language_tokens(self) -> Tuple[int, ...]:
         result = []
         for token, token_id in self.special_tokens.items():
             if token.strip("<|>") in LANGUAGES:
@@ -231,11 +231,11 @@ class Tokenizer:
         return tuple(result)[: self.num_languages]
 
     @cached_property
-    def all_language_codes(self) -> Tuple[str]:
+    def all_language_codes(self) -> Tuple[str, ...]:
         return tuple(self.decode([_l]).strip("<|>") for _l in self.all_language_tokens)
 
     @cached_property
-    def sot_sequence_including_notimestamps(self) -> Tuple[int]:
+    def sot_sequence_including_notimestamps(self) -> Tuple[int, ...]:
         return tuple(list(self.sot_sequence) + [self.no_timestamps])
 
     @cached_property
@@ -310,8 +310,8 @@ class Tokenizer:
 
     def split_tokens_on_spaces(self, tokens: List[int]):
         subwords, subword_tokens_list = self.split_tokens_on_unicode(tokens)
-        words = []
-        word_tokens = []
+        words: List[str] = []
+        word_tokens: List[List[int]] = []
 
         for subword, subword_tokens in zip(subwords, subword_tokens_list):
             special = subword_tokens[0] >= self.eot

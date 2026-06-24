@@ -1,7 +1,7 @@
 import hashlib
 import io
 import os
-import urllib
+import urllib.request
 import warnings
 from typing import List, Optional, Union
 
@@ -103,7 +103,7 @@ def available_models() -> List[str]:
 def load_model(
     name: str,
     device: Optional[Union[str, torch.device]] = None,
-    download_root: str = None,
+    download_root: Optional[str] = None,
     in_memory: bool = False,
 ) -> Whisper:
     """
@@ -145,7 +145,10 @@ def load_model(
         )
 
     with (
-        io.BytesIO(checkpoint_file) if in_memory else open(checkpoint_file, "rb")
+        # when in_memory, checkpoint_file is the model bytes; otherwise it is a path
+        io.BytesIO(checkpoint_file)  # type: ignore[arg-type]
+        if in_memory
+        else open(checkpoint_file, "rb")
     ) as fp:
         kwargs = {"weights_only": True} if torch.__version__ >= "1.13" else {}
         checkpoint = torch.load(fp, map_location=device, **kwargs)
