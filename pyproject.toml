@@ -32,7 +32,7 @@ dependencies = [
 optional-dependencies.dev = [ "mypy", "pytest", "pytest-cov", "ruff", "scipy" ]
 # GUI / CPU-optimized transcription extras for the W.H.I.S.P.R. desktop app.
 # tkinter ships with CPython; faster-whisper (CTranslate2) is the CPU backend.
-optional-dependencies.gui = [ "faster-whisper", "ttkbootstrap" ]
+optional-dependencies.gui = [ "faster-whisper", "ttkbootstrap", "sherpa-onnx" ]
 # Build-time tooling for producing offline, air-gapped PyInstaller bundles.
 optional-dependencies.bundle = [ "pyinstaller", "imageio-ffmpeg", "huggingface-hub" ]
 urls = { Homepage = "https://github.com/silvance/whisper.py" }

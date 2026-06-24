@@ -18,6 +18,7 @@ from tkinter import filedialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Optional
 
+from .diarization import assign_speakers, diarize
 from .resources import bundled_models
 from .transcription import (
     AUDIO_EXTENSIONS,
@@ -72,6 +73,8 @@ class WhisprApp:
         self.language_var = tk.StringVar(value="Auto")
         self.vad_var = tk.BooleanVar(value=True)
         self.convert_video_var = tk.BooleanVar(value=True)
+        self.diarize_var = tk.BooleanVar(value=False)
+        self.num_speakers_var = tk.StringVar(value="")
         self.srt_var = tk.BooleanVar(value=False)
         self.progress_label_var = tk.StringVar(value="Idle")
 
@@ -145,14 +148,26 @@ class WhisprApp:
             top, text="Also save .srt subtitles", variable=self.srt_var
         ).grid(row=7, column=0, columnspan=2, sticky="w")
 
-        self.run_button = ttk.Button(top, text="Run", command=self.run_in_thread)
-        self.run_button.grid(row=8, column=1, pady=8, sticky="w")
-
-        ttk.Label(top, textvariable=self.progress_label_var).grid(
+        ttk.Checkbutton(
+            top,
+            text="Identify speakers (diarization)",
+            variable=self.diarize_var,
+        ).grid(row=8, column=0, columnspan=2, sticky="w")
+        ttk.Label(top, text="Number of speakers (blank = auto):").grid(
             row=9, column=0, sticky="w"
         )
+        ttk.Entry(top, textvariable=self.num_speakers_var, width=8).grid(
+            row=9, column=1, sticky="w"
+        )
+
+        self.run_button = ttk.Button(top, text="Run", command=self.run_in_thread)
+        self.run_button.grid(row=10, column=1, pady=8, sticky="w")
+
+        ttk.Label(top, textvariable=self.progress_label_var).grid(
+            row=11, column=0, sticky="w"
+        )
         self.progress_bar = ttk.Progressbar(top, mode="indeterminate", length=420)
-        self.progress_bar.grid(row=9, column=1, columnspan=2, sticky="ew", pady=(2, 8))
+        self.progress_bar.grid(row=11, column=1, columnspan=2, sticky="ew", pady=(2, 8))
 
         tabs = ttk.Notebook(self.root)
         tabs.pack(fill="both", expand=True)
@@ -237,6 +252,7 @@ class WhisprApp:
 
             # Optionally pre-convert video to WAV with ffmpeg before transcribing.
             media_path = Path(path)
+            media_is_normalized = False  # True when media_path is our 16 kHz mono WAV
             if self.convert_video_var.get() and is_video(media_path):
                 if outdir and Path(outdir).is_dir():
                     wav_dest: Optional[Path] = Path(outdir) / (media_path.stem + ".wav")
@@ -247,6 +263,7 @@ class WhisprApp:
                     wav_dest,
                     progress=lambda msg: self._append(self.status, msg),
                 )
+                media_is_normalized = True
                 if wav_dest is None:
                     temp_wav = media_path
                 self._append(self.status, f"Converted to {media_path}")
@@ -273,6 +290,9 @@ class WhisprApp:
             )
             self._append(self.output, result.text)
 
+            if self.diarize_var.get():
+                self._diarize_into(result, Path(path), media_path, media_is_normalized)
+
             if outdir:
                 self._save_outputs(result, Path(path), Path(outdir))
 
@@ -287,6 +307,53 @@ class WhisprApp:
                 except OSError:
                     pass
             self._set_busy(False, "Finished")
+
+    def _parse_num_speakers(self) -> Optional[int]:
+        raw = self.num_speakers_var.get().strip()
+        if not raw:
+            return None
+        try:
+            value = int(raw)
+        except ValueError:
+            self._append(self.status, f"Ignoring invalid speaker count: {raw!r}")
+            return None
+        return value if value > 0 else None
+
+    def _diarize_into(
+        self,
+        result: TranscriptionResult,
+        source: Path,
+        media_path: Path,
+        media_is_normalized: bool,
+    ) -> None:
+        # Diarization needs a 16 kHz mono WAV; convert to a temp file unless the
+        # media we already have is one we normalized.
+        diar_wav = media_path
+        diar_temp: Optional[Path] = None
+        if not media_is_normalized:
+            self._append(self.status, "Preparing audio for diarization...")
+            diar_wav = convert_to_wav(
+                source, progress=lambda msg: self._append(self.status, msg)
+            )
+            diar_temp = diar_wav
+        try:
+            speaker_segments = diarize(
+                diar_wav,
+                num_speakers=self._parse_num_speakers(),
+                progress=lambda msg: self._append(self.status, msg),
+            )
+            assign_speakers(result.segments, speaker_segments)
+            count = len({seg.speaker for seg in speaker_segments})
+            self._append(self.status, f"Identified {count} speaker(s).")
+            # Re-render the transcript with speaker labels.
+            self._clear(self.output)
+            self._append(self.output, result.to_txt())
+        finally:
+            if diar_temp is not None:
+                try:
+                    diar_temp.unlink()
+                except OSError:
+                    pass
 
     def _save_outputs(
         self, result: TranscriptionResult, source: Path, outdir: Path

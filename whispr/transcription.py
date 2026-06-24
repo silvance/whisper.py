@@ -68,11 +68,16 @@ MODEL_SIZES = (
 
 @dataclass
 class Segment:
-    """A single timestamped transcript segment."""
+    """A single timestamped transcript segment.
+
+    ``speaker`` is set when speaker diarization has been applied (see
+    :func:`whispr.diarization.assign_speakers`); otherwise it is ``None``.
+    """
 
     start: float
     end: float
     text: str
+    speaker: Optional[str] = None
 
 
 @dataclass
@@ -85,8 +90,17 @@ class TranscriptionResult:
     duration: float
     segments: List[Segment] = field(default_factory=list)
 
+    @property
+    def has_speakers(self) -> bool:
+        return any(segment.speaker for segment in self.segments)
+
     def to_txt(self) -> str:
-        return self.text
+        if not self.has_speakers:
+            return self.text
+        return "\n".join(
+            f"[{segment.speaker or 'UNKNOWN'}] {segment.text}"
+            for segment in self.segments
+        )
 
     def to_srt(self) -> str:
         """Render the segments as SubRip (``.srt``) subtitles."""
@@ -94,7 +108,12 @@ class TranscriptionResult:
         for index, segment in enumerate(self.segments, start=1):
             start = _format_timestamp(segment.start)
             end = _format_timestamp(segment.end)
-            blocks.append(f"{index}\n{start} --> {end}\n{segment.text}\n")
+            text = (
+                f"[{segment.speaker}] {segment.text}"
+                if segment.speaker
+                else segment.text
+            )
+            blocks.append(f"{index}\n{start} --> {end}\n{text}\n")
         return "\n".join(blocks)
 
 

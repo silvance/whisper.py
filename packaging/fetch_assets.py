@@ -30,6 +30,19 @@ MODEL_REPOS = {
     "large-v3": "Systran/faster-whisper-large-v3",
 }
 
+# sherpa-onnx diarization models (non-gated). (repo_id, filename) -> saved as
+# whispr_assets/diarization/<segmentation|embedding>.onnx.
+DIARIZATION_MODELS = {
+    "segmentation": (
+        "csukuangfj/sherpa-onnx-pyannote-segmentation-3-0",
+        "model.onnx",
+    ),
+    "embedding": (
+        "csukuangfj/speaker-embedding-models",
+        "nemo_en_titanet_small.onnx",
+    ),
+}
+
 
 def fetch_ffmpeg() -> None:
     """Copy a platform-appropriate ffmpeg binary into ``whispr_assets/ffmpeg``."""
@@ -64,15 +77,32 @@ def fetch_models(names: List[str]) -> None:
         print(f"model {name} -> {out}")
 
 
+def fetch_diarization() -> None:
+    """Download the sherpa-onnx diarization models into whispr_assets/diarization."""
+    from huggingface_hub import hf_hub_download
+
+    out = ASSETS / "diarization"
+    out.mkdir(parents=True, exist_ok=True)
+    for local_name, (repo_id, filename) in DIARIZATION_MODELS.items():
+        downloaded = hf_hub_download(repo_id=repo_id, filename=filename)
+        dest = out / f"{local_name}.onnx"
+        shutil.copy2(downloaded, dest)
+        print(f"diarization {local_name} -> {dest}")
+
+
 def main(argv: List[str]) -> None:
     if not argv:
-        raise SystemExit("usage: fetch_assets.py [ffmpeg | models <names>]")
+        raise SystemExit(
+            "usage: fetch_assets.py [ffmpeg | models <names> | diarization]"
+        )
     command = argv[0]
     if command == "ffmpeg":
         fetch_ffmpeg()
     elif command == "models":
         names = argv[1].split(",") if len(argv) > 1 else ["small", "medium", "large-v3"]
         fetch_models([n.strip() for n in names if n.strip()])
+    elif command == "diarization":
+        fetch_diarization()
     else:
         raise SystemExit(f"unknown command: {command}")
 

@@ -185,6 +185,18 @@ mono WAV with [`ffmpeg`](https://ffmpeg.org/) before transcribing. If an output
 folder is set the WAV is kept there; otherwise it is written to a temporary file
 and removed afterwards. This step requires `ffmpeg` to be installed and on `PATH`.
 
+### Speaker identification (diarization)
+
+Enable **Identify speakers (diarization)** to label who spoke when. Each transcript
+line (and `.srt` cue) is prefixed with a speaker tag, e.g. `[SPEAKER_00]`. Leave
+**Number of speakers** blank to auto-detect, or enter a count when you know it.
+
+Diarization uses [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (ONNX /
+CPU, no PyTorch) and needs two models — a segmentation model and a speaker
+embedding model — placed at `whispr_assets/diarization/segmentation.onnx` and
+`whispr_assets/diarization/embedding.onnx` (the offline bundle includes them; see
+below). The audio is normalised to 16 kHz mono with ffmpeg first.
+
 The transcription backend is also usable directly from Python:
 
 ```python
@@ -216,6 +228,7 @@ To build locally instead on a connected machine of each OS:
 pip install "silvance-whisper[gui,bundle]"
 python packaging/fetch_assets.py ffmpeg
 python packaging/fetch_assets.py models small,medium,large-v3
+python packaging/fetch_assets.py diarization
 pyinstaller --noconfirm packaging/whispr.spec      # output in dist/whispr/
 ```
 

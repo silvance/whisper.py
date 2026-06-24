@@ -39,6 +39,8 @@ jobs:
         run: python packaging/fetch_assets.py ffmpeg
       - name: Fetch models
         run: python packaging/fetch_assets.py models ${{ github.event.inputs.models || 'small,medium,large-v3' }}
+      - name: Fetch diarization models
+        run: python packaging/fetch_assets.py diarization
       - name: Build bundle
         run: pyinstaller --noconfirm packaging/whispr.spec
       - name: Upload bundle
