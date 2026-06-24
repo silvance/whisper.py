@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import shutil
 import sys
+import tarfile
+import tempfile
+import urllib.request
 from pathlib import Path
 from typing import List
 
@@ -30,18 +33,21 @@ MODEL_REPOS = {
     "large-v3": "Systran/faster-whisper-large-v3",
 }
 
-# sherpa-onnx diarization models (non-gated). (repo_id, filename) -> saved as
-# whispr_assets/diarization/<segmentation|embedding>.onnx.
-DIARIZATION_MODELS = {
-    "segmentation": (
-        "csukuangfj/sherpa-onnx-pyannote-segmentation-3-0",
-        "model.onnx",
-    ),
-    "embedding": (
-        "csukuangfj/speaker-embedding-models",
-        "nemo_en_titanet_small.onnx",
-    ),
-}
+# sherpa-onnx diarization models, downloaded from the official k2-fsa GitHub
+# release assets (stable, non-gated URLs quoted from sherpa-onnx's own example
+# python-api-examples/offline-speaker-diarization.py). The segmentation model
+# ships as a .tar.bz2 containing model.onnx; the embedding model is a single
+# .onnx. The eres2net embedding model generalises across languages and is the
+# one used in sherpa-onnx's own diarization demo.
+DIARIZATION_SEGMENTATION_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"
+)
+DIARIZATION_EMBEDDING_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "speaker-recongition-models/"
+    "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx"
+)
 
 
 def fetch_ffmpeg() -> None:
@@ -78,16 +84,33 @@ def fetch_models(names: List[str]) -> None:
 
 
 def fetch_diarization() -> None:
-    """Download the sherpa-onnx diarization models into whispr_assets/diarization."""
-    from huggingface_hub import hf_hub_download
+    """Download the sherpa-onnx diarization models into whispr_assets/diarization.
 
+    Saves whispr_assets/diarization/segmentation.onnx and embedding.onnx.
+    """
     out = ASSETS / "diarization"
     out.mkdir(parents=True, exist_ok=True)
-    for local_name, (repo_id, filename) in DIARIZATION_MODELS.items():
-        downloaded = hf_hub_download(repo_id=repo_id, filename=filename)
-        dest = out / f"{local_name}.onnx"
-        shutil.copy2(downloaded, dest)
-        print(f"diarization {local_name} -> {dest}")
+
+    embedding_dest = out / "embedding.onnx"
+    print(f"downloading {DIARIZATION_EMBEDDING_URL}")
+    urllib.request.urlretrieve(DIARIZATION_EMBEDDING_URL, embedding_dest)
+    print(f"diarization embedding -> {embedding_dest}")
+
+    segmentation_dest = out / "segmentation.onnx"
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = Path(tmp) / "segmentation.tar.bz2"
+        print(f"downloading {DIARIZATION_SEGMENTATION_URL}")
+        urllib.request.urlretrieve(DIARIZATION_SEGMENTATION_URL, archive)
+        with tarfile.open(archive, "r:bz2") as tar:
+            member = next(
+                (m for m in tar.getmembers() if m.name.endswith("model.onnx")), None
+            )
+            if member is None:
+                raise SystemExit("model.onnx not found in segmentation archive")
+            member.name = Path(member.name).name  # flatten any leading directory
+            tar.extract(member, out)
+        (out / "model.onnx").replace(segmentation_dest)
+    print(f"diarization segmentation -> {segmentation_dest}")
 
 
 def main(argv: List[str]) -> None:
