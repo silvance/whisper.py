@@ -18,6 +18,7 @@ from tkinter import filedialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Optional
 
+from .resources import bundled_models
 from .transcription import (
     AUDIO_EXTENSIONS,
     MODEL_SIZES,
@@ -53,10 +54,20 @@ class WhisprApp:
         self.root = root
         self.root.title("W.H.I.S.P.R. - Audio Transcription")
 
+        # Bundled (offline) models take priority so the app works air-gapped.
+        self._bundled_models = bundled_models()
+        default_model = "base"
+        if self._bundled_models:
+            default_model = (
+                "small"
+                if "small" in self._bundled_models
+                else next(iter(self._bundled_models))
+            )
+
         self.input_file_var = tk.StringVar()
         self.output_dir_var = tk.StringVar()
         self.write_output_var = tk.BooleanVar(value=True)
-        self.model_var = tk.StringVar(value="base")
+        self.model_var = tk.StringVar(value=default_model)
         self.task_var = tk.StringVar(value="transcribe")
         self.language_var = tk.StringVar(value="Auto")
         self.vad_var = tk.BooleanVar(value=True)
@@ -89,12 +100,16 @@ class WhisprApp:
             row=1, column=2
         )
 
-        # Model: a size name (dropdown) or a path to a local CTranslate2 model.
+        # Model: a bundled model name, a size name, or a path to a local
+        # CTranslate2 model. Bundled (offline) models are listed first.
+        model_values = list(self._bundled_models) + [
+            size for size in MODEL_SIZES if size not in self._bundled_models
+        ]
         ttk.Label(top, text="Model (size or path):").grid(row=2, column=0, sticky="w")
         ttk.Combobox(
             top,
             textvariable=self.model_var,
-            values=list(MODEL_SIZES),
+            values=model_values,
             width=40,
         ).grid(row=2, column=1, sticky="ew")
         ttk.Button(top, text="Browse Model", command=self.choose_model_dir).grid(
@@ -236,9 +251,14 @@ class WhisprApp:
                     temp_wav = media_path
                 self._append(self.status, f"Converted to {media_path}")
 
+            # Resolve a bundled model name to its local directory so we never
+            # try to download on an air-gapped machine.
+            model_sel = self.model_var.get()
+            model = str(self._bundled_models.get(model_sel, model_sel))
+
             result = transcribe_audio(
                 media_path,
-                model_size=self.model_var.get(),
+                model_size=model,
                 task=task,
                 language=language_arg,
                 vad_filter=self.vad_var.get(),

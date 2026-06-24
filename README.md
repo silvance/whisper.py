@@ -196,6 +196,36 @@ result = transcribe_audio(
 print(result.text)
 ```
 
+## Offline / air-gapped deployment (sneakernet)
+
+For machines with no internet access, the GUI can be shipped as a **self-contained
+bundle** for Windows and Linux that includes the Python runtime, all dependencies,
+an `ffmpeg` binary, and one or more pre-downloaded Whisper models. Nothing is
+fetched at runtime.
+
+**Build the bundles** with the `release-bundles` GitHub Actions workflow
+(Actions → *release-bundles* → *Run workflow*, or push a `bundle-v*` tag). It
+builds on hosted Windows and Linux runners and uploads `whispr-windows-x86_64` and
+`whispr-linux-x86_64` artifacts. The build runners use the internet; the target
+machines never do. You can choose which models to bundle (default
+`small,medium,large-v3`).
+
+To build locally instead on a connected machine of each OS:
+
+```bash
+pip install "silvance-whisper[gui,bundle]"
+python packaging/fetch_assets.py ffmpeg
+python packaging/fetch_assets.py models small,medium,large-v3
+pyinstaller --noconfirm packaging/whispr.spec      # output in dist/whispr/
+```
+
+**Deploy:** download/copy the bundle folder onto a USB drive, copy it to the
+air-gapped PC, and run the `whispr` executable inside (`whispr.exe` on Windows; on
+Linux you may need `chmod +x whispr`). The bundled models appear at the top of the
+**Model** dropdown and are used without any download; the bundled `ffmpeg` is found
+automatically. (Set the `WHISPR_ASSETS` environment variable to point at a
+`whispr_assets/` directory if you keep models/ffmpeg outside the bundle.)
+
 ## More examples
 
 Please use the [🙌 Show and tell](https://github.com/openai/whisper/discussions/categories/show-and-tell) category in Discussions for sharing more example usages of Whisper and third-party extensions such as web demos, integrations with other tools, ports for different platforms, etc.
