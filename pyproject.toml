@@ -51,6 +51,9 @@ namespaces = false
 [tool.ruff]
 line-length = 88
 target-version = "py39"
+# The example notebooks are upstream Colab material (e.g. an intentional
+# `import tensorflow` protobuf workaround); don't lint/format them.
+extend-exclude = [ "notebooks" ]
 
 [tool.ruff.lint]
 # E/W: pycodestyle, F: pyflakes, I: isort
