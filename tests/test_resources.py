@@ -53,3 +53,19 @@ def test_bundled_models(tmp_path, monkeypatch):
     assert set(models) == {"small", "medium"}
     assert models["small"] == assets / "models" / "small"
     assert "not-a-model" not in models
+
+
+def test_bundled_diarization_models_present(tmp_path, monkeypatch):
+    assets = tmp_path / "whispr_assets"
+    diar = assets / "diarization"
+    diar.mkdir(parents=True)
+    (diar / "segmentation.onnx").write_bytes(b"\x00")
+    (diar / "embedding.onnx").write_bytes(b"\x00")
+    monkeypatch.setenv(resources.ENV_ASSETS, str(assets))
+    found = resources.bundled_diarization_models()
+    assert found == (diar / "segmentation.onnx", diar / "embedding.onnx")
+
+
+def test_bundled_diarization_models_absent(tmp_path, monkeypatch):
+    monkeypatch.setenv(resources.ENV_ASSETS, str(tmp_path / "empty"))
+    assert resources.bundled_diarization_models() is None

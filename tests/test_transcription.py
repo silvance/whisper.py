@@ -90,6 +90,32 @@ def test_to_txt_returns_text():
     assert result.to_txt() == "some text"
 
 
+def test_to_txt_with_speakers():
+    result = TranscriptionResult(
+        text="hello\nworld",
+        language="en",
+        language_probability=1.0,
+        duration=2.0,
+        segments=[
+            Segment(start=0.0, end=1.0, text="hello", speaker="SPEAKER_00"),
+            Segment(start=1.0, end=2.0, text="world", speaker="SPEAKER_01"),
+        ],
+    )
+    assert result.has_speakers
+    assert result.to_txt() == "[SPEAKER_00] hello\n[SPEAKER_01] world"
+
+
+def test_to_srt_with_speakers():
+    result = TranscriptionResult(
+        text="hi",
+        language="en",
+        language_probability=1.0,
+        duration=1.0,
+        segments=[Segment(start=0.0, end=1.0, text="hi", speaker="SPEAKER_02")],
+    )
+    assert "[SPEAKER_02] hi" in result.to_srt()
+
+
 def test_transcribe_audio_missing_file(tmp_path):
     # FileNotFoundError is raised before the optional backend is needed.
     with pytest.raises(FileNotFoundError):

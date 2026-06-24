@@ -21,7 +21,7 @@ import os
 import sys
 from pathlib import Path
 from shutil import which
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 ASSETS_DIRNAME = "whispr_assets"
 ENV_ASSETS = "WHISPR_ASSETS"
@@ -102,3 +102,14 @@ def bundled_models() -> Dict[str, Path]:
             if child.is_dir() and (child / "model.bin").is_file():
                 models.setdefault(child.name, child)
     return models
+
+
+def bundled_diarization_models() -> Optional[Tuple[Path, Path]]:
+    """Return ``(segmentation.onnx, embedding.onnx)`` if both are bundled."""
+    for base in asset_dirs():
+        directory = base / "diarization"
+        segmentation = directory / "segmentation.onnx"
+        embedding = directory / "embedding.onnx"
+        if segmentation.is_file() and embedding.is_file():
+            return segmentation, embedding
+    return None
