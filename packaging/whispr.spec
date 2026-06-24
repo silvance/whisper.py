@@ -10,9 +10,17 @@
 # dependencies, the ffmpeg binary, and the Whisper models) and can be copied to an
 # air-gapped machine and run with no network access.
 
+import os
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all
+
+# SPECPATH is injected by PyInstaller and is the directory containing this spec
+# (i.e. the packaging/ folder). Paths in the spec are resolved relative to it, so
+# anchor everything explicitly: the entry script lives beside the spec, and the
+# offline assets live in the repo root (one level up).
+SPEC_DIR = Path(SPECPATH)  # noqa: F821 - provided by PyInstaller at exec time
+REPO_ROOT = SPEC_DIR.parent
 
 datas = []
 binaries = []
@@ -33,12 +41,12 @@ for package in (
     hiddenimports += pkg_hidden
 
 # Bundle the offline assets (ffmpeg + models) fetched by fetch_assets.py.
-assets = Path("whispr_assets")
+assets = REPO_ROOT / "whispr_assets"
 if assets.is_dir():
     datas.append((str(assets), "whispr_assets"))
 
 a = Analysis(
-    ["packaging/whispr_entry.py"],
+    [os.path.join(SPEC_DIR, "whispr_entry.py")],
     pathex=[],
     binaries=binaries,
     datas=datas,
