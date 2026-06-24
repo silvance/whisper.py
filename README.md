@@ -188,8 +188,11 @@ and removed afterwards. This step requires `ffmpeg` to be installed and on `PATH
 ### Speaker identification (diarization)
 
 Enable **Identify speakers (diarization)** to label who spoke when. Each transcript
-line (and `.srt` cue) is prefixed with a speaker tag, e.g. `[SPEAKER_00]`. Leave
-**Number of speakers** blank to auto-detect, or enter a count when you know it.
+line (and `.srt` cue) is prefixed with a speaker tag, e.g. `[SPEAKER_00]` — click a
+tag to rename that speaker everywhere. Leave **Number of speakers** blank to
+auto-detect, or enter a count when you know it (the most reliable control). In
+auto mode, **Speaker sensitivity** tunes clustering: higher merges more (fewer
+speakers), lower splits more (more speakers); it has no effect when a count is set.
 
 Diarization uses [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (ONNX /
 CPU, no PyTorch) and needs two models — a segmentation model and a speaker

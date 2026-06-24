@@ -75,6 +75,7 @@ class WhisprApp:
         self.convert_video_var = tk.BooleanVar(value=True)
         self.diarize_var = tk.BooleanVar(value=False)
         self.num_speakers_var = tk.StringVar(value="")
+        self.sensitivity_var = tk.StringVar(value="0.5")
         self.srt_var = tk.BooleanVar(value=False)
         self.progress_label_var = tk.StringVar(value="Idle")
 
@@ -165,15 +166,21 @@ class WhisprApp:
         ttk.Entry(top, textvariable=self.num_speakers_var, width=8).grid(
             row=9, column=1, sticky="w"
         )
+        ttk.Label(top, text="Speaker sensitivity (higher = fewer, auto only):").grid(
+            row=10, column=0, sticky="w"
+        )
+        ttk.Entry(top, textvariable=self.sensitivity_var, width=8).grid(
+            row=10, column=1, sticky="w"
+        )
 
         self.run_button = ttk.Button(top, text="Run", command=self.run_in_thread)
-        self.run_button.grid(row=10, column=1, pady=8, sticky="w")
+        self.run_button.grid(row=11, column=1, pady=8, sticky="w")
 
         ttk.Label(top, textvariable=self.progress_label_var).grid(
-            row=11, column=0, sticky="w"
+            row=12, column=0, sticky="w"
         )
         self.progress_bar = ttk.Progressbar(top, mode="indeterminate", length=420)
-        self.progress_bar.grid(row=11, column=1, columnspan=2, sticky="ew", pady=(2, 8))
+        self.progress_bar.grid(row=12, column=1, columnspan=2, sticky="ew", pady=(2, 8))
 
         tabs = ttk.Notebook(self.root)
         tabs.pack(fill="both", expand=True)
@@ -350,6 +357,17 @@ class WhisprApp:
             return None
         return value if value > 0 else None
 
+    def _parse_threshold(self) -> float:
+        raw = self.sensitivity_var.get().strip()
+        if not raw:
+            return 0.5
+        try:
+            value = float(raw)
+        except ValueError:
+            self._append(self.status, f"Ignoring invalid sensitivity: {raw!r}")
+            return 0.5
+        return min(max(value, 0.05), 1.0)
+
     def _diarize_into(
         self,
         result: TranscriptionResult,
@@ -371,6 +389,7 @@ class WhisprApp:
             speaker_segments = diarize(
                 diar_wav,
                 num_speakers=self._parse_num_speakers(),
+                threshold=self._parse_threshold(),
                 progress=lambda msg: self._append(self.status, msg),
                 on_progress=lambda f: self._set_progress(f, "Identifying speakers"),
             )
