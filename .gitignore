@@ -9,3 +9,8 @@ thumbs.db
 .DS_Store
 .idea
 
+# W.H.I.S.P.R. runtime assets - keep large models/binaries out of git
+whisper_files/
+models/
+*.ct2
+
