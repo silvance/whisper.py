@@ -14,9 +14,9 @@ import threading
 import tkinter as tk
 import traceback
 from pathlib import Path
-from tkinter import filedialog, ttk
+from tkinter import filedialog, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import Optional
+from typing import Callable, Dict, Optional
 
 from .diarization import assign_speakers, diarize
 from .resources import bundled_models
@@ -77,6 +77,12 @@ class WhisprApp:
         self.num_speakers_var = tk.StringVar(value="")
         self.srt_var = tk.BooleanVar(value=False)
         self.progress_label_var = tk.StringVar(value="Idle")
+
+        # State for the last result, so speakers can be renamed after a run.
+        self._result: Optional[TranscriptionResult] = None
+        self._result_source: Optional[Path] = None
+        self._result_outdir: Optional[Path] = None
+        self._speaker_names: Dict[str, str] = {}
 
         self._build_ui()
 
@@ -307,10 +313,16 @@ class WhisprApp:
                 f"({result.language_probability:.0%}), "
                 f"duration: {result.duration:.1f}s",
             )
-            self._append(self.output, result.text)
 
             if self.diarize_var.get():
                 self._diarize_into(result, Path(path), media_path, media_is_normalized)
+
+            # Remember the result so speakers can be renamed afterwards.
+            self._result = result
+            self._result_source = Path(path)
+            self._result_outdir = Path(outdir) if outdir else None
+            self._speaker_names = {}
+            self._render_transcript()
 
             if outdir:
                 self._save_outputs(result, Path(path), Path(outdir))
@@ -365,9 +377,6 @@ class WhisprApp:
             result.segments = assign_speakers(result.segments, speaker_segments)
             count = len({seg.speaker for seg in speaker_segments})
             self._append(self.status, f"Identified {count} speaker(s).")
-            # Re-render the transcript with speaker labels.
-            self._clear(self.output)
-            self._append(self.output, result.to_txt())
         finally:
             if diar_temp is not None:
                 try:
@@ -381,13 +390,79 @@ class WhisprApp:
         if not outdir.is_dir():
             self._append(self.status, f"Output folder does not exist: {outdir}")
             return
+        names = self._speaker_names
         txt_path = outdir / (source.name + ".txt")
-        txt_path.write_text(result.to_txt(), encoding="utf-8")
+        txt_path.write_text(result.to_txt(names), encoding="utf-8")
         self._append(self.status, f"Wrote transcript to {txt_path}")
         if self.srt_var.get():
             srt_path = outdir / (source.name + ".srt")
-            srt_path.write_text(result.to_srt(), encoding="utf-8")
+            srt_path.write_text(result.to_srt(names), encoding="utf-8")
             self._append(self.status, f"Wrote subtitles to {srt_path}")
+
+    # -- Transcript rendering + speaker renaming ---------------------------
+
+    def _render_transcript(self) -> None:
+        """Render the current result into the Transcript tab. When diarized,
+        each speaker tag is clickable to rename that speaker."""
+
+        def _do() -> None:
+            result = self._result
+            self.output.configure(state="normal")
+            self.output.delete("1.0", "end")
+            if result is None:
+                self.output.configure(state="disabled")
+                return
+            if not result.has_speakers:
+                self.output.insert("end", result.text + "\n")
+            else:
+                bound: set[str] = set()
+                for segment in result.segments:
+                    sid = segment.speaker or "UNKNOWN"
+                    name = self._speaker_names.get(sid, sid)
+                    tag = f"spk::{sid}"
+                    if sid not in bound:
+                        bound.add(sid)
+                        self.output.tag_config(tag, underline=True)
+                        self.output.tag_bind(
+                            tag, "<Button-1>", self._rename_handler(sid)
+                        )
+                        self.output.tag_bind(
+                            tag, "<Enter>", self._cursor_handler("hand2")
+                        )
+                        self.output.tag_bind(tag, "<Leave>", self._cursor_handler(""))
+                    self.output.insert("end", f"[{name}]", (tag,))
+                    self.output.insert("end", f" {segment.text}\n")
+            self.output.configure(state="disabled")
+
+        self.root.after(0, _do)
+
+    def _rename_handler(self, speaker_id: str) -> Callable[[object], None]:
+        def handler(_event: object) -> None:
+            self._rename_speaker(speaker_id)
+
+        return handler
+
+    def _cursor_handler(self, cursor: str) -> Callable[[object], None]:
+        def handler(_event: object) -> None:
+            self.output.config(cursor=cursor)
+
+        return handler
+
+    def _rename_speaker(self, speaker_id: str) -> None:
+        current = self._speaker_names.get(speaker_id, speaker_id)
+        new_name = simpledialog.askstring(
+            "Rename speaker",
+            f"New name for {current}:",
+            initialvalue=current,
+            parent=self.root,
+        )
+        if not new_name or not new_name.strip():
+            return
+        self._speaker_names[speaker_id] = new_name.strip()
+        self._render_transcript()
+        # Keep saved files in sync if an output folder was used.
+        if self._result is not None and self._result_source and self._result_outdir:
+            self._save_outputs(self._result, self._result_source, self._result_outdir)
 
 
 def main() -> None:

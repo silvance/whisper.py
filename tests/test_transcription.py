@@ -116,6 +116,24 @@ def test_to_srt_with_speakers():
     assert "[SPEAKER_02] hi" in result.to_srt()
 
 
+def test_speaker_names_remap_txt_and_srt():
+    result = TranscriptionResult(
+        text="hello\nworld",
+        language="en",
+        language_probability=1.0,
+        duration=2.0,
+        segments=[
+            Segment(start=0.0, end=1.0, text="hello", speaker="SPEAKER_00"),
+            Segment(start=1.0, end=2.0, text="world", speaker="SPEAKER_01"),
+        ],
+    )
+    names = {"SPEAKER_00": "Xin"}
+    txt = result.to_txt(names)
+    assert "[Xin] hello" in txt
+    assert "[SPEAKER_01] world" in txt  # unmapped id falls through unchanged
+    assert "[Xin] hello" in result.to_srt(names)
+
+
 def test_transcribe_audio_missing_file(tmp_path):
     # FileNotFoundError is raised before the optional backend is needed.
     with pytest.raises(FileNotFoundError):
