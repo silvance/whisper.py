@@ -8,17 +8,23 @@ transcription or launch the GUI. Install them with ``pip install 'silvance-whisp
 from .transcription import (
     AUDIO_EXTENSIONS,
     MODEL_SIZES,
+    VIDEO_EXTENSIONS,
     Segment,
     TranscriptionResult,
+    convert_to_wav,
     is_supported_media,
+    is_video,
     transcribe_audio,
 )
 
 __all__ = [
     "AUDIO_EXTENSIONS",
     "MODEL_SIZES",
+    "VIDEO_EXTENSIONS",
     "Segment",
     "TranscriptionResult",
+    "convert_to_wav",
     "is_supported_media",
+    "is_video",
     "transcribe_audio",
 ]
