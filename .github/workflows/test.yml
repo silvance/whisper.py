@@ -39,7 +39,7 @@ jobs:
       - name: mypy
         run: |
           pip install --upgrade mypy
-          mypy whisper
+          mypy whisper whispr
   whisper-test:
     needs: pre-commit
     runs-on: ubuntu-latest

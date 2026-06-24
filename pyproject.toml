@@ -30,8 +30,12 @@ dependencies = [
   "triton>=2; (platform_machine=='x86_64' and sys_platform=='linux') or sys_platform=='linux2'",
 ]
 optional-dependencies.dev = [ "mypy", "pytest", "pytest-cov", "ruff", "scipy" ]
+# GUI / CPU-optimized transcription extras for the W.H.I.S.P.R. desktop app.
+# tkinter ships with CPython; faster-whisper (CTranslate2) is the CPU backend.
+optional-dependencies.gui = [ "faster-whisper", "ttkbootstrap" ]
 urls = { Homepage = "https://github.com/silvance/whisper.py" }
 scripts.whisper = "whisper.transcribe:cli"
+scripts.whispr = "whispr.app:main"
 
 [tool.setuptools]
 py-modules = [ "whisper" ]

@@ -155,6 +155,36 @@ result = whisper.decode(model, mel, options)
 print(result.text)
 ```
 
+## Graphical interface (W.H.I.S.P.R.)
+
+This fork ships **W.H.I.S.P.R.**, a small desktop GUI for transcribing audio/video
+files without the command line. It is built for CPU-only hosts: instead of the
+PyTorch model above it uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
+(a CTranslate2 backend) with int8 quantization, which is considerably faster and
+lighter on CPU.
+
+Install the optional GUI extras and launch it:
+
+```bash
+pip install "silvance-whisper[gui]"
+whispr            # or: python -m whispr
+```
+
+In the window, pick a recording, choose a model size and language (or leave it on
+**Auto**), and click **Transcribe**. The transcript streams into the *Transcript*
+tab as it is produced, progress and detected-language details appear in the
+*Status* tab, and you can optionally write `.txt` (and `.srt` subtitle) output to a
+folder. Transcription runs on a background thread so the UI stays responsive.
+
+The transcription backend is also usable directly from Python:
+
+```python
+from whispr import transcribe_audio
+
+result = transcribe_audio("recording.mp3", model_size="base", language=None)
+print(result.text)
+```
+
 ## More examples
 
 Please use the [🙌 Show and tell](https://github.com/openai/whisper/discussions/categories/show-and-tell) category in Discussions for sharing more example usages of Whisper and third-party extensions such as web demos, integrations with other tools, ports for different platforms, etc.
