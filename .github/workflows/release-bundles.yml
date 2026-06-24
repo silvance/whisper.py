@@ -34,7 +34,14 @@ jobs:
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ".[gui,bundle]"
+          # Install ONLY the GUI runtime stack + build tools. The whispr package
+          # is installed with --no-deps so the core `torch` dependency (and its
+          # ~3.5 GB of CUDA/triton wheels) is NOT pulled in - the GUI runs on
+          # faster-whisper/ctranslate2 and never imports torch. Keeping torch out
+          # of the environment keeps it out of the PyInstaller bundle entirely.
+          pip install faster-whisper ttkbootstrap sherpa-onnx
+          pip install pyinstaller imageio-ffmpeg huggingface-hub
+          pip install --no-deps .
       - name: Fetch ffmpeg
         run: python packaging/fetch_assets.py ffmpeg
       - name: Fetch models
