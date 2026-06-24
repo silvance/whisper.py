@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Callable, List, Optional, Sequence, Tuple, Union
 
 from .resources import bundled_diarization_models
-from .transcription import ProgressCallback, Segment
+from .transcription import ProgressCallback, Segment, Word
 
 PathLike = Union[str, Path]
 
@@ -122,6 +122,8 @@ def diarize(
             num_clusters=num_speakers if num_speakers else -1,
             threshold=threshold,
         ),
+        min_duration_on=0.3,
+        min_duration_off=0.5,
     )
     if not config.validate():
         raise RuntimeError(
@@ -156,22 +158,81 @@ def diarize(
     ]
 
 
+def _best_overlap_speaker(
+    start: float, end: float, speaker_segments: Sequence[SpeakerSegment]
+) -> Optional[str]:
+    best_speaker: Optional[str] = None
+    best_overlap = 0.0
+    for sp in speaker_segments:
+        overlap = min(end, sp.end) - max(start, sp.start)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_speaker = sp.speaker
+    return best_speaker
+
+
+def _speaker_at(t: float, speaker_segments: Sequence[SpeakerSegment]) -> Optional[str]:
+    """Speaker active at time ``t``; falls back to the nearest turn if in a gap."""
+    nearest: Optional[str] = None
+    nearest_distance = float("inf")
+    for sp in speaker_segments:
+        if sp.start <= t <= sp.end:
+            return sp.speaker
+        distance = sp.start - t if t < sp.start else t - sp.end
+        if distance < nearest_distance:
+            nearest_distance = distance
+            nearest = sp.speaker
+    return nearest
+
+
 def assign_speakers(
     segments: List[Segment],
     speaker_segments: Sequence[SpeakerSegment],
 ) -> List[Segment]:
-    """Label each transcript segment with the speaker it overlaps most.
+    """Attach speaker labels to a transcript, splitting on speaker changes.
 
-    Mutates and returns ``segments`` (sets ``Segment.speaker``). A transcript
-    segment that overlaps no speaker turn is left unlabelled (``None``).
+    When per-word timestamps are available, each word is assigned to the speaker
+    active at its midpoint, and consecutive same-speaker words are merged into a
+    new segment - so a single Whisper segment that spans a speaker change is
+    split correctly. Segments without word timestamps fall back to whole-segment
+    overlap. Returns the (possibly longer) list of speaker-labelled segments.
     """
+    out: List[Segment] = []
     for segment in segments:
-        best_speaker: Optional[str] = None
-        best_overlap = 0.0
-        for sp in speaker_segments:
-            overlap = min(segment.end, sp.end) - max(segment.start, sp.start)
-            if overlap > best_overlap:
-                best_overlap = overlap
-                best_speaker = sp.speaker
-        segment.speaker = best_speaker
-    return segments
+        if not segment.words:
+            segment.speaker = _best_overlap_speaker(
+                segment.start, segment.end, speaker_segments
+            )
+            out.append(segment)
+            continue
+
+        run_speaker: Optional[str] = None
+        run_words: List[Word] = []
+
+        def _flush() -> None:
+            if not run_words:
+                return
+            text = "".join(w.word for w in run_words).strip()
+            if not text:
+                return
+            out.append(
+                Segment(
+                    start=run_words[0].start,
+                    end=run_words[-1].end,
+                    text=text,
+                    speaker=run_speaker,
+                    words=list(run_words),
+                )
+            )
+
+        for word in segment.words:
+            midpoint = (word.start + word.end) / 2.0
+            speaker = _speaker_at(midpoint, speaker_segments)
+            if run_words and speaker != run_speaker:
+                _flush()
+                run_words = []
+            run_speaker = speaker
+            run_words.append(word)
+        _flush()
+
+    return out

@@ -195,7 +195,13 @@ Diarization uses [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (ONNX /
 CPU, no PyTorch) and needs two models — a segmentation model and a speaker
 embedding model — placed at `whispr_assets/diarization/segmentation.onnx` and
 `whispr_assets/diarization/embedding.onnx` (the offline bundle includes them; see
-below). The audio is normalised to 16 kHz mono with ffmpeg first.
+below). The embedding model is NeMo TitaNet-large (English). The audio is
+normalised to 16 kHz mono with ffmpeg first.
+
+Speaker labels are assigned **per word** (using Whisper word timestamps): a single
+transcript segment that spans a speaker change is split at the boundary, so rapid
+back-and-forth dialogue is attributed correctly rather than lumped onto one
+speaker.
 
 The transcription backend is also usable directly from Python:
 

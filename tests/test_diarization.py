@@ -1,7 +1,7 @@
 import pytest
 
 from whispr.diarization import SpeakerSegment, assign_speakers, diarize
-from whispr.transcription import Segment
+from whispr.transcription import Segment, Word
 
 
 def test_assign_speakers_by_overlap():
@@ -38,6 +38,41 @@ def test_assign_speakers_picks_majority_overlap():
     ]
     assign_speakers(segments, speakers)
     assert segments[0].speaker == "SPEAKER_01"
+
+
+def test_assign_speakers_splits_segment_by_word():
+    # One Whisper segment spanning a speaker change mid-way.
+    segment = Segment(
+        start=0.0,
+        end=4.0,
+        text="hello there how are you",
+        words=[
+            Word(start=0.0, end=1.0, word=" hello"),
+            Word(start=1.0, end=2.0, word=" there"),
+            Word(start=2.0, end=3.0, word=" how"),
+            Word(start=3.0, end=4.0, word=" you"),
+        ],
+    )
+    speakers = [
+        SpeakerSegment(start=0.0, end=2.0, speaker="SPEAKER_00"),
+        SpeakerSegment(start=2.0, end=4.0, speaker="SPEAKER_01"),
+    ]
+    out = assign_speakers([segment], speakers)
+    assert [s.speaker for s in out] == ["SPEAKER_00", "SPEAKER_01"]
+    assert out[0].text == "hello there"
+    assert out[1].text == "how you"
+
+
+def test_assign_speakers_gap_word_uses_nearest():
+    segment = Segment(
+        start=10.0,
+        end=11.0,
+        text="orphan",
+        words=[Word(start=10.0, end=11.0, word="orphan")],
+    )
+    speakers = [SpeakerSegment(start=0.0, end=5.0, speaker="SPEAKER_00")]
+    out = assign_speakers([segment], speakers)
+    assert out[0].speaker == "SPEAKER_00"  # nearest turn, not None
 
 
 def test_diarize_without_backend(tmp_path):
