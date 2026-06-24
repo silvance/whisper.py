@@ -102,6 +102,7 @@ def transcribe_audio(
     model_size: str = "base",
     device: str = "cpu",
     compute_type: str = "int8",
+    task: str = "transcribe",
     language: Optional[str] = None,
     beam_size: int = 5,
     vad_filter: bool = True,
@@ -122,6 +123,9 @@ def transcribe_audio(
     compute_type
         Quantization, e.g. ``"int8"`` (default, best for CPU), ``"int8_float16"``
         or ``"float16"`` (GPU).
+    task
+        ``"transcribe"`` (default) keeps the source language; ``"translate"``
+        translates speech into English.
     language
         ISO language code (e.g. ``"en"``) or ``None`` to auto-detect.
     beam_size
@@ -151,9 +155,11 @@ def transcribe_audio(
     _report(f"Loading model '{model_size}' ({device}/{compute_type})...")
     model = WhisperModel(model_size, device=device, compute_type=compute_type)
 
-    _report(f"Transcribing {path.name}...")
+    verb = "Translating" if task == "translate" else "Transcribing"
+    _report(f"{verb} {path.name}...")
     segments_iter, info = model.transcribe(
         str(path),
+        task=task,
         language=language,
         beam_size=beam_size,
         vad_filter=vad_filter,

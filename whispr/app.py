@@ -55,6 +55,7 @@ class WhisprApp:
         self.output_dir_var = tk.StringVar()
         self.write_output_var = tk.BooleanVar(value=True)
         self.model_var = tk.StringVar(value="base")
+        self.task_var = tk.StringVar(value="transcribe")
         self.language_var = tk.StringVar(value="Auto")
         self.vad_var = tk.BooleanVar(value=True)
         self.srt_var = tk.BooleanVar(value=False)
@@ -85,38 +86,50 @@ class WhisprApp:
             row=1, column=2
         )
 
-        ttk.Label(top, text="Model:").grid(row=2, column=0, sticky="w")
+        # Model: a size name (dropdown) or a path to a local CTranslate2 model.
+        ttk.Label(top, text="Model (size or path):").grid(row=2, column=0, sticky="w")
         ttk.Combobox(
             top,
             textvariable=self.model_var,
             values=list(MODEL_SIZES),
+            width=40,
+        ).grid(row=2, column=1, sticky="ew")
+        ttk.Button(top, text="Browse Model", command=self.choose_model_dir).grid(
+            row=2, column=2
+        )
+
+        ttk.Label(top, text="Task:").grid(row=3, column=0, sticky="w")
+        ttk.Combobox(
+            top,
+            textvariable=self.task_var,
+            values=["transcribe", "translate"],
             width=20,
             state="readonly",
-        ).grid(row=2, column=1, sticky="w")
+        ).grid(row=3, column=1, sticky="w")
 
-        ttk.Label(top, text="Language:").grid(row=3, column=0, sticky="w")
+        ttk.Label(top, text="Language:").grid(row=4, column=0, sticky="w")
         ttk.Combobox(
             top,
             textvariable=self.language_var,
             values=COMMON_LANGUAGES,
             width=20,
-        ).grid(row=3, column=1, sticky="w")
+        ).grid(row=4, column=1, sticky="w")
 
         ttk.Checkbutton(
             top, text="Voice activity detection (skip silence)", variable=self.vad_var
-        ).grid(row=4, column=0, columnspan=2, sticky="w")
+        ).grid(row=5, column=0, columnspan=2, sticky="w")
         ttk.Checkbutton(
             top, text="Also save .srt subtitles", variable=self.srt_var
-        ).grid(row=5, column=0, columnspan=2, sticky="w")
+        ).grid(row=6, column=0, columnspan=2, sticky="w")
 
-        self.run_button = ttk.Button(top, text="Transcribe", command=self.run_in_thread)
-        self.run_button.grid(row=6, column=1, pady=8, sticky="w")
+        self.run_button = ttk.Button(top, text="Run", command=self.run_in_thread)
+        self.run_button.grid(row=7, column=1, pady=8, sticky="w")
 
         ttk.Label(top, textvariable=self.progress_label_var).grid(
-            row=7, column=0, sticky="w"
+            row=8, column=0, sticky="w"
         )
         self.progress_bar = ttk.Progressbar(top, mode="indeterminate", length=420)
-        self.progress_bar.grid(row=7, column=1, columnspan=2, sticky="ew", pady=(2, 8))
+        self.progress_bar.grid(row=8, column=1, columnspan=2, sticky="ew", pady=(2, 8))
 
         tabs = ttk.Notebook(self.root)
         tabs.pack(fill="both", expand=True)
@@ -172,11 +185,19 @@ class WhisprApp:
         if path:
             self.output_dir_var.set(path)
 
+    def choose_model_dir(self) -> None:
+        path = filedialog.askdirectory(title="Select a CTranslate2 model directory")
+        if path:
+            self.model_var.set(path)
+
     def run_in_thread(self) -> None:
         threading.Thread(target=self._run, daemon=True).start()
 
     def _run(self) -> None:
-        self._set_busy(True, "Transcribing...")
+        task = self.task_var.get()
+        self._set_busy(
+            True, "Translating..." if task == "translate" else "Transcribing..."
+        )
         try:
             self._clear(self.output)
             path = self.input_file_var.get()
@@ -192,6 +213,7 @@ class WhisprApp:
             result = transcribe_audio(
                 path,
                 model_size=self.model_var.get(),
+                task=task,
                 language=language_arg,
                 vad_filter=self.vad_var.get(),
                 progress=lambda msg: self._append(self.status, msg),
