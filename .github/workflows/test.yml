@@ -72,3 +72,17 @@ jobs:
       - run: echo "$CONDA/envs/test/bin" >> $GITHUB_PATH
       - run: pip3 install .["dev"] ${{ matrix.numpy-requirement }} torch==${{ matrix.pytorch-version }}+cpu --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
       - run: pytest --durations=0 -vv -k 'not test_transcribe or test_transcribe[tiny] or test_transcribe[tiny.en]' -m 'not requires_cuda' --cov=whisper --cov-report=term-missing
+
+  # Stable aggregate check to require in branch protection. Because it depends on
+  # the whole matrix, the required-check name never changes when the matrix does.
+  ci-success:
+    name: ci-success
+    if: always()
+    needs: [pre-commit, whisper-test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required jobs succeeded
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "One or more required jobs failed or were cancelled."
+          exit 1
