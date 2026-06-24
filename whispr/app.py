@@ -199,12 +199,29 @@ class WhisprApp:
         def _do() -> None:
             if busy:
                 self.run_button.configure(state="disabled")
+                # Indeterminate while we don't yet have a measurable fraction
+                # (setup, ffmpeg conversion, model loading).
+                self.progress_bar.configure(mode="indeterminate")
                 self.progress_bar.start(12)
                 self.progress_label_var.set(message or "Processing...")
             else:
                 self.progress_bar.stop()
+                self.progress_bar.configure(mode="determinate")
+                self.progress_bar["value"] = 0
                 self.progress_label_var.set(message or "Idle")
                 self.run_button.configure(state="normal")
+
+        self.root.after(0, _do)
+
+    def _set_progress(self, fraction: float, message: str) -> None:
+        """Show real progress on a determinate bar (fraction is 0..1)."""
+        pct = max(0.0, min(1.0, fraction)) * 100.0
+
+        def _do() -> None:
+            self.progress_bar.stop()
+            self.progress_bar.configure(mode="determinate")
+            self.progress_bar["value"] = pct
+            self.progress_label_var.set(f"{message} {pct:.0f}%")
 
         self.root.after(0, _do)
 
@@ -273,6 +290,7 @@ class WhisprApp:
             model_sel = self.model_var.get()
             model = str(self._bundled_models.get(model_sel, model_sel))
 
+            transcribe_label = "Translating" if task == "translate" else "Transcribing"
             result = transcribe_audio(
                 media_path,
                 model_size=model,
@@ -280,6 +298,7 @@ class WhisprApp:
                 language=language_arg,
                 vad_filter=self.vad_var.get(),
                 progress=lambda msg: self._append(self.status, msg),
+                on_progress=lambda f: self._set_progress(f, transcribe_label),
             )
 
             self._append(
@@ -341,6 +360,7 @@ class WhisprApp:
                 diar_wav,
                 num_speakers=self._parse_num_speakers(),
                 progress=lambda msg: self._append(self.status, msg),
+                on_progress=lambda f: self._set_progress(f, "Identifying speakers"),
             )
             assign_speakers(result.segments, speaker_segments)
             count = len({seg.speaker for seg in speaker_segments})

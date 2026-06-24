@@ -220,6 +220,7 @@ def transcribe_audio(
     beam_size: int = 5,
     vad_filter: bool = True,
     progress: Optional[ProgressCallback] = None,
+    on_progress: Optional[Callable[[float], None]] = None,
 ) -> TranscriptionResult:
     """Transcribe a single audio/video file with faster-whisper.
 
@@ -285,6 +286,11 @@ def transcribe_audio(
         segments.append(Segment(start=raw.start, end=raw.end, text=text))
         texts.append(text)
         _report(f"[{_format_timestamp(raw.end)}] {text}")
+        # Real progress: how far the latest segment's end is through the audio.
+        if on_progress is not None and info.duration:
+            on_progress(min(raw.end / info.duration, 1.0))
+    if on_progress is not None:
+        on_progress(1.0)
 
     return TranscriptionResult(
         text="\n".join(texts).strip(),

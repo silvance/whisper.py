@@ -15,7 +15,7 @@ from __future__ import annotations
 import wave
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import Callable, List, Optional, Sequence, Tuple, Union
 
 from .resources import bundled_diarization_models
 from .transcription import ProgressCallback, Segment
@@ -79,6 +79,7 @@ def diarize(
     num_speakers: Optional[int] = None,
     threshold: float = 0.5,
     progress: Optional[ProgressCallback] = None,
+    on_progress: Optional[Callable[[float], None]] = None,
 ) -> List[SpeakerSegment]:
     """Diarize a 16 kHz mono WAV into speaker-labelled segments.
 
@@ -139,7 +140,16 @@ def diarize(
     if progress is not None:
         progress("Identifying speakers...")
 
-    result = sd.process(samples).sort_by_start_time()
+    def _on_chunk(num_processed: int, num_total: int, *_extra) -> int:
+        if on_progress is not None and num_total:
+            on_progress(min(num_processed / num_total, 1.0))
+        return 0
+
+    if on_progress is not None:
+        result = sd.process(samples, callback=_on_chunk).sort_by_start_time()
+        on_progress(1.0)
+    else:
+        result = sd.process(samples).sort_by_start_time()
     return [
         SpeakerSegment(start=s.start, end=s.end, speaker=f"SPEAKER_{s.speaker:02d}")
         for s in result
