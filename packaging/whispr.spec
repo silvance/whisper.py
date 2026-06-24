@@ -45,6 +45,34 @@ assets = REPO_ROOT / "whispr_assets"
 if assets.is_dir():
     datas.append((str(assets), "whispr_assets"))
 
+# This build is CPU-only (the GUI always runs device="cpu"), so strip the CUDA /
+# cuDNN libraries that ctranslate2 and onnxruntime ship in their wheels - they are
+# never loaded and account for the bulk of the bundle size.
+_CUDA_MARKERS = (
+    "cudnn",
+    "cublas",
+    "cudart",
+    "cufft",
+    "curand",
+    "cusolver",
+    "cusparse",
+    "cupti",
+    "nvrtc",
+    "nvtx",
+    "libcuda",
+    "onnxruntime_providers_cuda",
+    "onnxruntime_providers_tensorrt",
+)
+
+
+def _is_cuda_lib(name) -> bool:
+    base = os.path.basename(str(name)).lower()
+    return any(marker in base for marker in _CUDA_MARKERS)
+
+
+binaries = [b for b in binaries if not _is_cuda_lib(b[0])]
+datas = [d for d in datas if not _is_cuda_lib(d[0])]
+
 a = Analysis(
     [os.path.join(SPEC_DIR, "whispr_entry.py")],
     pathex=[],
@@ -57,6 +85,9 @@ a = Analysis(
     excludes=["torch", "tensorflow"],
     noarchive=False,
 )
+
+# Drop any CUDA libraries the dependency analysis pulled in as well.
+a.binaries = [b for b in a.binaries if not _is_cuda_lib(b[0])]
 
 pyz = PYZ(a.pure)
 
