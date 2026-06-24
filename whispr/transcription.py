@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Union
 
 from .resources import find_ffmpeg
 
@@ -106,25 +106,35 @@ class TranscriptionResult:
     def has_speakers(self) -> bool:
         return any(segment.speaker for segment in self.segments)
 
-    def to_txt(self) -> str:
+    def _speaker_label(
+        self, speaker: Optional[str], speaker_names: Optional[Dict[str, str]]
+    ) -> str:
+        label = speaker or "UNKNOWN"
+        if speaker_names:
+            return speaker_names.get(label, label)
+        return label
+
+    def to_txt(self, speaker_names: Optional[Dict[str, str]] = None) -> str:
+        """Plain-text transcript. When diarized, lines are prefixed with the
+        speaker (optionally remapped via ``speaker_names``: id -> display name)."""
         if not self.has_speakers:
             return self.text
         return "\n".join(
-            f"[{segment.speaker or 'UNKNOWN'}] {segment.text}"
+            f"[{self._speaker_label(segment.speaker, speaker_names)}] {segment.text}"
             for segment in self.segments
         )
 
-    def to_srt(self) -> str:
+    def to_srt(self, speaker_names: Optional[Dict[str, str]] = None) -> str:
         """Render the segments as SubRip (``.srt``) subtitles."""
         blocks = []
         for index, segment in enumerate(self.segments, start=1):
             start = _format_timestamp(segment.start)
             end = _format_timestamp(segment.end)
-            text = (
-                f"[{segment.speaker}] {segment.text}"
-                if segment.speaker
-                else segment.text
-            )
+            if segment.speaker:
+                label = self._speaker_label(segment.speaker, speaker_names)
+                text = f"[{label}] {segment.text}"
+            else:
+                text = segment.text
             blocks.append(f"{index}\n{start} --> {end}\n{text}\n")
         return "\n".join(blocks)
 
