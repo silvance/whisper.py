@@ -67,17 +67,29 @@ MODEL_SIZES = (
 
 
 @dataclass
+class Word:
+    """A single timestamped word (from faster-whisper word timestamps)."""
+
+    start: float
+    end: float
+    word: str
+
+
+@dataclass
 class Segment:
     """A single timestamped transcript segment.
 
     ``speaker`` is set when speaker diarization has been applied (see
     :func:`whispr.diarization.assign_speakers`); otherwise it is ``None``.
+    ``words`` carries per-word timestamps when available, enabling word-level
+    speaker assignment.
     """
 
     start: float
     end: float
     text: str
     speaker: Optional[str] = None
+    words: List[Word] = field(default_factory=list)
 
 
 @dataclass
@@ -277,13 +289,15 @@ def transcribe_audio(
         language=language,
         beam_size=beam_size,
         vad_filter=vad_filter,
+        word_timestamps=True,
     )
 
     segments: List[Segment] = []
     texts: List[str] = []
     for raw in segments_iter:
         text = raw.text.strip()
-        segments.append(Segment(start=raw.start, end=raw.end, text=text))
+        words = [Word(start=w.start, end=w.end, word=w.word) for w in (raw.words or [])]
+        segments.append(Segment(start=raw.start, end=raw.end, text=text, words=words))
         texts.append(text)
         _report(f"[{_format_timestamp(raw.end)}] {text}")
         # Real progress: how far the latest segment's end is through the audio.

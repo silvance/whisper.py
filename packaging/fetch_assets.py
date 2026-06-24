@@ -34,19 +34,17 @@ MODEL_REPOS = {
 }
 
 # sherpa-onnx diarization models, downloaded from the official k2-fsa GitHub
-# release assets (stable, non-gated URLs quoted from sherpa-onnx's own example
-# python-api-examples/offline-speaker-diarization.py). The segmentation model
-# ships as a .tar.bz2 containing model.onnx; the embedding model is a single
-# .onnx. The eres2net embedding model generalises across languages and is the
-# one used in sherpa-onnx's own diarization demo.
+# release assets (stable, non-gated URLs). The segmentation model ships as a
+# .tar.bz2 containing model.onnx; the embedding model is a single .onnx.
+# We use NeMo TitaNet-large (English) for the speaker embeddings - it separates
+# English voices far better than the Chinese-trained demo model.
 DIARIZATION_SEGMENTATION_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
     "speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"
 )
 DIARIZATION_EMBEDDING_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
-    "speaker-recongition-models/"
-    "3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx"
+    "speaker-recongition-models/nemo_en_titanet_large.onnx"
 )
 
 

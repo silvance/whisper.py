@@ -362,7 +362,7 @@ class WhisprApp:
                 progress=lambda msg: self._append(self.status, msg),
                 on_progress=lambda f: self._set_progress(f, "Identifying speakers"),
             )
-            assign_speakers(result.segments, speaker_segments)
+            result.segments = assign_speakers(result.segments, speaker_segments)
             count = len({seg.speaker for seg in speaker_segments})
             self._append(self.status, f"Identified {count} speaker(s).")
             # Re-render the transcript with speaker labels.
