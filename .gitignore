@@ -11,6 +11,11 @@ thumbs.db
 
 # W.H.I.S.P.R. runtime assets - keep large models/binaries out of git
 whisper_files/
+whispr_assets/
 models/
 *.ct2
+
+# PyInstaller bundle build outputs
+build/
+dist/
 

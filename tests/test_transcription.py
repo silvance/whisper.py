@@ -60,8 +60,7 @@ def test_convert_to_wav_missing_file(tmp_path):
 
 
 def test_convert_to_wav_without_ffmpeg(tmp_path, monkeypatch):
-    # FileNotFoundError still wins for a missing input...
-    monkeypatch.setattr(transcription.shutil, "which", lambda _: None)
+    monkeypatch.setattr(transcription, "find_ffmpeg", lambda: None)
     media = tmp_path / "movie.mp4"
     media.write_bytes(b"\x00")
     with pytest.raises(RuntimeError, match="ffmpeg was not found"):

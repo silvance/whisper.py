@@ -5,6 +5,7 @@ optional GUI/transcription dependencies; those are only needed to actually run a
 transcription or launch the GUI. Install them with ``pip install 'silvance-whisper[gui]'``.
 """
 
+from .resources import bundled_models, find_bundled_ffmpeg, find_ffmpeg
 from .transcription import (
     AUDIO_EXTENSIONS,
     MODEL_SIZES,
@@ -23,7 +24,10 @@ __all__ = [
     "VIDEO_EXTENSIONS",
     "Segment",
     "TranscriptionResult",
+    "bundled_models",
     "convert_to_wav",
+    "find_bundled_ffmpeg",
+    "find_ffmpeg",
     "is_supported_media",
     "is_video",
     "transcribe_audio",

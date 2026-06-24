@@ -12,12 +12,13 @@ transcription/GUI dependencies to be installed.
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Union
+
+from .resources import find_ffmpeg
 
 PathLike = Union[str, Path]
 ProgressCallback = Callable[[str], None]
@@ -148,11 +149,12 @@ def convert_to_wav(
     if not src.exists():
         raise FileNotFoundError(f"Input file does not exist: {src}")
 
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg = find_ffmpeg()
     if ffmpeg is None:
         raise RuntimeError(
-            "ffmpeg was not found on PATH. Install it to convert video files "
-            "(e.g. `sudo apt install ffmpeg`, `brew install ffmpeg`)."
+            "ffmpeg was not found (neither bundled in whispr_assets nor on PATH). "
+            "Install it to convert video files (e.g. `sudo apt install ffmpeg`, "
+            "`brew install ffmpeg`)."
         )
 
     if dest is None:
@@ -167,7 +169,7 @@ def convert_to_wav(
 
     result = subprocess.run(
         [
-            ffmpeg,
+            str(ffmpeg),
             "-y",
             "-i",
             str(src),
