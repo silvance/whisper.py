@@ -179,6 +179,12 @@ appear in the *Status* tab, and you can optionally write `.txt` (and `.srt`
 subtitle) output to a folder. Work runs on a background thread so the UI stays
 responsive.
 
+When **Convert video to WAV first (ffmpeg)** is enabled (the default), choosing a
+video file (`.mp4`, `.mkv`, `.mov`, `.avi`, `.webm`) extracts its audio to a 16 kHz
+mono WAV with [`ffmpeg`](https://ffmpeg.org/) before transcribing. If an output
+folder is set the WAV is kept there; otherwise it is written to a temporary file
+and removed afterwards. This step requires `ffmpeg` to be installed and on `PATH`.
+
 The transcription backend is also usable directly from Python:
 
 ```python

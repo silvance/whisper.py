@@ -22,6 +22,8 @@ from .transcription import (
     AUDIO_EXTENSIONS,
     MODEL_SIZES,
     TranscriptionResult,
+    convert_to_wav,
+    is_video,
     transcribe_audio,
 )
 
@@ -58,6 +60,7 @@ class WhisprApp:
         self.task_var = tk.StringVar(value="transcribe")
         self.language_var = tk.StringVar(value="Auto")
         self.vad_var = tk.BooleanVar(value=True)
+        self.convert_video_var = tk.BooleanVar(value=True)
         self.srt_var = tk.BooleanVar(value=False)
         self.progress_label_var = tk.StringVar(value="Idle")
 
@@ -119,17 +122,22 @@ class WhisprApp:
             top, text="Voice activity detection (skip silence)", variable=self.vad_var
         ).grid(row=5, column=0, columnspan=2, sticky="w")
         ttk.Checkbutton(
-            top, text="Also save .srt subtitles", variable=self.srt_var
+            top,
+            text="Convert video to WAV first (ffmpeg)",
+            variable=self.convert_video_var,
         ).grid(row=6, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(
+            top, text="Also save .srt subtitles", variable=self.srt_var
+        ).grid(row=7, column=0, columnspan=2, sticky="w")
 
         self.run_button = ttk.Button(top, text="Run", command=self.run_in_thread)
-        self.run_button.grid(row=7, column=1, pady=8, sticky="w")
+        self.run_button.grid(row=8, column=1, pady=8, sticky="w")
 
         ttk.Label(top, textvariable=self.progress_label_var).grid(
-            row=8, column=0, sticky="w"
+            row=9, column=0, sticky="w"
         )
         self.progress_bar = ttk.Progressbar(top, mode="indeterminate", length=420)
-        self.progress_bar.grid(row=8, column=1, columnspan=2, sticky="ew", pady=(2, 8))
+        self.progress_bar.grid(row=9, column=1, columnspan=2, sticky="ew", pady=(2, 8))
 
         tabs = ttk.Notebook(self.root)
         tabs.pack(fill="both", expand=True)
@@ -198,6 +206,7 @@ class WhisprApp:
         self._set_busy(
             True, "Translating..." if task == "translate" else "Transcribing..."
         )
+        temp_wav: Optional[Path] = None
         try:
             self._clear(self.output)
             path = self.input_file_var.get()
@@ -210,8 +219,25 @@ class WhisprApp:
             outdir = self.output_dir_var.get() if self.write_output_var.get() else None
 
             self._append(self.status, f"Processing: {path}")
+
+            # Optionally pre-convert video to WAV with ffmpeg before transcribing.
+            media_path = Path(path)
+            if self.convert_video_var.get() and is_video(media_path):
+                if outdir and Path(outdir).is_dir():
+                    wav_dest: Optional[Path] = Path(outdir) / (media_path.stem + ".wav")
+                else:
+                    wav_dest = None  # convert to a temp file we clean up afterwards
+                media_path = convert_to_wav(
+                    media_path,
+                    wav_dest,
+                    progress=lambda msg: self._append(self.status, msg),
+                )
+                if wav_dest is None:
+                    temp_wav = media_path
+                self._append(self.status, f"Converted to {media_path}")
+
             result = transcribe_audio(
-                path,
+                media_path,
                 model_size=self.model_var.get(),
                 task=task,
                 language=language_arg,
@@ -235,6 +261,11 @@ class WhisprApp:
             self._append(self.status, "UNEXPECTED ERROR:")
             self._append(self.status, traceback.format_exc())
         finally:
+            if temp_wav is not None:
+                try:
+                    temp_wav.unlink()
+                except OSError:
+                    pass
             self._set_busy(False, "Finished")
 
     def _save_outputs(

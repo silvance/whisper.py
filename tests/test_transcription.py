@@ -1,10 +1,13 @@
 import pytest
 
+from whispr import transcription
 from whispr.transcription import (
     Segment,
     TranscriptionResult,
     _format_timestamp,
+    convert_to_wav,
     is_supported_media,
+    is_video,
     transcribe_audio,
 )
 
@@ -35,6 +38,34 @@ def test_format_timestamp(seconds, expected):
 )
 def test_is_supported_media(name, expected):
     assert is_supported_media(name) is expected
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("movie.mp4", True),
+        ("clip.MKV", True),
+        ("recording.mov", True),
+        ("audio.mp3", False),
+        ("audio.wav", False),
+    ],
+)
+def test_is_video(name, expected):
+    assert is_video(name) is expected
+
+
+def test_convert_to_wav_missing_file(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        convert_to_wav(tmp_path / "missing.mp4")
+
+
+def test_convert_to_wav_without_ffmpeg(tmp_path, monkeypatch):
+    # FileNotFoundError still wins for a missing input...
+    monkeypatch.setattr(transcription.shutil, "which", lambda _: None)
+    media = tmp_path / "movie.mp4"
+    media.write_bytes(b"\x00")
+    with pytest.raises(RuntimeError, match="ffmpeg was not found"):
+        convert_to_wav(media)
 
 
 def test_to_srt_formats_segments():

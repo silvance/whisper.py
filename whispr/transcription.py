@@ -11,6 +11,10 @@ transcription/GUI dependencies to be installed.
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Union
@@ -36,6 +40,19 @@ AUDIO_EXTENSIONS = (
     ".avi",
     ".webm",
 )
+
+# Subset of AUDIO_EXTENSIONS that are video containers. When the GUI's
+# "convert video to WAV" option is on, these are pre-converted with ffmpeg.
+VIDEO_EXTENSIONS = (
+    ".mp4",
+    ".mkv",
+    ".mov",
+    ".avi",
+    ".webm",
+)
+
+# Sample rate Whisper operates at; converting to it keeps the WAV small.
+WHISPER_SAMPLE_RATE = 16000
 
 # Model sizes accepted by faster-whisper's ``WhisperModel``.
 MODEL_SIZES = (
@@ -94,6 +111,81 @@ def _format_timestamp(seconds: float) -> str:
 def is_supported_media(path: PathLike) -> bool:
     """Return True if ``path`` has a known audio/video extension."""
     return Path(path).suffix.lower() in AUDIO_EXTENSIONS
+
+
+def is_video(path: PathLike) -> bool:
+    """Return True if ``path`` has a known video container extension."""
+    return Path(path).suffix.lower() in VIDEO_EXTENSIONS
+
+
+def convert_to_wav(
+    path: PathLike,
+    dest: Optional[PathLike] = None,
+    *,
+    sample_rate: int = WHISPER_SAMPLE_RATE,
+    progress: Optional[ProgressCallback] = None,
+) -> Path:
+    """Extract/convert a media file's audio to a mono PCM WAV with ffmpeg.
+
+    Parameters
+    ----------
+    path
+        Source audio or video file.
+    dest
+        Destination ``.wav`` path. If ``None``, a temporary file is created and
+        returned; the caller is responsible for deleting it.
+    sample_rate
+        Output sample rate in Hz (defaults to Whisper's 16 kHz).
+    progress
+        Optional status callback.
+
+    Returns
+    -------
+    Path
+        The path to the written WAV file.
+    """
+    src = Path(path)
+    if not src.exists():
+        raise FileNotFoundError(f"Input file does not exist: {src}")
+
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise RuntimeError(
+            "ffmpeg was not found on PATH. Install it to convert video files "
+            "(e.g. `sudo apt install ffmpeg`, `brew install ffmpeg`)."
+        )
+
+    if dest is None:
+        handle, tmp = tempfile.mkstemp(suffix=".wav")
+        os.close(handle)
+        out = Path(tmp)
+    else:
+        out = Path(dest)
+
+    if progress is not None:
+        progress(f"Converting {src.name} to WAV (ffmpeg)...")
+
+    result = subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(src),
+            "-vn",  # drop any video stream
+            "-ac",
+            "1",  # mono
+            "-ar",
+            str(sample_rate),
+            "-acodec",
+            "pcm_s16le",
+            str(out),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg conversion failed:\n{result.stderr.strip()}")
+    return out
 
 
 def transcribe_audio(
