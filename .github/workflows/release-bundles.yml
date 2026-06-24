@@ -5,8 +5,10 @@ name: release-bundles
 # the selected Whisper models, so it can be copied to an air-gapped machine and run
 # with no network access. The build runners use the internet; the targets do not.
 #
-# For fast iteration, "Run workflow" lets you build a single OS and a single model
-# (e.g. platform=windows, models=small) so a test build is much quicker.
+# For fast iteration, "Run workflow" defaults to a single model (small) on both
+# OSes; set platform=windows (or linux) and keep models=small for the quickest
+# test build. Tagged releases (bundle-v*) bundle the full small,medium,large-v3
+# set automatically.
 
 on:
   workflow_dispatch:
@@ -18,7 +20,7 @@ on:
         default: both
       models:
         description: "Comma-separated models to bundle (tiny,base,small,medium,large-v3)"
-        default: "small,medium,large-v3"
+        default: "small"
   push:
     tags:
       - "bundle-v*"
