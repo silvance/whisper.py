@@ -170,10 +170,16 @@ pip install "silvance-whisper[gui]"
 whispr            # or: python -m whispr
 ```
 
-In the window, pick a recording, choose a model (a size such as `base`/`large-v3`,
-or browse to a local CTranslate2 model directory), pick the **task** —
-*transcribe* (keep the source language) or *translate* (to English) — and a
-language (or leave it on **Auto**), then click **Run**. The transcript streams into
+In the window, pick a recording, choose a model, pick the **task** — *transcribe*
+(keep the source language) or *translate* (to English) — and a language (or leave
+it on **Auto**), then click **Run**.
+
+For English audio, the English-only `.en` models are fastest and usually as
+accurate: start with `base.en` (the quickest; mirrors whisper.cpp's
+`ggml-base.en`) and step up to `small.en` / `medium.en` if accuracy on harder
+audio (e.g. strong accents) needs it. The plain multilingual names (`small`,
+`large-v3`, …) are required for non-English audio or the *translate* task. You can
+also browse to a local CTranslate2 model directory. The transcript streams into
 the *Transcript* tab as it is produced, progress and detected-language details
 appear in the *Status* tab, and you can optionally write `.txt` (and `.srt`
 subtitle) output to a folder. Work runs on a background thread so the UI stays

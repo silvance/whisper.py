@@ -56,14 +56,16 @@ class WhisprApp:
         self.root.title("W.H.I.S.P.R. - Audio Transcription")
 
         # Bundled (offline) models take priority so the app works air-gapped.
+        # Prefer the fast English base.en, then small, else the first bundled.
         self._bundled_models = bundled_models()
-        default_model = "base"
+        default_model = "base.en"
         if self._bundled_models:
-            default_model = (
-                "small"
-                if "small" in self._bundled_models
-                else next(iter(self._bundled_models))
-            )
+            for preferred in ("base.en", "small"):
+                if preferred in self._bundled_models:
+                    default_model = preferred
+                    break
+            else:
+                default_model = next(iter(self._bundled_models))
 
         self.input_file_var = tk.StringVar()
         self.output_dir_var = tk.StringVar()
@@ -310,6 +312,9 @@ class WhisprApp:
                 task=task,
                 language=language_arg,
                 vad_filter=self.vad_var.get(),
+                # Word timestamps are only needed for diarization; skipping them
+                # when not diarizing makes plain transcription noticeably faster.
+                word_timestamps=self.diarize_var.get(),
                 progress=lambda msg: self._append(self.status, msg),
                 on_progress=lambda f: self._set_progress(f, transcribe_label),
             )

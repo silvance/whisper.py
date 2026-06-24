@@ -55,8 +55,15 @@ VIDEO_EXTENSIONS = (
 # Sample rate Whisper operates at; converting to it keeps the WAV small.
 WHISPER_SAMPLE_RATE = 16000
 
-# Model sizes accepted by faster-whisper's ``WhisperModel``.
+# Model sizes accepted by faster-whisper's ``WhisperModel``. The English-only
+# ".en" models are smaller/faster and usually as accurate on English audio
+# (base.en mirrors whisper.cpp's ggml-base.en). The plain names are multilingual
+# and required for non-English audio or the translate task.
 MODEL_SIZES = (
+    "base.en",
+    "small.en",
+    "medium.en",
+    "tiny.en",
     "tiny",
     "base",
     "small",
@@ -241,6 +248,7 @@ def transcribe_audio(
     language: Optional[str] = None,
     beam_size: int = 5,
     vad_filter: bool = True,
+    word_timestamps: bool = False,
     progress: Optional[ProgressCallback] = None,
     on_progress: Optional[Callable[[float], None]] = None,
 ) -> TranscriptionResult:
@@ -299,7 +307,9 @@ def transcribe_audio(
         language=language,
         beam_size=beam_size,
         vad_filter=vad_filter,
-        word_timestamps=True,
+        # Word timestamps add an alignment pass; only compute them when needed
+        # (diarization uses them for word-level speaker assignment).
+        word_timestamps=word_timestamps,
     )
 
     segments: List[Segment] = []
