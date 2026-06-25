@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence, Tuple, Union
 
-from .resources import bundled_diarization_models
+from .resources import bundled_diarization_models, pyannote_cache_dir
 from .transcription import ProgressCallback, Segment, Word
 
 PathLike = Union[str, Path]
@@ -163,15 +163,27 @@ def _diarize_pyannote(
 
     token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
 
+    # When the offline cache is bundled, pass it as cache_dir too, so pyannote
+    # reads from it directly rather than relying solely on the HF_HUB_CACHE env
+    # (belt and suspenders against a stray HF cache path on the operator's box).
+    cache = pyannote_cache_dir()
+    load_kwargs = {}
+    if cache is not None and (cache / "hub").is_dir():
+        load_kwargs["cache_dir"] = str(cache / "hub")
+        if progress is not None:
+            progress(f"Using bundled pyannote cache: {cache / 'hub'}")
+
     if progress is not None:
         progress("Loading pyannote pipeline...")
     model_id = "pyannote/speaker-diarization-3.1"
     try:
         # pyannote 3.x / current huggingface_hub use `token`.
-        pipeline = Pipeline.from_pretrained(model_id, token=token)
+        pipeline = Pipeline.from_pretrained(model_id, token=token, **load_kwargs)
     except TypeError:
         # Older pyannote used `use_auth_token`.
-        pipeline = Pipeline.from_pretrained(model_id, use_auth_token=token)
+        pipeline = Pipeline.from_pretrained(
+            model_id, use_auth_token=token, **load_kwargs
+        )
     if pipeline is None:
         raise RuntimeError(
             "Could not load the pyannote pipeline. Accept the licenses for "

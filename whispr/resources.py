@@ -142,11 +142,16 @@ def configure_offline_hf_cache() -> Optional[Path]:
 
     No-op when no bundled cache is present (e.g. running from source), so normal
     online Hugging Face behaviour is unchanged.
+
+    When a bundle IS present these are set unconditionally (not setdefault): the
+    air-gapped app must use its own cache regardless of any HF_HOME / HF_HUB_CACHE
+    / HF_HUB_OFFLINE the operator's machine happens to have set, which would
+    otherwise point Hugging Face at the wrong (empty) cache in offline mode.
     """
     cache = pyannote_cache_dir()
     if cache is None:
         return None
-    os.environ.setdefault("HF_HOME", str(cache))
-    os.environ.setdefault("HF_HUB_CACHE", str(cache / "hub"))
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ["HF_HOME"] = str(cache)
+    os.environ["HF_HUB_CACHE"] = str(cache / "hub")
+    os.environ["HF_HUB_OFFLINE"] = "1"
     return cache
