@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence, Tuple, Union
 
-from .resources import bundled_diarization_models, pyannote_cache_dir
+from .resources import bundled_diarization_models
 from .transcription import ProgressCallback, Segment, Word
 
 PathLike = Union[str, Path]
@@ -129,13 +129,13 @@ def _diarize_pyannote(
     Loads from a bundled offline HF cache (``whispr_assets/pyannote``) when
     present; otherwise from the normal HF cache using ``HF_TOKEN``.
     """
+    # NB: HF offline mode + the bundled cache are configured at startup by
+    # resources.configure_offline_hf_cache(); it has to run before huggingface_hub
+    # is imported (which has already happened by here, via faster-whisper), so do
+    # NOT try to set HF_HOME / HF_HUB_OFFLINE in this function - it's too late.
     import torch
     from pyannote.audio import Pipeline
 
-    cache = pyannote_cache_dir()
-    if cache is not None:
-        os.environ.setdefault("HF_HOME", str(cache))
-        os.environ.setdefault("HF_HUB_OFFLINE", "1")
     token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
 
     if progress is not None:
