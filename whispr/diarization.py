@@ -12,6 +12,7 @@ and the rest of the package - does not require the optional dependencies.
 
 from __future__ import annotations
 
+import os
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -111,13 +112,20 @@ def diarize(
     if progress is not None:
         progress("Loading diarization models...")
 
+    # sherpa-onnx defaults each model to a single thread, which makes CPU
+    # diarization extremely slow; use all available cores.
+    num_threads = max(1, os.cpu_count() or 1)
+
     config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
         segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
             pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
                 model=seg_model
             ),
+            num_threads=num_threads,
         ),
-        embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=emb_model),
+        embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(
+            model=emb_model, num_threads=num_threads
+        ),
         clustering=sherpa_onnx.FastClusteringConfig(
             num_clusters=num_speakers if num_speakers else -1,
             threshold=threshold,
