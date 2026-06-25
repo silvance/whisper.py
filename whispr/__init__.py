@@ -1,4 +1,4 @@
-"""W.H.I.S.P.R. - a desktop GUI front-end for Whisper transcription.
+"""Whispers - a desktop GUI front-end for Whisper transcription.
 
 The transcription backend (:mod:`whispr.transcription`) is importable without the
 optional GUI/transcription dependencies; those are only needed to actually run a

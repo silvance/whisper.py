@@ -1,9 +1,9 @@
-"""W.H.I.S.P.R. desktop GUI for audio/video transcription.
+"""Whispers - desktop GUI for audio/video transcription and text translation.
 
 A small Tkinter application that wraps :mod:`whispr.transcription` (faster-whisper)
-so an operator can pick a recording, choose a model/language, and get a transcript
-without touching the command line. Transcription runs on a background thread so the
-UI stays responsive, and output is streamed segment-by-segment as it is produced.
+and :mod:`whispr.translation` (Argos Translate) so an operator can transcribe a
+recording or batch-translate text without touching the command line. Work runs on
+a background thread so the UI stays responsive, and output is streamed as produced.
 
 Run with ``python -m whispr`` or the ``whispr`` console script.
 """
@@ -112,7 +112,7 @@ class WhisprApp:
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("W.H.I.S.P.R. - Audio Transcription")
+        self.root.title("Whispers")
 
         # Bundled (offline) models take priority so the app works air-gapped.
         # Prefer the fast English base.en, then small, else the first bundled.
@@ -159,10 +159,24 @@ class WhisprApp:
 
     def _build_ui(self) -> None:
         self.root.minsize(680, 480)
+        try:
+            self.root.geometry("860x760")
+        except tk.TclError:
+            pass
+
+        # App header.
+        header = ttk.Frame(self.root, padding=(14, 10, 14, 4))
+        header.pack(fill="x")
+        ttk.Label(header, text="Whispers", font=("", 17, "bold")).pack(side="left")
+        ttk.Label(
+            header,
+            text="Offline transcription & translation",
+            font=("", 9),
+        ).pack(side="left", padx=(10, 0), pady=(7, 0))
 
         # Top-level mode switch: audio/video transcription vs text translation.
         self.main_nb = ttk.Notebook(self.root)
-        self.main_nb.pack(fill="both", expand=True)
+        self.main_nb.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         transcribe_tab = ttk.Frame(self.main_nb)
         self.main_nb.add(transcribe_tab, text="Transcribe")
 
@@ -352,8 +366,12 @@ class WhisprApp:
         # --- Output tabs ---------------------------------------------------
         tabs = ttk.Notebook(container)
         tabs.pack(fill="both", expand=True, pady=(12, 0))
-        self.output = ScrolledText(tabs, wrap="word", state="disabled", height=14)
-        self.status = ScrolledText(tabs, wrap="word", state="disabled", height=14)
+        self.output = ScrolledText(
+            tabs, wrap="word", state="disabled", height=14, font="TkFixedFont"
+        )
+        self.status = ScrolledText(
+            tabs, wrap="word", state="disabled", height=14, font="TkFixedFont"
+        )
         tabs.add(self.output, text="Transcript")
         tabs.add(self.status, text="Status")
 
@@ -402,14 +420,16 @@ class WhisprApp:
         paste_frame = ttk.LabelFrame(container, text="Translate text", padding=10)
         paste_frame.pack(fill="both", expand=True, pady=(10, 0))
         ttk.Label(paste_frame, text="Paste text to translate:").pack(anchor="w")
-        self.translate_input = ScrolledText(paste_frame, wrap="word", height=6)
+        self.translate_input = ScrolledText(
+            paste_frame, wrap="word", height=6, font="TkFixedFont"
+        )
         self.translate_input.pack(fill="both", expand=True, pady=(2, 6))
         ttk.Button(
             paste_frame, text="Translate", command=self._translate_paste_in_thread
         ).pack(anchor="w")
         ttk.Label(paste_frame, text="Result:").pack(anchor="w", pady=(6, 0))
         self.translate_output = ScrolledText(
-            paste_frame, wrap="word", height=6, state="disabled"
+            paste_frame, wrap="word", height=6, state="disabled", font="TkFixedFont"
         )
         self.translate_output.pack(fill="both", expand=True, pady=(2, 0))
 
@@ -1136,7 +1156,7 @@ class WhisprApp:
 
 
 def main() -> None:
-    """Launch the W.H.I.S.P.R. GUI."""
+    """Launch the Whispers GUI."""
     # Must happen before faster-whisper / pyannote / argostranslate are imported
     # (which only occurs once a job runs), so configuring at startup is early
     # enough. Points HF and Argos at the bundled offline caches when present;

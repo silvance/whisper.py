@@ -1,4 +1,4 @@
-"""PyInstaller entry point for the W.H.I.S.P.R. GUI bundle."""
+"""PyInstaller entry point for the Whispers GUI bundle."""
 
 from whispr.app import main
 

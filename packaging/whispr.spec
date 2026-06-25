@@ -1,4 +1,4 @@
-# PyInstaller spec for the W.H.I.S.P.R. GUI (one-dir bundle).
+# PyInstaller spec for the Whispers GUI (one-dir bundle).
 #
 # Build (sherpa-onnx diarizer, smaller):
 #     pip install "silvance-whisper[gui,bundle]"
