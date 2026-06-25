@@ -34,7 +34,9 @@ optional-dependencies.dev = [ "mypy", "pytest", "pytest-cov", "ruff", "scipy" ]
 # tkinter ships with CPython; faster-whisper (CTranslate2) is the CPU backend.
 optional-dependencies.gui = [ "faster-whisper", "ttkbootstrap", "sherpa-onnx" ]
 # Build-time tooling for producing offline, air-gapped PyInstaller bundles.
-optional-dependencies.bundle = [ "pyinstaller", "imageio-ffmpeg", "huggingface-hub" ]
+# huggingface-hub <1.0: pyannote 3.1.1 forwards the use_auth_token kwarg (removed
+# in huggingface_hub 1.0) into hf_hub_download.
+optional-dependencies.bundle = [ "pyinstaller", "imageio-ffmpeg", "huggingface-hub<1.0" ]
 # High-accuracy diarization backend (PyTorch-based; gated HF models). Preferred
 # over sherpa-onnx for hard/low-quality audio when installed. Pinned to 3.1.1:
 # newer releases require torchcodec, the gated community-1 PLDA, and add inference

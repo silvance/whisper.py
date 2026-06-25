@@ -71,7 +71,9 @@ jobs:
           # Always-present GUI runtime stack + build tools. faster-whisper/
           # ctranslate2 do the transcription; sherpa-onnx is the fallback diarizer.
           pip install faster-whisper ttkbootstrap sherpa-onnx
-          pip install pyinstaller imageio-ffmpeg huggingface-hub
+          # huggingface_hub <1.0: pyannote 3.1.1 forwards the (removed-in-1.0)
+          # use_auth_token kwarg into hf_hub_download; 0.x still accepts it.
+          pip install pyinstaller imageio-ffmpeg "huggingface_hub<1.0"
       - name: Install pyannote diarizer (CPU PyTorch)
         if: env.DIARIZER != 'sherpa'
         # Install CPU-only torch from PyTorch's CPU index FIRST so pyannote.audio
