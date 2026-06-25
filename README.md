@@ -160,10 +160,10 @@ result = whisper.decode(model, mel, options)
 print(result.text)
 ```
 
-## Graphical interface (W.H.I.S.P.R.)
+## Graphical interface (Whispers)
 
-This fork ships **W.H.I.S.P.R.**, a small desktop GUI for transcribing audio/video
-files without the command line. It is built for CPU-only hosts: instead of the
+This fork ships **Whispers**, a small desktop GUI for transcribing audio/video
+files (and translating text) without the command line. It is built for CPU-only hosts: instead of the
 PyTorch model above it uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
 (a CTranslate2 backend) with int8 quantization, which is considerably faster and
 lighter on CPU.
