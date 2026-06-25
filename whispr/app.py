@@ -47,6 +47,16 @@ COMMON_LANGUAGES = [
     "hi",
 ]
 
+# Diarization engine choices: dropdown label -> diarize() backend. "Auto" uses
+# pyannote when it's available, else sherpa. pyannote is best on hard/overlapping
+# audio; sherpa is lighter and faster and fine for clean audio.
+ENGINE_CHOICES = {
+    "Auto (pyannote if available)": "auto",
+    "pyannote - most accurate": "pyannote",
+    "sherpa - faster, for clean audio": "sherpa",
+}
+ENGINE_LABELS = list(ENGINE_CHOICES)
+
 
 class CollapsibleSection(ttk.Frame):
     """A titled section whose body can be collapsed to a single header row.
@@ -120,6 +130,7 @@ class WhisprApp:
         self.vad_var = tk.BooleanVar(value=True)
         self.convert_video_var = tk.BooleanVar(value=True)
         self.diarize_var = tk.BooleanVar(value=False)
+        self.engine_var = tk.StringVar(value=ENGINE_LABELS[0])
         self.num_speakers_var = tk.StringVar(value="")
         # Optional per-speaker names, created to match the speaker count and
         # applied to the diarized transcript (Speaker 1 -> first speaker, etc.).
@@ -255,28 +266,40 @@ class WhisprApp:
             command=self._update_speaker_state,
         ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
 
-        ttk.Label(spk_frame, text="Number of speakers (blank = auto)").grid(
+        ttk.Label(spk_frame, text="Engine").grid(
             row=1, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        self.engine_combo = ttk.Combobox(
+            spk_frame,
+            textvariable=self.engine_var,
+            values=ENGINE_LABELS,
+            state="readonly",
+            width=32,
+        )
+        self.engine_combo.grid(row=1, column=1, sticky="w", pady=4)
+
+        ttk.Label(spk_frame, text="Number of speakers (blank = auto)").grid(
+            row=2, column=0, sticky="w", padx=(0, 8), pady=4
         )
         self.num_speakers_entry = ttk.Entry(
             spk_frame, textvariable=self.num_speakers_var, width=10
         )
-        self.num_speakers_entry.grid(row=1, column=1, sticky="w", pady=4)
+        self.num_speakers_entry.grid(row=2, column=1, sticky="w", pady=4)
         # Entering a count reveals a name field per speaker (filled in below).
         self.num_speakers_var.trace_add("write", self._on_num_speakers_changed)
 
         ttk.Label(
-            spk_frame, text="Sensitivity (higher = fewer speakers; auto only)"
-        ).grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+            spk_frame, text="Sensitivity (higher = fewer speakers; sherpa only)"
+        ).grid(row=3, column=0, sticky="w", padx=(0, 8), pady=4)
         self.sensitivity_entry = ttk.Entry(
             spk_frame, textvariable=self.sensitivity_var, width=10
         )
-        self.sensitivity_entry.grid(row=2, column=1, sticky="w", pady=4)
+        self.sensitivity_entry.grid(row=3, column=1, sticky="w", pady=4)
 
         # Dynamic per-speaker name fields, rebuilt when the count changes.
         self.speaker_names_frame = ttk.Frame(spk_frame)
         self.speaker_names_frame.grid(
-            row=3, column=0, columnspan=2, sticky="ew", pady=(2, 0)
+            row=4, column=0, columnspan=2, sticky="ew", pady=(2, 0)
         )
 
         ttk.Label(
@@ -289,7 +312,7 @@ class WhisprApp:
             ),
             wraplength=420,
             justify="left",
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         # --- Run + progress -----------------------------------------------
         run_frame = ttk.Frame(container)
@@ -338,9 +361,12 @@ class WhisprApp:
         self.output_dir_button.configure(state=state)
 
     def _update_speaker_state(self) -> None:
-        state = "normal" if self.diarize_var.get() else "disabled"
+        enabled = self.diarize_var.get()
+        state = "normal" if enabled else "disabled"
         self.num_speakers_entry.configure(state=state)
         self.sensitivity_entry.configure(state=state)
+        # Comboboxes use "readonly" (selectable but not free-text) when enabled.
+        self.engine_combo.configure(state="readonly" if enabled else "disabled")
         self._rebuild_speaker_name_fields()
 
     def _on_num_speakers_changed(self, *_args: object) -> None:
@@ -585,6 +611,7 @@ class WhisprApp:
         try:
             speaker_segments = diarize(
                 diar_wav,
+                backend=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
                 num_speakers=self._parse_num_speakers(),
                 threshold=self._parse_threshold(),
                 progress=lambda msg: self._append(self.status, msg),

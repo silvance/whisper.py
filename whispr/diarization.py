@@ -72,9 +72,13 @@ def _read_wav_mono16k(path: PathLike):
     return data, sample_rate
 
 
+BACKENDS = ("auto", "pyannote", "sherpa")
+
+
 def diarize(
     wav_path: PathLike,
     *,
+    backend: str = "auto",
     segmentation_model: Optional[PathLike] = None,
     embedding_model: Optional[PathLike] = None,
     num_speakers: Optional[int] = None,
@@ -84,11 +88,32 @@ def diarize(
 ) -> List[SpeakerSegment]:
     """Diarize a WAV into speaker-labelled segments.
 
-    Uses pyannote.audio when it is installed (much better on hard/low-quality
-    audio); otherwise falls back to the sherpa-onnx ONNX pipeline. Both return
-    the same ``SpeakerSegment`` list, so the rest of the app is unaffected.
+    ``backend`` selects the engine:
+
+    * ``"auto"`` (default) - pyannote.audio if installed, else sherpa-onnx.
+    * ``"pyannote"`` - force pyannote (best on hard/low-quality audio).
+    * ``"sherpa"`` - force the sherpa-onnx ONNX pipeline (no PyTorch, faster;
+      good enough for clean audio).
+
+    Both engines return the same ``SpeakerSegment`` list, so the rest of the app
+    is unaffected.
     """
-    if _pyannote_available():
+    backend = (backend or "auto").lower()
+    if backend not in BACKENDS:
+        raise ValueError(
+            f"unknown diarization backend {backend!r}; choose from {', '.join(BACKENDS)}"
+        )
+
+    if backend == "pyannote" and not _pyannote_available():
+        raise RuntimeError(
+            "The pyannote backend was requested but pyannote.audio is not "
+            "installed. Choose the sherpa backend or install the pyannote extra."
+        )
+
+    use_pyannote = backend == "pyannote" or (
+        backend == "auto" and _pyannote_available()
+    )
+    if use_pyannote:
         return _diarize_pyannote(
             wav_path,
             num_speakers=num_speakers,
