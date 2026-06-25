@@ -16,7 +16,7 @@ import traceback
 from pathlib import Path
 from tkinter import filedialog, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Optional
 
 from .diarization import assign_speakers, diarize
 from .resources import bundled_models
@@ -212,6 +212,17 @@ class WhisprApp:
             spk_frame, textvariable=self.sensitivity_var, width=10
         )
         self.sensitivity_entry.grid(row=2, column=1, sticky="w", pady=4)
+
+        ttk.Label(
+            spk_frame,
+            text=(
+                "Tip: if you know how many people are in the recording, enter it "
+                "above. In the Transcript, click any [speaker] tag to fix that "
+                "line or rename a speaker."
+            ),
+            wraplength=420,
+            justify="left",
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         # --- Run + progress -----------------------------------------------
         run_frame = ttk.Frame(container)
@@ -496,37 +507,90 @@ class WhisprApp:
                 self.output.insert("end", result.text + "\n")
             else:
                 bound: set[str] = set()
-                for segment in result.segments:
+                for index, segment in enumerate(result.segments):
                     sid = segment.speaker or "UNKNOWN"
                     name = self._speaker_names.get(sid, sid)
-                    tag = f"spk::{sid}"
+                    spk_tag = f"spk::{sid}"
+                    line_tag = f"line::{index}"
                     if sid not in bound:
                         bound.add(sid)
-                        self.output.tag_config(tag, underline=True)
-                        self.output.tag_bind(
-                            tag, "<Button-1>", self._rename_handler(sid)
-                        )
-                        self.output.tag_bind(
-                            tag, "<Enter>", self._cursor_handler("hand2")
-                        )
-                        self.output.tag_bind(tag, "<Leave>", self._cursor_handler(""))
-                    self.output.insert("end", f"[{name}]", (tag,))
+                        self.output.tag_config(spk_tag, underline=True)
+                    # Bind on a per-line tag so a click knows which segment it
+                    # hit: the menu can both fix this one line and rename globally.
+                    self.output.tag_bind(
+                        line_tag, "<Button-1>", self._speaker_menu_handler(index)
+                    )
+                    self.output.tag_bind(
+                        line_tag, "<Enter>", self._cursor_handler("hand2")
+                    )
+                    self.output.tag_bind(line_tag, "<Leave>", self._cursor_handler(""))
+                    self.output.insert("end", f"[{name}]", (spk_tag, line_tag))
                     self.output.insert("end", f" {segment.text}\n")
             self.output.configure(state="disabled")
 
         self.root.after(0, _do)
-
-    def _rename_handler(self, speaker_id: str) -> Callable[[object], None]:
-        def handler(_event: object) -> None:
-            self._rename_speaker(speaker_id)
-
-        return handler
 
     def _cursor_handler(self, cursor: str) -> Callable[[object], None]:
         def handler(_event: object) -> None:
             self.output.config(cursor=cursor)
 
         return handler
+
+    def _ordered_speaker_ids(self) -> List[str]:
+        """Distinct speaker ids in first-appearance order across the result."""
+        ids: List[str] = []
+        seen: set[str] = set()
+        if self._result is not None:
+            for segment in self._result.segments:
+                sid = segment.speaker or "UNKNOWN"
+                if sid not in seen:
+                    seen.add(sid)
+                    ids.append(sid)
+        return ids
+
+    def _speaker_menu_handler(self, index: int) -> Callable[[object], None]:
+        def handler(event: object) -> None:
+            result = self._result
+            if result is None or index >= len(result.segments):
+                return
+            current = result.segments[index].speaker or "UNKNOWN"
+            menu = tk.Menu(self.root, tearoff=0)
+            # Reassign just this line to the correct speaker - the fix for the
+            # boundary/overlap errors diarization can't get right on its own.
+            for sid in self._ordered_speaker_ids():
+                name = self._speaker_names.get(sid, sid)
+                mark = "  ✓" if sid == current else ""
+                menu.add_command(
+                    label=f"This line is {name}{mark}",
+                    command=self._reassign_command(index, sid),
+                )
+            menu.add_separator()
+            cur_name = self._speaker_names.get(current, current)
+            menu.add_command(
+                label=f"Rename '{cur_name}' everywhere…",
+                command=lambda: self._rename_speaker(current),
+            )
+            try:
+                menu.tk_popup(event.x_root, event.y_root)  # type: ignore[attr-defined]
+            finally:
+                menu.grab_release()
+
+        return handler
+
+    def _reassign_command(self, index: int, speaker_id: str) -> Callable[[], None]:
+        def command() -> None:
+            self._reassign_segment(index, speaker_id)
+
+        return command
+
+    def _reassign_segment(self, index: int, speaker_id: str) -> None:
+        result = self._result
+        if result is None or index >= len(result.segments):
+            return
+        result.segments[index].speaker = speaker_id
+        self._render_transcript()
+        if self._result_source and self._result_outdir:
+            self._save_outputs(result, self._result_source, self._result_outdir)
 
     def _rename_speaker(self, speaker_id: str) -> None:
         current = self._speaker_names.get(speaker_id, speaker_id)

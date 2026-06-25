@@ -75,6 +75,55 @@ def test_assign_speakers_gap_word_uses_nearest():
     assert out[0].speaker == "SPEAKER_00"  # nearest turn, not None
 
 
+def test_assign_speakers_smooths_spurious_short_run():
+    # A spurious 1-word island (from overlap/jitter) wedged between two longer
+    # runs of the same speaker should be absorbed back into them.
+    segment = Segment(
+        start=0.0,
+        end=4.0,
+        text="alpha beta gamma delta epsilon",
+        words=[
+            Word(start=0.0, end=0.8, word=" alpha"),
+            Word(start=0.8, end=1.6, word=" beta"),
+            Word(start=1.6, end=1.9, word=" gamma"),  # spurious single-word blip
+            Word(start=1.9, end=2.8, word=" delta"),
+            Word(start=2.8, end=4.0, word=" epsilon"),
+        ],
+    )
+    speakers = [
+        SpeakerSegment(start=0.0, end=1.6, speaker="SPEAKER_00"),
+        SpeakerSegment(start=1.6, end=1.9, speaker="SPEAKER_01"),  # blip turn
+        SpeakerSegment(start=1.9, end=4.0, speaker="SPEAKER_00"),
+    ]
+    out = assign_speakers([segment], speakers)
+    # Without smoothing this would split into three runs; the blip is absorbed.
+    assert [s.speaker for s in out] == ["SPEAKER_00"]
+    assert out[0].text == "alpha beta gamma delta epsilon"
+
+
+def test_assign_speakers_keeps_real_short_turn_at_min_length():
+    # A clearly-spoken short turn longer than the smoothing window survives.
+    segment = Segment(
+        start=0.0,
+        end=4.0,
+        text="long opening yes long closing",
+        words=[
+            Word(start=0.0, end=1.2, word=" long"),
+            Word(start=1.2, end=1.6, word=" opening"),
+            Word(start=1.6, end=2.6, word=" yes"),  # 1.0s > 0.8s window
+            Word(start=2.6, end=3.2, word=" long"),
+            Word(start=3.2, end=4.0, word=" closing"),
+        ],
+    )
+    speakers = [
+        SpeakerSegment(start=0.0, end=1.6, speaker="SPEAKER_00"),
+        SpeakerSegment(start=1.6, end=2.6, speaker="SPEAKER_01"),
+        SpeakerSegment(start=2.6, end=4.0, speaker="SPEAKER_00"),
+    ]
+    out = assign_speakers([segment], speakers)
+    assert [s.speaker for s in out] == ["SPEAKER_00", "SPEAKER_01", "SPEAKER_00"]
+
+
 def test_diarize_without_backend(tmp_path):
     # sherpa-onnx is not installed in this environment -> clear RuntimeError.
     wav = tmp_path / "audio.wav"
