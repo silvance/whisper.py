@@ -160,10 +160,66 @@ def fetch_diarization() -> None:
     print(f"diarization segmentation -> {segmentation_dest}")
 
 
+# Argos Translate source languages to bundle (each translates -> English). The
+# intel-leaning set; all are present in the Argos index (Pashto has no Argos pack).
+# Override on the command line / via the workflow input.
+ARGOS_DEFAULT_LANGS = ["ar", "ru", "zh", "fa", "uk", "he", "ko"]
+
+
+def fetch_argos(codes: List[str]) -> None:
+    """Install Argos packs (<code> -> en) and warm the offline sentence splitter.
+
+    Everything lives under Argos's data dir, which it derives from XDG_DATA_HOME;
+    pointing that at ``whispr_assets/argos`` puts the packs and the MiniSBD model
+    cache inside the bundle. A sample translation per language is then run, which
+    downloads the small per-language MiniSBD onnx into the cache - so at runtime,
+    air-gapped, no model download is attempted. Unavailable codes are skipped.
+    """
+    argos_home = ASSETS / "argos"
+    (argos_home / "argos-translate").mkdir(parents=True, exist_ok=True)
+    # Must be set before argostranslate is imported (read into settings at import).
+    os.environ["XDG_DATA_HOME"] = str(argos_home)
+    os.environ["ARGOS_CHUNK_TYPE"] = "MINISBD"
+
+    import argostranslate.package as package
+    import argostranslate.translate as translate
+
+    print("updating Argos package index")
+    package.update_package_index()
+    available = package.get_available_packages()
+
+    installed_codes: List[str] = []
+    for code in codes:
+        match = next(
+            (p for p in available if p.from_code == code and p.to_code == "en"), None
+        )
+        if match is None:
+            print(f"WARNING: no Argos pack for {code} -> en; skipping")
+            continue
+        print(f"downloading Argos pack {code} -> en")
+        package.install_from_path(match.download())
+        installed_codes.append(code)
+        print(f"argos {code} -> en installed")
+
+    if not installed_codes:
+        raise SystemExit("no Argos packs were installed (check the language codes)")
+
+    # Warm the MiniSBD cache (and prove the pack works) with a sample translation.
+    for code in installed_codes:
+        try:
+            sample = translate.translate("Test sentence. Another one.", code, "en")
+            print(f"warmup {code} -> en ok: {sample!r}")
+        except Exception as exc:  # noqa: BLE001 - report and continue
+            print(f"WARNING: warmup {code} -> en failed: {exc}")
+
+    print(f"argos data -> {argos_home / 'argos-translate'}")
+
+
 def main(argv: List[str]) -> None:
     if not argv:
         raise SystemExit(
-            "usage: fetch_assets.py [ffmpeg | models <names> | diarization | pyannote]"
+            "usage: fetch_assets.py "
+            "[ffmpeg | models <names> | diarization | pyannote | argos <codes>]"
         )
     command = argv[0]
     if command == "ffmpeg":
@@ -175,6 +231,9 @@ def main(argv: List[str]) -> None:
         fetch_diarization()
     elif command == "pyannote":
         fetch_pyannote()
+    elif command == "argos":
+        codes = argv[1].split(",") if len(argv) > 1 else ARGOS_DEFAULT_LANGS
+        fetch_argos([c.strip() for c in codes if c.strip()])
     else:
         raise SystemExit(f"unknown command: {command}")
 
