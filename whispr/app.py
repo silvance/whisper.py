@@ -23,6 +23,7 @@ from .resources import bundled_models, configure_offline_hf_cache
 from .transcription import (
     AUDIO_EXTENSIONS,
     MODEL_SIZES,
+    CancelledError,
     TranscriptionResult,
     convert_to_wav,
     is_video,
@@ -144,6 +145,9 @@ class WhisprApp:
         self._result_source: Optional[Path] = None
         self._result_outdir: Optional[Path] = None
         self._speaker_names: Dict[str, str] = {}
+
+        # Set while a job runs so the Cancel button can stop it cooperatively.
+        self._cancel_event = threading.Event()
 
         self._build_ui()
 
@@ -317,17 +321,21 @@ class WhisprApp:
         # --- Run + progress -----------------------------------------------
         run_frame = ttk.Frame(container)
         run_frame.pack(fill="x", pady=(12, 0))
-        run_frame.columnconfigure(1, weight=1)
+        run_frame.columnconfigure(2, weight=1)
         self.run_button = ttk.Button(run_frame, text="Run", command=self.run_in_thread)
         self.run_button.grid(row=0, column=0, sticky="w")
+        self.cancel_button = ttk.Button(
+            run_frame, text="Cancel", command=self.cancel, state="disabled"
+        )
+        self.cancel_button.grid(row=0, column=1, sticky="w", padx=(8, 0))
         self.progress_bar = ttk.Progressbar(run_frame, mode="indeterminate")
-        self.progress_bar.grid(row=0, column=1, sticky="ew", padx=(10, 0))
+        self.progress_bar.grid(row=0, column=2, sticky="ew", padx=(10, 0))
         self.toggle_settings_button = ttk.Button(
             run_frame, text="Hide settings", command=self._toggle_all_settings
         )
-        self.toggle_settings_button.grid(row=0, column=2, padx=(10, 0))
+        self.toggle_settings_button.grid(row=0, column=3, padx=(10, 0))
         ttk.Label(run_frame, textvariable=self.progress_label_var).grid(
-            row=1, column=0, columnspan=2, sticky="w", pady=(4, 0)
+            row=1, column=0, columnspan=4, sticky="w", pady=(4, 0)
         )
 
         # --- Output tabs ---------------------------------------------------
@@ -429,6 +437,7 @@ class WhisprApp:
         def _do() -> None:
             if busy:
                 self.run_button.configure(state="disabled")
+                self.cancel_button.configure(state="normal")
                 # Indeterminate while we don't yet have a measurable fraction
                 # (setup, ffmpeg conversion, model loading).
                 self.progress_bar.configure(mode="indeterminate")
@@ -440,6 +449,7 @@ class WhisprApp:
                 self.progress_bar["value"] = 0
                 self.progress_label_var.set(message or "Idle")
                 self.run_button.configure(state="normal")
+                self.cancel_button.configure(state="disabled")
 
         self.root.after(0, _do)
 
@@ -478,19 +488,33 @@ class WhisprApp:
     def run_in_thread(self) -> None:
         # Collapse the settings so the transcript and progress get the space.
         self._collapse_all_settings()
+        self._cancel_event.clear()
         threading.Thread(target=self._run, daemon=True).start()
+
+    def cancel(self) -> None:
+        """Request the running job stop at its next cancellation checkpoint."""
+        self._cancel_event.set()
+        self.cancel_button.configure(state="disabled")
+        self._append(self.status, "Cancelling… (will stop at the next checkpoint)")
+        self.progress_label_var.set("Cancelling…")
 
     def _run(self) -> None:
         task = self.task_var.get()
         self._set_busy(
             True, "Translating..." if task == "translate" else "Transcribing..."
         )
+        final_status = "Finished"
         temp_wav: Optional[Path] = None
         try:
             self._clear(self.output)
             path = self.input_file_var.get()
             if not path or not Path(path).exists():
-                self._append(self.status, f"Input file does not exist: {path}")
+                self._append(
+                    self.status,
+                    "Couldn't find that file. Pick an audio or video file with "
+                    f"Browse… (got: {path or 'nothing selected'}).",
+                )
+                final_status = "No input file"
                 return
 
             language = self.language_var.get().strip()
@@ -534,6 +558,7 @@ class WhisprApp:
                 word_timestamps=self.diarize_var.get(),
                 progress=lambda msg: self._append(self.status, msg),
                 on_progress=lambda f: self._set_progress(f, transcribe_label),
+                cancelled=self._cancel_event.is_set,
             )
 
             self._append(
@@ -558,16 +583,69 @@ class WhisprApp:
                 self._save_outputs(result, Path(path), Path(outdir))
 
             self._append(self.status, "Finished.")
-        except Exception:
-            self._append(self.status, "UNEXPECTED ERROR:")
+        except CancelledError:
+            self._append(self.status, "Cancelled.")
+            final_status = "Cancelled"
+        except Exception as exc:
+            self._append(self.status, self._friendly_error(exc))
+            # Keep the full traceback in the log for troubleshooting.
             self._append(self.status, traceback.format_exc())
+            final_status = "Error"
         finally:
             if temp_wav is not None:
                 try:
                     temp_wav.unlink()
                 except OSError:
                     pass
-            self._set_busy(False, "Finished")
+            self._set_busy(False, final_status)
+
+    def _friendly_error(self, exc: Exception) -> str:
+        """Map a raw exception to a plain-English line for non-technical users.
+
+        The full traceback is still written to the Status log right after this.
+        """
+        name = type(exc).__name__
+        msg = str(exc)
+        low = msg.lower()
+        if isinstance(exc, FileNotFoundError) or "no such file" in low:
+            return f"A required file was missing: {msg}"
+        if "ffmpeg" in low:
+            return (
+                "Couldn't run ffmpeg, which is needed to read this file. The "
+                "packaged app includes ffmpeg; if running from source, install "
+                "ffmpeg and make sure it's on your PATH."
+            )
+        if "faster-whisper is not installed" in low or "faster_whisper" in low:
+            return (
+                "The transcription engine isn't installed "
+                "(pip install 'silvance-whisper[gui]')."
+            )
+        if "sherpa-onnx is not installed" in low:
+            return (
+                "The sherpa speaker engine isn't installed. Switch Engine to "
+                "pyannote, or install sherpa-onnx."
+            )
+        if "pyannote.audio is not installed" in low:
+            return (
+                "The pyannote speaker engine isn't installed. Switch Engine to "
+                "sherpa, or use a build that includes pyannote."
+            )
+        if (
+            "no diarization models" in low
+            or "offline mode" in low
+            or "localentrynotfound" in name.lower()
+        ):
+            return (
+                "Couldn't load the speaker models. Use a build that bundles them, "
+                "switch the Engine, or untick 'Identify speakers' to transcribe only."
+            )
+        if "memoryerror" in name.lower() or "out of memory" in low:
+            return (
+                "Ran out of memory. Try a smaller model (e.g. base.en) or a "
+                "shorter recording."
+            )
+        short = msg.splitlines()[0] if msg else name
+        return f"Something went wrong ({name}): {short}"
 
     def _parse_num_speakers(self) -> Optional[int]:
         raw = self.num_speakers_var.get().strip()
@@ -616,6 +694,7 @@ class WhisprApp:
                 threshold=self._parse_threshold(),
                 progress=lambda msg: self._append(self.status, msg),
                 on_progress=lambda f: self._set_progress(f, "Identifying speakers"),
+                cancelled=self._cancel_event.is_set,
             )
             result.segments = assign_speakers(result.segments, speaker_segments)
             count = len({seg.speaker for seg in speaker_segments})

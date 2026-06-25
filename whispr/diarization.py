@@ -19,7 +19,13 @@ from pathlib import Path
 from typing import Callable, List, Optional, Sequence, Tuple, Union
 
 from .resources import bundled_diarization_models, pyannote_cache_dir
-from .transcription import ProgressCallback, Segment, Word
+from .transcription import (
+    CancelCallback,
+    CancelledError,
+    ProgressCallback,
+    Segment,
+    Word,
+)
 
 PathLike = Union[str, Path]
 
@@ -85,6 +91,7 @@ def diarize(
     threshold: float = 0.5,
     progress: Optional[ProgressCallback] = None,
     on_progress: Optional[Callable[[float], None]] = None,
+    cancelled: Optional[CancelCallback] = None,
 ) -> List[SpeakerSegment]:
     """Diarize a WAV into speaker-labelled segments.
 
@@ -119,6 +126,7 @@ def diarize(
             num_speakers=num_speakers,
             progress=progress,
             on_progress=on_progress,
+            cancelled=cancelled,
         )
     return _diarize_sherpa(
         wav_path,
@@ -128,6 +136,7 @@ def diarize(
         threshold=threshold,
         progress=progress,
         on_progress=on_progress,
+        cancelled=cancelled,
     )
 
 
@@ -170,12 +179,18 @@ def _diarize_pyannote(
     num_speakers: Optional[int] = None,
     progress: Optional[ProgressCallback] = None,
     on_progress: Optional[Callable[[float], None]] = None,
+    cancelled: Optional[CancelCallback] = None,
 ) -> List[SpeakerSegment]:
     """Diarize with pyannote.audio (speaker-diarization-3.1) on CPU.
 
     Loads from a bundled offline HF cache (``whispr_assets/pyannote``) when
     present; otherwise from the normal HF cache using ``HF_TOKEN``.
+
+    pyannote runs inference as a single call, so cancellation is only honoured at
+    the phase boundaries here (before loading and before inference), not mid-pass.
     """
+    if cancelled is not None and cancelled():
+        raise CancelledError("Diarization cancelled.")
     # NB: HF offline mode + the bundled cache are configured at startup by
     # resources.configure_offline_hf_cache(); it has to run before huggingface_hub
     # is imported (which has already happened by here, via faster-whisper), so do
@@ -230,6 +245,8 @@ def _diarize_pyannote(
     torch.set_num_threads(max(1, os.cpu_count() or 1))
     pipeline.to(torch.device("cpu"))
 
+    if cancelled is not None and cancelled():
+        raise CancelledError("Diarization cancelled.")
     if progress is not None:
         progress("Identifying speakers (pyannote)...")
     params = {"num_speakers": num_speakers} if num_speakers else {}
@@ -270,6 +287,7 @@ def _diarize_sherpa(
     threshold: float = 0.5,
     progress: Optional[ProgressCallback] = None,
     on_progress: Optional[Callable[[float], None]] = None,
+    cancelled: Optional[CancelCallback] = None,
 ) -> List[SpeakerSegment]:
     """Diarize a 16 kHz mono WAV into speaker-labelled segments.
 
@@ -336,19 +354,22 @@ def _diarize_sherpa(
             f"diarization expects {sd.sample_rate} Hz audio, got {sample_rate} Hz"
         )
 
+    if cancelled is not None and cancelled():
+        raise CancelledError("Diarization cancelled.")
     if progress is not None:
         progress("Identifying speakers...")
 
     def _on_chunk(num_processed: int, num_total: int, *_extra) -> int:
+        if cancelled is not None and cancelled():
+            raise CancelledError("Diarization cancelled.")
         if on_progress is not None and num_total:
             on_progress(min(num_processed / num_total, 1.0))
         return 0
 
+    # Always pass the callback so cancellation is checked even without on_progress.
+    result = sd.process(samples, callback=_on_chunk).sort_by_start_time()
     if on_progress is not None:
-        result = sd.process(samples, callback=_on_chunk).sort_by_start_time()
         on_progress(1.0)
-    else:
-        result = sd.process(samples).sort_by_start_time()
     return [
         SpeakerSegment(start=s.start, end=s.end, speaker=f"SPEAKER_{s.speaker:02d}")
         for s in result
