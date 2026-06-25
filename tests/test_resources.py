@@ -85,6 +85,21 @@ def test_configure_offline_hf_cache_present(tmp_path, monkeypatch):
     assert os.environ["HF_HUB_OFFLINE"] == "1"
 
 
+def test_configure_offline_hf_cache_overrides_stale_env(tmp_path, monkeypatch):
+    # An operator machine with pre-set HF vars must not win: the bundle has to
+    # use its own cache, or offline lookups land in the wrong (empty) cache.
+    assets = tmp_path / "whispr_assets"
+    (assets / "pyannote" / "hub").mkdir(parents=True)
+    monkeypatch.setenv(resources.ENV_ASSETS, str(assets))
+    monkeypatch.setenv("HF_HOME", "/some/stale/hf")
+    monkeypatch.setenv("HF_HUB_CACHE", "/some/stale/hf/hub")
+
+    resources.configure_offline_hf_cache()
+    assert os.environ["HF_HOME"] == str(assets / "pyannote")
+    assert os.environ["HF_HUB_CACHE"] == str(assets / "pyannote" / "hub")
+    assert os.environ["HF_HUB_OFFLINE"] == "1"
+
+
 def test_configure_offline_hf_cache_absent_is_noop(tmp_path, monkeypatch):
     monkeypatch.setenv(resources.ENV_ASSETS, str(tmp_path / "empty"))
     for var in ("HF_HOME", "HF_HUB_CACHE", "HF_HUB_OFFLINE"):
