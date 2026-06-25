@@ -160,7 +160,8 @@ def _diarize_pyannote(
     if progress is not None:
         progress("Identifying speakers (pyannote)...")
     params = {"num_speakers": num_speakers} if num_speakers else {}
-    annotation = pipeline(str(wav_path), **params)
+    output = pipeline(str(wav_path), **params)
+    annotation = _as_annotation(output)
 
     segments = [
         SpeakerSegment(start=turn.start, end=turn.end, speaker=speaker)
@@ -170,6 +171,21 @@ def _diarize_pyannote(
     if on_progress is not None:
         on_progress(1.0)
     return segments
+
+
+def _as_annotation(output):
+    """Return the pyannote ``Annotation`` from a pipeline result.
+
+    Older pyannote returns the ``Annotation`` directly; newer versions wrap it in
+    a ``DiarizeOutput`` exposing it as ``.speaker_diarization`` (or ``.diarization``).
+    """
+    if hasattr(output, "itertracks"):
+        return output
+    for attr in ("speaker_diarization", "diarization"):
+        inner = getattr(output, attr, None)
+        if inner is not None and hasattr(inner, "itertracks"):
+            return inner
+    raise RuntimeError(f"Unexpected pyannote output type: {type(output).__name__}")
 
 
 def _diarize_sherpa(
