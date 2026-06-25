@@ -199,23 +199,36 @@ and removed afterwards. This step requires `ffmpeg` to be installed and on `PATH
 ### Speaker identification (diarization)
 
 Enable **Identify speakers (diarization)** to label who spoke when. Each transcript
-line (and `.srt` cue) is prefixed with a speaker tag, e.g. `[SPEAKER_00]` — click a
-tag to rename that speaker everywhere. Leave **Number of speakers** blank to
-auto-detect, or enter a count when you know it (the most reliable control). In
-auto mode, **Speaker sensitivity** tunes clustering: higher merges more (fewer
-speakers), lower splits more (more speakers); it has no effect when a count is set.
+line (and `.srt` cue) is prefixed with a speaker tag, e.g. `[SPEAKER_00]`. Leave
+**Number of speakers** blank to auto-detect, or enter a count when you know it (the
+most reliable control). Entering a count also reveals optional **Speaker N** name
+fields, so the transcript comes out labelled with real names instead of
+`SPEAKER_00`/`SPEAKER_01`. In auto mode, **Speaker sensitivity** tunes clustering:
+higher merges more (fewer speakers), lower splits more (more speakers); it has no
+effect when a count is set or when using pyannote.
 
-Diarization uses [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (ONNX /
-CPU, no PyTorch) and needs two models — a segmentation model and a speaker
-embedding model — placed at `whispr_assets/diarization/segmentation.onnx` and
-`whispr_assets/diarization/embedding.onnx` (the offline bundle includes them; see
-below). The embedding model is NeMo TitaNet-large (English). The audio is
-normalised to 16 kHz mono with ffmpeg first.
+**Correcting speakers.** Diarization on hard or overlapping audio is never perfect,
+so the transcript is editable: click any `[speaker]` tag to **rename that speaker
+everywhere** (bulk) or **move just that line to a different speaker** (individual).
+The labelling a diarizer assigns is arbitrary, so if two names land on the wrong
+voices it's a one-click swap.
 
-Speaker labels are assigned **per word** (using Whisper word timestamps): a single
-transcript segment that spans a speaker change is split at the boundary, so rapid
-back-and-forth dialogue is attributed correctly rather than lumped onto one
-speaker.
+**Backends.** Two are supported and the app picks automatically:
+
+- **pyannote.audio** (`speaker-diarization-3.1`, PyTorch) — used when installed.
+  Much better on hard / low-quality / overlapping audio, so it's the default for
+  deployed bundles. Loads from a bundled offline model cache at
+  `whispr_assets/pyannote` (no network or token needed at runtime; see below).
+- **sherpa-onnx** (ONNX / CPU, no PyTorch) — the lighter fallback when pyannote
+  isn't installed. Needs a segmentation model and a speaker embedding model at
+  `whispr_assets/diarization/segmentation.onnx` and `.../embedding.onnx` (embedding
+  is NeMo TitaNet-large, English).
+
+The audio is normalised to 16 kHz mono with ffmpeg first. Speaker labels are
+assigned **per word** (using Whisper word timestamps): a single transcript segment
+that spans a speaker change is split at the boundary, and a smoothing pass absorbs
+stray sub-second fragments, so rapid back-and-forth is attributed correctly rather
+than lumped onto one speaker.
 
 The transcription backend is also usable directly from Python:
 
@@ -240,15 +253,33 @@ fetched at runtime.
 builds on hosted Windows and Linux runners and uploads `whispr-windows-x86_64` and
 `whispr-linux-x86_64` artifacts. The build runners use the internet; the target
 machines never do. You can choose which models to bundle (default
-`small,medium,large-v3`).
+`small,medium,large-v3`) and which **diarizer** to include (default `pyannote`).
+
+The **pyannote** diarizer uses gated Hugging Face models, so its bundle build
+needs a token. Add a repository secret named **`HF_TOKEN`** (Settings → Secrets
+and variables → Actions) holding a Hugging Face token whose account has accepted
+the licenses for `pyannote/speaker-diarization-3.1`, `pyannote/segmentation-3.0`,
+and `pyannote/wespeaker-voxceleb-resnet34-LM`. The models are downloaded at build
+time and baked into the bundle's offline cache; the deployed app needs neither the
+token nor network access. Choose the `sherpa` diarizer instead for a smaller,
+token-free build.
 
 To build locally instead on a connected machine of each OS:
 
 ```bash
+# sherpa-onnx diarizer (smaller, no token)
 pip install "silvance-whisper[gui,bundle]"
 python packaging/fetch_assets.py ffmpeg
 python packaging/fetch_assets.py models small,medium,large-v3
 python packaging/fetch_assets.py diarization
+pyinstaller --noconfirm packaging/whispr.spec      # output in dist/whispr/
+
+# pyannote diarizer (best quality; adds CPU PyTorch, needs a token)
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install "silvance-whisper[gui,bundle,pyannote]"
+python packaging/fetch_assets.py ffmpeg
+python packaging/fetch_assets.py models small,medium,large-v3
+HF_TOKEN=hf_... python packaging/fetch_assets.py pyannote
 pyinstaller --noconfirm packaging/whispr.spec      # output in dist/whispr/
 ```
 

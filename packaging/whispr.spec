@@ -1,19 +1,33 @@
 # PyInstaller spec for the W.H.I.S.P.R. GUI (one-dir bundle).
 #
-# Build:
+# Build (sherpa-onnx diarizer, smaller):
 #     pip install "silvance-whisper[gui,bundle]"
 #     python packaging/fetch_assets.py ffmpeg
 #     python packaging/fetch_assets.py models small,medium,large-v3
+#     python packaging/fetch_assets.py diarization
 #     pyinstaller --noconfirm packaging/whispr.spec
 #
+# Build (pyannote diarizer, best quality on hard audio; adds CPU PyTorch):
+#     pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+#     pip install "silvance-whisper[gui,bundle,pyannote]"
+#     python packaging/fetch_assets.py ffmpeg
+#     python packaging/fetch_assets.py models small,medium,large-v3
+#     HF_TOKEN=... python packaging/fetch_assets.py pyannote
+#     pyinstaller --noconfirm packaging/whispr.spec
+#
+# The spec auto-detects whether pyannote.audio is installed: if so it bundles the
+# PyTorch stack and the offline pyannote model cache; otherwise it builds the
+# lighter sherpa-onnx-only bundle and excludes torch.
+#
 # The resulting dist/whispr/ folder is fully self-contained (Python runtime, all
-# dependencies, the ffmpeg binary, and the Whisper models) and can be copied to an
-# air-gapped machine and run with no network access.
+# dependencies, the ffmpeg binary, and the Whisper + diarization models) and can be
+# copied to an air-gapped machine and run with no network access.
 
+import importlib.util
 import os
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, copy_metadata
 
 # SPECPATH is injected by PyInstaller and is the directory containing this spec
 # (i.e. the packaging/ folder). Paths in the spec are resolved relative to it, so
@@ -22,23 +36,73 @@ from PyInstaller.utils.hooks import collect_all
 SPEC_DIR = Path(SPECPATH)  # noqa: F821 - provided by PyInstaller at exec time
 REPO_ROOT = SPEC_DIR.parent
 
+# pyannote.audio (PyTorch) is bundled only when it is installed in the build
+# environment. When absent, the bundle uses the sherpa-onnx diarizer and torch is
+# excluded entirely (it is never imported and is the bulk of the size).
+PYANNOTE = importlib.util.find_spec("pyannote.audio") is not None
+
 datas = []
 binaries = []
 hiddenimports = []
 
-# Collect the native libraries / data files these packages need at runtime.
-for package in (
+# Native libraries / data files the always-present packages need at runtime.
+packages = [
     "faster_whisper",
     "ctranslate2",
     "av",
     "onnxruntime",
     "tokenizers",
     "ttkbootstrap",
-):
-    pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
+]
+# The pyannote/PyTorch dependency tree. collect_all is wrapped in try/except so a
+# package that isn't present (or has no collectable data) doesn't abort the build.
+if PYANNOTE:
+    packages += [
+        "torch",
+        "torchaudio",
+        "pyannote",
+        "asteroid_filterbanks",
+        "lightning_fabric",
+        "pytorch_lightning",
+        "sklearn",
+        "scipy",
+        "omegaconf",
+        "networkx",
+        "huggingface_hub",
+        "transformers",
+        "sympy",
+    ]
+
+for package in packages:
+    try:
+        pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
+    except Exception as exc:  # noqa: BLE001 - best-effort collection
+        print(f"whispr.spec: skipping collect_all({package!r}): {exc}")
+        continue
     datas += pkg_datas
     binaries += pkg_binaries
     hiddenimports += pkg_hidden
+
+# Some of these libraries read their own distribution metadata at runtime
+# (importlib.metadata.version(...)); bundle it so they don't crash when frozen.
+if PYANNOTE:
+    for dist in (
+        "torch",
+        "pyannote.audio",
+        "pytorch_lightning",
+        "lightning_fabric",
+        "asteroid_filterbanks",
+        "huggingface_hub",
+        "tqdm",
+        "filelock",
+        "regex",
+        "requests",
+        "packaging",
+    ):
+        try:
+            datas += copy_metadata(dist)
+        except Exception as exc:  # noqa: BLE001 - metadata may be absent
+            print(f"whispr.spec: skipping copy_metadata({dist!r}): {exc}")
 
 # Bundle the offline assets (ffmpeg + models) fetched by fetch_assets.py.
 assets = REPO_ROOT / "whispr_assets"
@@ -82,7 +146,9 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["torch", "tensorflow"],
+    # Exclude torch only for the sherpa-onnx build; when pyannote is bundled we
+    # need torch. tensorflow is never used.
+    excludes=["tensorflow"] + ([] if PYANNOTE else ["torch"]),
     noarchive=False,
 )
 

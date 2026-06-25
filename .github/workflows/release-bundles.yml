@@ -21,6 +21,11 @@ on:
       models:
         description: "Comma-separated models to bundle (e.g. base.en,small,medium,large-v3)"
         default: "base.en"
+      diarizer:
+        description: "Diarization backend (pyannote = best on hard audio, adds CPU PyTorch; sherpa = smaller/faster build)"
+        type: choice
+        options: [pyannote, sherpa]
+        default: pyannote
   push:
     tags:
       - "bundle-v*"
@@ -49,6 +54,10 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
+    env:
+      # Defaults to pyannote (the deployable diarizer); push/tag builds have no
+      # inputs, so they get pyannote too.
+      DIARIZER: ${{ github.event.inputs.diarizer || 'pyannote' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -58,20 +67,33 @@ jobs:
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
-          # Install ONLY the GUI runtime stack + build tools. The whispr package
-          # is installed with --no-deps so the core `torch` dependency (and its
-          # ~3.5 GB of CUDA/triton wheels) is NOT pulled in - the GUI runs on
-          # faster-whisper/ctranslate2 and never imports torch. Keeping torch out
-          # of the environment keeps it out of the PyInstaller bundle entirely.
+          # Always-present GUI runtime stack + build tools. faster-whisper/
+          # ctranslate2 do the transcription; sherpa-onnx is the fallback diarizer.
           pip install faster-whisper ttkbootstrap sherpa-onnx
           pip install pyinstaller imageio-ffmpeg huggingface-hub
-          pip install --no-deps .
+      - name: Install pyannote diarizer (CPU PyTorch)
+        if: env.DIARIZER == 'pyannote'
+        # Install CPU-only torch from PyTorch's CPU index FIRST so pyannote.audio
+        # finds it already satisfied and never pulls the ~3.5 GB CUDA wheels.
+        run: |
+          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install pyannote.audio
+      - name: Install whispr package
+        # --no-deps: the GUI doesn't need the whisper engine's torch dep; pyannote
+        # (when selected) already provided CPU torch above.
+        run: pip install --no-deps .
       - name: Fetch ffmpeg
         run: python packaging/fetch_assets.py ffmpeg
       - name: Fetch models
         run: python packaging/fetch_assets.py models ${{ github.event.inputs.models || 'base.en,small,medium,large-v3' }}
-      - name: Fetch diarization models
+      - name: Fetch diarization models (sherpa-onnx)
+        if: env.DIARIZER == 'sherpa'
         run: python packaging/fetch_assets.py diarization
+      - name: Fetch diarization models (pyannote, gated)
+        if: env.DIARIZER == 'pyannote'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python packaging/fetch_assets.py pyannote
       - name: Build bundle
         run: pyinstaller --noconfirm packaging/whispr.spec
       - name: Upload bundle

@@ -14,6 +14,7 @@ Requires the build extras: ``pip install "silvance-whisper[bundle]"``.
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import tarfile
@@ -86,6 +87,49 @@ def fetch_models(names: List[str]) -> None:
         print(f"model {name} -> {out}")
 
 
+# pyannote.audio's speaker-diarization-3.1 pipeline and the two gated models it
+# pulls in (segmentation + speaker embedding). These are gated on the Hugging
+# Face Hub: the account behind HF_TOKEN must have accepted each model's license.
+PYANNOTE_REPOS = [
+    "pyannote/speaker-diarization-3.1",
+    "pyannote/segmentation-3.0",
+    "pyannote/wespeaker-voxceleb-resnet34-LM",
+]
+
+
+def fetch_pyannote() -> None:
+    """Download the gated pyannote models into an offline HF cache.
+
+    Saves them under ``whispr_assets/pyannote/hub`` in the standard Hugging Face
+    cache layout. At runtime the app points ``HF_HOME`` at ``whispr_assets/pyannote``
+    and sets ``HF_HUB_OFFLINE=1`` (see ``whispr.resources.pyannote_cache_dir``), so
+    the air-gapped machine needs neither network nor token.
+
+    Requires ``HF_TOKEN`` (a Hugging Face token whose account has accepted the
+    licenses for each repo in ``PYANNOTE_REPOS``).
+    """
+    from huggingface_hub import snapshot_download
+
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
+    if not token:
+        raise SystemExit(
+            "HF_TOKEN is not set. Create a Hugging Face token, accept the licenses "
+            "for:\n  " + "\n  ".join(PYANNOTE_REPOS) + "\nthen set HF_TOKEN."
+        )
+
+    # Materialise real files (not symlinks) so the cache survives being copied
+    # into the PyInstaller bundle on every platform.
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
+    cache = ASSETS / "pyannote" / "hub"
+    cache.mkdir(parents=True, exist_ok=True)
+    for repo in PYANNOTE_REPOS:
+        print(f"downloading {repo}")
+        path = snapshot_download(repo_id=repo, cache_dir=str(cache), token=token)
+        print(f"pyannote {repo} -> {path}")
+
+
 def fetch_diarization() -> None:
     """Download the sherpa-onnx diarization models into whispr_assets/diarization.
 
@@ -119,7 +163,7 @@ def fetch_diarization() -> None:
 def main(argv: List[str]) -> None:
     if not argv:
         raise SystemExit(
-            "usage: fetch_assets.py [ffmpeg | models <names> | diarization]"
+            "usage: fetch_assets.py [ffmpeg | models <names> | diarization | pyannote]"
         )
     command = argv[0]
     if command == "ffmpeg":
@@ -129,6 +173,8 @@ def main(argv: List[str]) -> None:
         fetch_models([n.strip() for n in names if n.strip()])
     elif command == "diarization":
         fetch_diarization()
+    elif command == "pyannote":
+        fetch_pyannote()
     else:
         raise SystemExit(f"unknown command: {command}")
 
