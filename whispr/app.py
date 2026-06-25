@@ -92,104 +92,160 @@ class WhisprApp:
     # -- UI construction ---------------------------------------------------
 
     def _build_ui(self) -> None:
-        top = ttk.Frame(self.root, padding=10)
-        top.pack(fill="x")
-        top.columnconfigure(1, weight=1)
+        self.root.minsize(680, 600)
+        container = ttk.Frame(self.root, padding=12)
+        container.pack(fill="both", expand=True)
 
-        ttk.Label(top, text="Audio/Video File:").grid(row=0, column=0, sticky="w")
-        ttk.Entry(top, textvariable=self.input_file_var, width=70).grid(
-            row=0, column=1, sticky="ew"
+        # --- Input & output ------------------------------------------------
+        io_frame = ttk.LabelFrame(container, text="Input & output", padding=10)
+        io_frame.pack(fill="x")
+        io_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(io_frame, text="Audio / video file").grid(
+            row=0, column=0, sticky="w", padx=(0, 8), pady=4
         )
-        ttk.Button(top, text="Browse", command=self.choose_file).grid(row=0, column=2)
+        ttk.Entry(io_frame, textvariable=self.input_file_var).grid(
+            row=0, column=1, sticky="ew", pady=4
+        )
+        ttk.Button(io_frame, text="Browse…", command=self.choose_file).grid(
+            row=0, column=2, padx=(8, 0), pady=4
+        )
 
         ttk.Checkbutton(
-            top, text="Write output to folder", variable=self.write_output_var
-        ).grid(row=1, column=0, sticky="w")
-        ttk.Entry(top, textvariable=self.output_dir_var, width=70).grid(
-            row=1, column=1, sticky="ew"
-        )
-        ttk.Button(top, text="Select Output Dir", command=self.choose_output_dir).grid(
-            row=1, column=2
-        )
+            io_frame,
+            text="Save transcript to a folder",
+            variable=self.write_output_var,
+            command=self._update_output_state,
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 2))
 
-        # Model: a bundled model name, a size name, or a path to a local
-        # CTranslate2 model. Bundled (offline) models are listed first.
+        ttk.Label(io_frame, text="Output folder").grid(
+            row=2, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        self.output_dir_entry = ttk.Entry(io_frame, textvariable=self.output_dir_var)
+        self.output_dir_entry.grid(row=2, column=1, sticky="ew", pady=4)
+        self.output_dir_button = ttk.Button(
+            io_frame, text="Select…", command=self.choose_output_dir
+        )
+        self.output_dir_button.grid(row=2, column=2, padx=(8, 0), pady=4)
+
+        # --- Model & language ---------------------------------------------
+        model_frame = ttk.LabelFrame(container, text="Model & language", padding=10)
+        model_frame.pack(fill="x", pady=(10, 0))
+        model_frame.columnconfigure(1, weight=1)
+
+        # A bundled model name, a size name, or a path to a local CTranslate2
+        # model. Bundled (offline) models are listed first.
         model_values = list(self._bundled_models) + [
             size for size in MODEL_SIZES if size not in self._bundled_models
         ]
-        ttk.Label(top, text="Model (size or path):").grid(row=2, column=0, sticky="w")
+        ttk.Label(model_frame, text="Model").grid(
+            row=0, column=0, sticky="w", padx=(0, 8), pady=4
+        )
         ttk.Combobox(
-            top,
-            textvariable=self.model_var,
-            values=model_values,
-            width=40,
-        ).grid(row=2, column=1, sticky="ew")
-        ttk.Button(top, text="Browse Model", command=self.choose_model_dir).grid(
-            row=2, column=2
+            model_frame, textvariable=self.model_var, values=model_values
+        ).grid(row=0, column=1, sticky="ew", pady=4)
+        ttk.Button(model_frame, text="Browse…", command=self.choose_model_dir).grid(
+            row=0, column=2, padx=(8, 0), pady=4
         )
 
-        ttk.Label(top, text="Task:").grid(row=3, column=0, sticky="w")
+        ttk.Label(model_frame, text="Task").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=4
+        )
         ttk.Combobox(
-            top,
+            model_frame,
             textvariable=self.task_var,
             values=["transcribe", "translate"],
-            width=20,
             state="readonly",
-        ).grid(row=3, column=1, sticky="w")
+            width=16,
+        ).grid(row=1, column=1, sticky="w", pady=4)
 
-        ttk.Label(top, text="Language:").grid(row=4, column=0, sticky="w")
+        ttk.Label(model_frame, text="Language").grid(
+            row=2, column=0, sticky="w", padx=(0, 8), pady=4
+        )
         ttk.Combobox(
-            top,
+            model_frame,
             textvariable=self.language_var,
             values=COMMON_LANGUAGES,
-            width=20,
-        ).grid(row=4, column=1, sticky="w")
+            width=16,
+        ).grid(row=2, column=1, sticky="w", pady=4)
 
+        # --- Options -------------------------------------------------------
+        opt_frame = ttk.LabelFrame(container, text="Options", padding=10)
+        opt_frame.pack(fill="x", pady=(10, 0))
         ttk.Checkbutton(
-            top, text="Voice activity detection (skip silence)", variable=self.vad_var
-        ).grid(row=5, column=0, columnspan=2, sticky="w")
+            opt_frame,
+            text="Skip silence (voice activity detection)",
+            variable=self.vad_var,
+        ).grid(row=0, column=0, sticky="w", pady=2)
         ttk.Checkbutton(
-            top,
+            opt_frame,
             text="Convert video to WAV first (ffmpeg)",
             variable=self.convert_video_var,
-        ).grid(row=6, column=0, columnspan=2, sticky="w")
+        ).grid(row=1, column=0, sticky="w", pady=2)
         ttk.Checkbutton(
-            top, text="Also save .srt subtitles", variable=self.srt_var
-        ).grid(row=7, column=0, columnspan=2, sticky="w")
+            opt_frame, text="Also save .srt subtitles", variable=self.srt_var
+        ).grid(row=2, column=0, sticky="w", pady=2)
 
+        # --- Speakers ------------------------------------------------------
+        spk_frame = ttk.LabelFrame(container, text="Speakers", padding=10)
+        spk_frame.pack(fill="x", pady=(10, 0))
+        spk_frame.columnconfigure(1, weight=1)
         ttk.Checkbutton(
-            top,
+            spk_frame,
             text="Identify speakers (diarization)",
             variable=self.diarize_var,
-        ).grid(row=8, column=0, columnspan=2, sticky="w")
-        ttk.Label(top, text="Number of speakers (blank = auto):").grid(
-            row=9, column=0, sticky="w"
+            command=self._update_speaker_state,
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
+
+        ttk.Label(spk_frame, text="Number of speakers (blank = auto)").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=4
         )
-        ttk.Entry(top, textvariable=self.num_speakers_var, width=8).grid(
-            row=9, column=1, sticky="w"
+        self.num_speakers_entry = ttk.Entry(
+            spk_frame, textvariable=self.num_speakers_var, width=10
         )
-        ttk.Label(top, text="Speaker sensitivity (higher = fewer, auto only):").grid(
-            row=10, column=0, sticky="w"
+        self.num_speakers_entry.grid(row=1, column=1, sticky="w", pady=4)
+
+        ttk.Label(
+            spk_frame, text="Sensitivity (higher = fewer speakers; auto only)"
+        ).grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+        self.sensitivity_entry = ttk.Entry(
+            spk_frame, textvariable=self.sensitivity_var, width=10
         )
-        ttk.Entry(top, textvariable=self.sensitivity_var, width=8).grid(
-            row=10, column=1, sticky="w"
+        self.sensitivity_entry.grid(row=2, column=1, sticky="w", pady=4)
+
+        # --- Run + progress -----------------------------------------------
+        run_frame = ttk.Frame(container)
+        run_frame.pack(fill="x", pady=(12, 0))
+        run_frame.columnconfigure(1, weight=1)
+        self.run_button = ttk.Button(run_frame, text="Run", command=self.run_in_thread)
+        self.run_button.grid(row=0, column=0, sticky="w")
+        self.progress_bar = ttk.Progressbar(run_frame, mode="indeterminate")
+        self.progress_bar.grid(row=0, column=1, sticky="ew", padx=(10, 0))
+        ttk.Label(run_frame, textvariable=self.progress_label_var).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(4, 0)
         )
 
-        self.run_button = ttk.Button(top, text="Run", command=self.run_in_thread)
-        self.run_button.grid(row=11, column=1, pady=8, sticky="w")
-
-        ttk.Label(top, textvariable=self.progress_label_var).grid(
-            row=12, column=0, sticky="w"
-        )
-        self.progress_bar = ttk.Progressbar(top, mode="indeterminate", length=420)
-        self.progress_bar.grid(row=12, column=1, columnspan=2, sticky="ew", pady=(2, 8))
-
-        tabs = ttk.Notebook(self.root)
-        tabs.pack(fill="both", expand=True)
-        self.output = ScrolledText(tabs, wrap="word", state="disabled")
-        self.status = ScrolledText(tabs, wrap="word", state="disabled")
+        # --- Output tabs ---------------------------------------------------
+        tabs = ttk.Notebook(container)
+        tabs.pack(fill="both", expand=True, pady=(12, 0))
+        self.output = ScrolledText(tabs, wrap="word", state="disabled", height=14)
+        self.status = ScrolledText(tabs, wrap="word", state="disabled", height=14)
         tabs.add(self.output, text="Transcript")
         tabs.add(self.status, text="Status")
+
+        # Initialise the enabled/disabled state of dependent fields.
+        self._update_output_state()
+        self._update_speaker_state()
+
+    def _update_output_state(self) -> None:
+        state = "normal" if self.write_output_var.get() else "disabled"
+        self.output_dir_entry.configure(state=state)
+        self.output_dir_button.configure(state=state)
+
+    def _update_speaker_state(self) -> None:
+        state = "normal" if self.diarize_var.get() else "disabled"
+        self.num_speakers_entry.configure(state=state)
+        self.sensitivity_entry.configure(state=state)
 
     # -- Thread-safe widget helpers ---------------------------------------
 
