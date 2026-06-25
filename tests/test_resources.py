@@ -117,22 +117,24 @@ def test_configure_offline_hf_cache_absent_is_noop(tmp_path, monkeypatch):
 
 
 def test_configure_offline_translation_present(tmp_path, monkeypatch):
-    packages = tmp_path / "whispr_assets" / "argos" / "packages"
-    packages.mkdir(parents=True)
-    monkeypatch.setenv(resources.ENV_ASSETS, str(tmp_path / "whispr_assets"))
-    for var in ("ARGOS_PACKAGES_DIR", "ARGOS_STANZA_AVAILABLE"):
+    assets = tmp_path / "whispr_assets"
+    data = assets / "argos" / "argos-translate"
+    data.mkdir(parents=True)
+    monkeypatch.setenv(resources.ENV_ASSETS, str(assets))
+    for var in ("XDG_DATA_HOME", "ARGOS_CHUNK_TYPE"):
         monkeypatch.delenv(var, raising=False)
 
     result = resources.configure_offline_translation()
-    assert result == packages
-    assert os.environ["ARGOS_PACKAGES_DIR"] == str(packages)
-    assert os.environ["ARGOS_STANZA_AVAILABLE"] == "false"
+    assert result == data
+    # XDG_DATA_HOME is the parent so Argos resolves data dir + minisbd cache here.
+    assert os.environ["XDG_DATA_HOME"] == str(assets / "argos")
+    assert os.environ["ARGOS_CHUNK_TYPE"] == "MINISBD"
 
 
 def test_configure_offline_translation_absent_is_noop(tmp_path, monkeypatch):
     monkeypatch.setenv(resources.ENV_ASSETS, str(tmp_path / "empty"))
-    for var in ("ARGOS_PACKAGES_DIR", "ARGOS_STANZA_AVAILABLE"):
+    for var in ("XDG_DATA_HOME", "ARGOS_CHUNK_TYPE"):
         monkeypatch.delenv(var, raising=False)
 
     assert resources.configure_offline_translation() is None
-    assert "ARGOS_PACKAGES_DIR" not in os.environ
+    assert "ARGOS_CHUNK_TYPE" not in os.environ

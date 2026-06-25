@@ -164,33 +164,37 @@ def configure_offline_hf_cache() -> Optional[Path]:
     return cache
 
 
-def bundled_argos_packages_dir() -> Optional[Path]:
-    """Return the bundled Argos Translate packages directory, if present.
+def bundled_argos_data_dir() -> Optional[Path]:
+    """Return the bundled Argos Translate data dir, if present.
 
-    The build installs language packs into ``whispr_assets/argos/packages`` (the
-    standard Argos packages layout); at runtime ``ARGOS_PACKAGES_DIR`` points here
-    so translation works offline.
+    The build populates ``whispr_assets/argos/argos-translate`` (Argos's data dir,
+    holding ``packages/`` and the ``minisbd/`` sentence-splitter cache). Argos
+    derives all of these from ``XDG_DATA_HOME``, so the parent is used at runtime.
     """
     for base in asset_dirs():
-        directory = base / "argos" / "packages"
+        directory = base / "argos" / "argos-translate"
         if directory.is_dir():
             return directory
     return None
 
 
 def configure_offline_translation() -> Optional[Path]:
-    """Point Argos Translate at the bundled language packs, offline.
+    """Point Argos Translate at the bundled data dir, offline.
 
-    Returns the packages directory, or ``None`` if none is bundled. Like the HF
-    config this MUST run at startup before ``argostranslate`` is imported (it reads
-    ``ARGOS_PACKAGES_DIR`` / ``ARGOS_STANZA_AVAILABLE`` into module state at import).
-    No-op when no bundle is present, so from-source use is unchanged.
+    Returns the data dir, or ``None`` if none is bundled. Like the HF config this
+    MUST run at startup before ``argostranslate`` is imported (it reads
+    ``XDG_DATA_HOME`` / ``ARGOS_CHUNK_TYPE`` into module state at import). No-op
+    when no bundle is present, so from-source use is unchanged.
+
+    Argos resolves its data dir as ``XDG_DATA_HOME/argos-translate`` and puts the
+    language packs and the MiniSBD model cache under it, so pointing XDG_DATA_HOME
+    at the bundle wires up both. ``ARGOS_CHUNK_TYPE=MINISBD`` forces the lightweight
+    sentence splitter whose models we pre-cache at build time (no stanza models, no
+    runtime downloads).
     """
-    packages = bundled_argos_packages_dir()
-    if packages is None:
+    data = bundled_argos_data_dir()
+    if data is None:
         return None
-    os.environ["ARGOS_PACKAGES_DIR"] = str(packages)
-    # Use the lightweight MiniSBD sentence splitter; stanza's models aren't bundled
-    # and we don't want any model download attempt on an air-gapped machine.
-    os.environ["ARGOS_STANZA_AVAILABLE"] = "false"
-    return packages
+    os.environ["XDG_DATA_HOME"] = str(data.parent)
+    os.environ["ARGOS_CHUNK_TYPE"] = "MINISBD"
+    return data

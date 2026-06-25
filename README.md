@@ -260,7 +260,10 @@ builds on hosted Windows and Linux runners and uploads `whispr-windows-x86_64` a
 machines never do. You can choose which models to bundle (default
 `small,medium,large-v3`) and which **diarizer** to include: `both` (default —
 pyannote + sherpa, switchable at runtime via the Engine dropdown), `pyannote`, or
-`sherpa`.
+`sherpa`. The **`translate_langs`** input controls which offline text-translation
+packs (each `<code>→en`) are bundled for the Translate tab (default
+`ar,ru,zh,fa,uk,he,ko`; empty to skip translation). Packs and their sentence
+splitter are baked in, so translation also runs with no network.
 
 Bundling **pyannote** (i.e. `both` or `pyannote`) uses gated Hugging Face models,
 so the build needs a token. Add a repository secret named **`HF_TOKEN`** (Settings

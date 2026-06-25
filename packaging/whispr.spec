@@ -15,9 +15,15 @@
 #     HF_TOKEN=... python packaging/fetch_assets.py pyannote
 #     pyinstaller --noconfirm packaging/whispr.spec
 #
-# The spec auto-detects whether pyannote.audio is installed: if so it bundles the
-# PyTorch stack and the offline pyannote model cache; otherwise it builds the
-# lighter sherpa-onnx-only bundle and excludes torch.
+# Optional text translation (offline Argos Translate):
+#     pip install "silvance-whisper[gui,bundle,translate]"
+#     python packaging/fetch_assets.py argos ar,ru,zh,fa,uk,he,ko
+#     (plus the steps above, then pyinstaller)
+#
+# The spec auto-detects whether pyannote.audio / argostranslate are installed: it
+# bundles the PyTorch stack + offline pyannote cache and/or the Argos stack +
+# language packs accordingly; otherwise it builds the lighter sherpa-onnx-only
+# bundle and excludes torch.
 #
 # The resulting dist/whispr/ folder is fully self-contained (Python runtime, all
 # dependencies, the ffmpeg binary, and the Whisper + diarization models) and can be
@@ -40,6 +46,11 @@ REPO_ROOT = SPEC_DIR.parent
 # environment. When absent, the bundle uses the sherpa-onnx diarizer and torch is
 # excluded entirely (it is never imported and is the bulk of the size).
 PYANNOTE = importlib.util.find_spec("pyannote.audio") is not None
+
+# argostranslate (offline text translation) is bundled only when installed. It
+# hard-imports stanza, so stanza is pulled in too; spacy is optional (guarded) and
+# left out via excludes below.
+ARGOS = importlib.util.find_spec("argostranslate") is not None
 
 datas = []
 binaries = []
@@ -74,6 +85,19 @@ if PYANNOTE:
         "sympy",
     ]
 
+# Argos Translate dependency tree (CTranslate2 is already collected above when
+# present via faster-whisper). stanza is a hard import in argostranslate's sbd
+# module; sentencepiece/sacremoses/minisbd are the tokenizers/sentence splitter.
+if ARGOS:
+    packages += [
+        "argostranslate",
+        "stanza",
+        "sentencepiece",
+        "sacremoses",
+        "minisbd",
+        "ctranslate2",
+    ]
+
 for package in packages:
     try:
         pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
@@ -99,6 +123,20 @@ if PYANNOTE:
         "regex",
         "requests",
         "packaging",
+    ):
+        try:
+            datas += copy_metadata(dist)
+        except Exception as exc:  # noqa: BLE001 - metadata may be absent
+            print(f"whispr.spec: skipping copy_metadata({dist!r}): {exc}")
+
+if ARGOS:
+    for dist in (
+        "argostranslate",
+        "stanza",
+        "sentencepiece",
+        "sacremoses",
+        "ctranslate2",
+        "minisbd",
     ):
         try:
             datas += copy_metadata(dist)
@@ -148,8 +186,13 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     # Exclude torch only for the sherpa-onnx build; when pyannote is bundled we
-    # need torch. tensorflow is never used.
-    excludes=["tensorflow"] + ([] if PYANNOTE else ["torch"]),
+    # need torch. tensorflow is never used. spacy is an optional argostranslate
+    # dependency we don't use (we force the MiniSBD sentence splitter), so drop it.
+    excludes=(
+        ["tensorflow"]
+        + ([] if PYANNOTE else ["torch"])
+        + (["spacy"] if ARGOS else [])
+    ),
     noarchive=False,
 )
 

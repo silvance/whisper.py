@@ -19,7 +19,11 @@ from tkinter.scrolledtext import ScrolledText
 from typing import Callable, Dict, List, Optional
 
 from .diarization import assign_speakers, diarize
-from .resources import bundled_models, configure_offline_hf_cache
+from .resources import (
+    bundled_models,
+    configure_offline_hf_cache,
+    configure_offline_translation,
+)
 from .transcription import (
     AUDIO_EXTENSIONS,
     MODEL_SIZES,
@@ -1133,11 +1137,12 @@ class WhisprApp:
 
 def main() -> None:
     """Launch the W.H.I.S.P.R. GUI."""
-    # Must happen before faster-whisper / pyannote (and thus huggingface_hub) are
-    # imported, which only occurs once a transcription/diarization actually runs -
-    # so configuring here at startup is early enough. Points HF at the bundled
-    # offline cache when present; a no-op otherwise.
+    # Must happen before faster-whisper / pyannote / argostranslate are imported
+    # (which only occurs once a job runs), so configuring at startup is early
+    # enough. Points HF and Argos at the bundled offline caches when present;
+    # both are no-ops otherwise.
     configure_offline_hf_cache()
+    configure_offline_translation()
 
     try:
         # ttkbootstrap gives a modern theme; fall back to stock Tk if absent.
