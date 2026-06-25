@@ -36,8 +36,10 @@ optional-dependencies.gui = [ "faster-whisper", "ttkbootstrap", "sherpa-onnx" ]
 # Build-time tooling for producing offline, air-gapped PyInstaller bundles.
 optional-dependencies.bundle = [ "pyinstaller", "imageio-ffmpeg", "huggingface-hub" ]
 # High-accuracy diarization backend (PyTorch-based; gated HF models). Preferred
-# over sherpa-onnx for hard/low-quality audio when installed.
-optional-dependencies.pyannote = [ "pyannote.audio" ]
+# over sherpa-onnx for hard/low-quality audio when installed. Pinned to 3.1.1:
+# newer releases require torchcodec, the gated community-1 PLDA, and add inference
+# telemetry - none of which suit an offline, air-gapped build.
+optional-dependencies.pyannote = [ "pyannote.audio==3.1.1", "soundfile" ]
 urls = { Homepage = "https://github.com/silvance/whisper.py" }
 scripts.whisper = "whisper.transcribe:cli"
 scripts.whispr = "whispr.app:main"
