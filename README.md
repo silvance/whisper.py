@@ -266,8 +266,10 @@ Bundling **pyannote** (i.e. `both` or `pyannote`) uses gated Hugging Face models
 so the build needs a token. Add a repository secret named **`HF_TOKEN`** (Settings
 → Secrets and variables → Actions) holding a Hugging Face token whose account has
 accepted the licenses for `pyannote/speaker-diarization-3.1`,
-`pyannote/segmentation-3.0`, and `pyannote/wespeaker-voxceleb-resnet34-LM`. The
-models are downloaded at build time and baked into the bundle's offline cache; the
+`pyannote/segmentation-3.0`, `pyannote/wespeaker-voxceleb-resnet34-LM`, and
+`pyannote/speaker-diarization-community-1` (the 3.1 pipeline loads its PLDA from
+there). The models are downloaded at build time and baked into the offline cache;
+the
 deployed app needs neither the token nor network access. Choose the `sherpa`
 diarizer for a smaller, token-free build (no PyTorch).
 
