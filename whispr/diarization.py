@@ -140,9 +140,13 @@ def _diarize_pyannote(
 
     if progress is not None:
         progress("Loading pyannote pipeline...")
-    pipeline = Pipeline.from_pretrained(
-        "pyannote/speaker-diarization-3.1", use_auth_token=token
-    )
+    model_id = "pyannote/speaker-diarization-3.1"
+    try:
+        # pyannote 3.x / current huggingface_hub use `token`.
+        pipeline = Pipeline.from_pretrained(model_id, token=token)
+    except TypeError:
+        # Older pyannote used `use_auth_token`.
+        pipeline = Pipeline.from_pretrained(model_id, use_auth_token=token)
     if pipeline is None:
         raise RuntimeError(
             "Could not load the pyannote pipeline. Accept the licenses for "
