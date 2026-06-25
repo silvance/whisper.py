@@ -60,6 +60,7 @@ if PYANNOTE:
     packages += [
         "torch",
         "torchaudio",
+        "soundfile",  # libsndfile - pyannote 3.1.1's audio backend
         "pyannote",
         "asteroid_filterbanks",
         "lightning_fabric",
