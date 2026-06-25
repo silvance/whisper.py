@@ -19,8 +19,8 @@ on:
         options: [both, linux, windows]
         default: both
       models:
-        description: "Comma-separated models to bundle (tiny,base,small,medium,large-v3)"
-        default: "small"
+        description: "Comma-separated models to bundle (e.g. base.en,small,medium,large-v3)"
+        default: "base.en"
   push:
     tags:
       - "bundle-v*"
@@ -69,7 +69,7 @@ jobs:
       - name: Fetch ffmpeg
         run: python packaging/fetch_assets.py ffmpeg
       - name: Fetch models
-        run: python packaging/fetch_assets.py models ${{ github.event.inputs.models || 'small,medium,large-v3' }}
+        run: python packaging/fetch_assets.py models ${{ github.event.inputs.models || 'base.en,small,medium,large-v3' }}
       - name: Fetch diarization models
         run: python packaging/fetch_assets.py diarization
       - name: Build bundle

@@ -27,9 +27,13 @@ ASSETS = Path("whispr_assets")
 # faster-whisper's official CTranslate2 model repositories on the Hugging Face Hub.
 MODEL_REPOS = {
     "tiny": "Systran/faster-whisper-tiny",
+    "tiny.en": "Systran/faster-whisper-tiny.en",
     "base": "Systran/faster-whisper-base",
+    "base.en": "Systran/faster-whisper-base.en",
     "small": "Systran/faster-whisper-small",
+    "small.en": "Systran/faster-whisper-small.en",
     "medium": "Systran/faster-whisper-medium",
+    "medium.en": "Systran/faster-whisper-medium.en",
     "large-v3": "Systran/faster-whisper-large-v3",
 }
 
