@@ -10,6 +10,8 @@ Run with ``python -m whispr`` or the ``whispr`` console script.
 
 from __future__ import annotations
 
+import importlib.util
+import os
 import threading
 import tkinter as tk
 import traceback
@@ -20,6 +22,7 @@ from typing import Callable, Dict, List, Optional
 
 from .diarization import assign_speakers, diarize
 from .resources import (
+    bundled_argos_data_dir,
     bundled_models,
     configure_offline_hf_cache,
     configure_offline_translation,
@@ -61,6 +64,20 @@ ENGINE_CHOICES = {
     "sherpa - faster, for clean audio": "sherpa",
 }
 ENGINE_LABELS = list(ENGINE_CHOICES)
+
+
+def _translation_available() -> bool:
+    """True if the translation engine is usable (bundled packs or installed lib).
+
+    Lets a lean transcriber-only build (no argostranslate / no packs) present as a
+    single-purpose app, without importing the heavy library just to check.
+    """
+    if bundled_argos_data_dir() is not None:
+        return True
+    try:
+        return importlib.util.find_spec("argostranslate") is not None
+    except ModuleNotFoundError:
+        return False
 
 
 class CollapsibleSection(ttk.Frame):
@@ -164,23 +181,40 @@ class WhisprApp:
         except tk.TclError:
             pass
 
+        # Translation is shown only when its engine/packs are bundled (so a lean
+        # transcriber-only build is a clean single-purpose app), and can be force-
+        # hidden with WHISPR_MODE=transcribe even on a full bundle.
+        self._show_translate = (
+            _translation_available()
+            and os.environ.get("WHISPR_MODE", "").lower() != "transcribe"
+        )
+
         # App header.
+        subtitle = (
+            "Offline transcription & translation"
+            if self._show_translate
+            else "Offline transcription"
+        )
         header = ttk.Frame(self.root, padding=(14, 10, 14, 4))
         header.pack(fill="x")
         ttk.Label(header, text="Whispers", font=("", 17, "bold")).pack(side="left")
-        ttk.Label(
-            header,
-            text="Offline transcription & translation",
-            font=("", 9),
-        ).pack(side="left", padx=(10, 0), pady=(7, 0))
+        ttk.Label(header, text=subtitle, font=("", 9)).pack(
+            side="left", padx=(10, 0), pady=(7, 0)
+        )
 
-        # Top-level mode switch: audio/video transcription vs text translation.
-        self.main_nb = ttk.Notebook(self.root)
-        self.main_nb.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-        transcribe_tab = ttk.Frame(self.main_nb)
-        self.main_nb.add(transcribe_tab, text="Transcribe")
+        # With translation, a top-level Transcribe/Translate notebook; without it,
+        # the transcribe UI fills the window directly (no redundant tab chrome).
+        if self._show_translate:
+            self.main_nb: Optional[ttk.Notebook] = ttk.Notebook(self.root)
+            self.main_nb.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+            transcribe_root = ttk.Frame(self.main_nb)
+            self.main_nb.add(transcribe_root, text="Transcribe")
+        else:
+            self.main_nb = None
+            transcribe_root = ttk.Frame(self.root)
+            transcribe_root.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
-        container = ttk.Frame(transcribe_tab, padding=12)
+        container = ttk.Frame(transcribe_root, padding=12)
         container.pack(fill="both", expand=True)
 
         # Collapsible settings sections (hidden as a group when a run starts).
@@ -379,11 +413,13 @@ class WhisprApp:
         self._update_output_state()
         self._update_speaker_state()
 
-        # --- Translate tab -------------------------------------------------
-        self._build_translate_tab()
+        # --- Translate tab (only when translation is available) ------------
+        if self._show_translate:
+            self._build_translate_tab()
 
     def _build_translate_tab(self) -> None:
         """Build the text-translation tab (paste box + batch files, foreign->EN)."""
+        assert self.main_nb is not None  # only called when the notebook exists
         tab = ttk.Frame(self.main_nb)
         self.main_nb.add(tab, text="Translate")
         container = ttk.Frame(tab, padding=12)
