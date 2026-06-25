@@ -13,6 +13,11 @@ Whisper is a general-purpose speech recognition model. It is trained on a large 
 > (a single `ruff` lint/format pipeline, `mypy` type checking, a modernized CI matrix, and a
 > single source of truth for dependencies in `pyproject.toml`). All original credit belongs to
 > OpenAI; see [LICENSE](LICENSE).
+>
+> **Two packages, mind the spelling.** `whisper/` is the upstream OpenAI library (the
+> transcription engine), kept intact. `whispr/` (no "e") is this fork's addition: a desktop
+> GUI for transcription + speaker diarization, built on faster-whisper and pyannote — it does
+> not modify or even import `whisper/`. See [Graphical interface](#graphical-interface-whispr).
 
 
 ## Approach
