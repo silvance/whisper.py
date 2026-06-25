@@ -151,7 +151,14 @@ def configure_offline_hf_cache() -> Optional[Path]:
     cache = pyannote_cache_dir()
     if cache is None:
         return None
+    hub = str(cache / "hub")
     os.environ["HF_HOME"] = str(cache)
-    os.environ["HF_HUB_CACHE"] = str(cache / "hub")
+    os.environ["HF_HUB_CACHE"] = hub
     os.environ["HF_HUB_OFFLINE"] = "1"
+    # pyannote.audio loads its sub-models (segmentation + speaker embedding) via
+    # Model.from_pretrained, whose cache_dir defaults to PYANNOTE_CACHE (NOT
+    # HF_HUB_CACHE) - and that default is captured into a module constant at
+    # import time. Point it at the bundled cache here, before pyannote is imported,
+    # so the sub-models resolve from the bundle too.
+    os.environ["PYANNOTE_CACHE"] = hub
     return cache
