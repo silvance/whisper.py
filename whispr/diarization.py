@@ -221,8 +221,11 @@ def _diarize_pyannote(
             patched = f"<patch failed: {exc}>"
         if progress is not None:
             progress(f"Using bundled pyannote cache: {hub}")
-            progress(f"HF_HUB_CACHE -> {patched}")
-            _log_cache_contents(hub, progress)
+            # Verbose per-file cache listing is dev diagnostics; opt in with
+            # WHISPR_DEBUG to keep the status log clean in normal use.
+            if os.environ.get("WHISPR_DEBUG"):
+                progress(f"HF_HUB_CACHE -> {patched}")
+                _log_cache_contents(hub, progress)
 
     if progress is not None:
         progress("Loading pyannote pipeline...")
@@ -389,8 +392,18 @@ def _best_overlap_speaker(
     return best_speaker
 
 
+# A word sitting more than this far from any speaker turn is essentially
+# unattributable; return None (which assign_speakers handles) rather than
+# confidently snapping it to a distant speaker.
+_MAX_GAP_SECONDS = 2.0
+
+
 def _speaker_at(t: float, speaker_segments: Sequence[SpeakerSegment]) -> Optional[str]:
-    """Speaker active at time ``t``; falls back to the nearest turn if in a gap."""
+    """Speaker active at time ``t``.
+
+    Falls back to the nearest turn when ``t`` lands in a small gap, but returns
+    ``None`` past ``_MAX_GAP_SECONDS`` rather than guessing across a long silence.
+    """
     nearest: Optional[str] = None
     nearest_distance = float("inf")
     for sp in speaker_segments:
@@ -400,6 +413,8 @@ def _speaker_at(t: float, speaker_segments: Sequence[SpeakerSegment]) -> Optiona
         if distance < nearest_distance:
             nearest_distance = distance
             nearest = sp.speaker
+    if nearest_distance > _MAX_GAP_SECONDS:
+        return None
     return nearest
 
 
@@ -450,31 +465,25 @@ def _merge_short_runs(
     middle - then coalesce. This trades the occasional genuinely short
     interjection for far fewer boundary leaks.
     """
+    # Single linear pass: relabel each short run to a neighbour, then coalesce
+    # once. We work on a copy so the caller's runs are left untouched.
     runs = [_Run(speaker=r.speaker, words=list(r.words)) for r in runs]
-    changed = True
-    while changed and len(runs) > 1:
-        changed = False
-        for i, run in enumerate(runs):
-            if run.duration >= min_seconds or len(run.words) > max_words:
-                continue
-            prev = runs[i - 1] if i > 0 else None
-            nxt = runs[i + 1] if i + 1 < len(runs) else None
-            if prev is None and nxt is None:
-                continue
-            if prev is None:
-                target = nxt
-            elif nxt is None:
-                target = prev
-            else:
-                target = prev if len(prev.words) >= len(nxt.words) else nxt
-            if target is None or target.speaker == run.speaker:
-                continue
+    for i, run in enumerate(runs):
+        if run.duration >= min_seconds or len(run.words) > max_words:
+            continue
+        prev = runs[i - 1] if i > 0 else None
+        nxt = runs[i + 1] if i + 1 < len(runs) else None
+        if prev is None and nxt is None:
+            continue
+        if prev is None:
+            target = nxt
+        elif nxt is None:
+            target = prev
+        else:
+            target = prev if len(prev.words) >= len(nxt.words) else nxt
+        if target is not None and target.speaker != run.speaker:
             run.speaker = target.speaker
-            changed = True
-            break
-        if changed:
-            runs = _coalesce(runs)
-    return runs
+    return _coalesce(runs)
 
 
 def assign_speakers(

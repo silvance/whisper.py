@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from .resources import find_ffmpeg
 
@@ -212,6 +212,7 @@ def convert_to_wav(
             "`brew install ffmpeg`)."
         )
 
+    created_temp = dest is None
     if dest is None:
         handle, tmp = tempfile.mkstemp(suffix=".wav")
         os.close(handle)
@@ -222,27 +223,67 @@ def convert_to_wav(
     if progress is not None:
         progress(f"Converting {src.name} to WAV (ffmpeg)...")
 
-    result = subprocess.run(
-        [
-            str(ffmpeg),
-            "-y",
-            "-i",
-            str(src),
-            "-vn",  # drop any video stream
-            "-ac",
-            "1",  # mono
-            "-ar",
-            str(sample_rate),
-            "-acodec",
-            "pcm_s16le",
-            str(out),
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg conversion failed:\n{result.stderr.strip()}")
+    try:
+        result = subprocess.run(
+            [
+                str(ffmpeg),
+                "-y",
+                "-i",
+                str(src),
+                "-vn",  # drop any video stream
+                "-ac",
+                "1",  # mono
+                "-ar",
+                str(sample_rate),
+                "-acodec",
+                "pcm_s16le",
+                str(out),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"ffmpeg conversion failed:\n{result.stderr.strip()}")
+    except BaseException:
+        # Don't leak the temp file we created if ffmpeg fails (or is interrupted).
+        if created_temp:
+            try:
+                out.unlink()
+            except OSError:
+                pass
+        raise
     return out
+
+
+# Loaded faster-whisper models, keyed by (model_size, device, compute_type), so
+# repeated runs (different files, retry after cancel) don't pay the load cost each
+# time. Models are read-only at inference time, so sharing one is safe.
+_MODEL_CACHE: Dict[Tuple[str, str, str], Any] = {}
+
+
+def _load_model(
+    model_size: str,
+    device: str,
+    compute_type: str,
+    *,
+    report: Optional[ProgressCallback] = None,
+) -> Any:
+    key = (model_size, device, compute_type)
+    model = _MODEL_CACHE.get(key)
+    if model is not None:
+        return model
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError as exc:
+        raise RuntimeError(
+            "faster-whisper is not installed. Install the GUI/transcription "
+            "extras with:  pip install 'silvance-whisper[gui]'"
+        ) from exc
+    if report is not None:
+        report(f"Loading model '{model_size}' ({device}/{compute_type})...")
+    model = WhisperModel(model_size, device=device, compute_type=compute_type)
+    _MODEL_CACHE[key] = model
+    return model
 
 
 def transcribe_audio(
@@ -292,20 +333,11 @@ def transcribe_audio(
     if not path.exists():
         raise FileNotFoundError(f"Input file does not exist: {path}")
 
-    try:
-        from faster_whisper import WhisperModel
-    except ImportError as exc:
-        raise RuntimeError(
-            "faster-whisper is not installed. Install the GUI/transcription "
-            "extras with:  pip install 'silvance-whisper[gui]'"
-        ) from exc
-
     def _report(message: str) -> None:
         if progress is not None:
             progress(message)
 
-    _report(f"Loading model '{model_size}' ({device}/{compute_type})...")
-    model = WhisperModel(model_size, device=device, compute_type=compute_type)
+    model = _load_model(model_size, device, compute_type, report=_report)
 
     verb = "Translating" if task == "translate" else "Transcribing"
     _report(f"{verb} {path.name}...")
