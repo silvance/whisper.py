@@ -82,9 +82,10 @@ jobs:
         # gated community-1 PLDA, and add a phone-home call in the inference path -
         # none of which suit an offline, air-gapped build. torch/torchaudio 2.2.2
         # are the matching versions whose torchaudio backend pyannote 3.1.1 uses.
+        # numpy is pinned <2 because pyannote 3.1.1 uses np.NaN, removed in NumPy 2.
         run: |
           pip install torch==2.2.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cpu
-          pip install "pyannote.audio==3.1.1" soundfile
+          pip install "pyannote.audio==3.1.1" soundfile "numpy<2"
       - name: Install whispr package
         # --no-deps: the GUI doesn't need the whisper engine's torch dep; pyannote
         # (when selected) already provided CPU torch above.
