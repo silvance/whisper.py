@@ -48,6 +48,50 @@ COMMON_LANGUAGES = [
 ]
 
 
+class CollapsibleSection(ttk.Frame):
+    """A titled section whose body can be collapsed to a single header row.
+
+    Clicking the header toggles the body. Collapsing the settings frees vertical
+    space for the transcript and lets the window be resized down without clipping
+    controls. Put child widgets in ``.body``.
+    """
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        title: str,
+        *,
+        expanded: bool = True,
+        body_padding: tuple = (10, 6, 10, 10),
+    ) -> None:
+        super().__init__(parent)
+        self.title = title
+        self.expanded = expanded
+        self.header = ttk.Button(self, command=self.toggle)
+        self.header.pack(fill="x")
+        self.body = ttk.Frame(self, padding=body_padding)
+        if expanded:
+            self.body.pack(fill="both", expand=True)
+        self._refresh_header()
+
+    def _refresh_header(self) -> None:
+        arrow = "▼" if self.expanded else "▶"
+        self.header.configure(text=f"{arrow}  {self.title}")
+
+    def toggle(self) -> None:
+        self.set_expanded(not self.expanded)
+
+    def set_expanded(self, value: bool) -> None:
+        if value == self.expanded:
+            return
+        self.expanded = value
+        if value:
+            self.body.pack(fill="both", expand=True)
+        else:
+            self.body.forget()
+        self._refresh_header()
+
+
 class WhisprApp:
     """The main application window."""
 
@@ -95,13 +139,18 @@ class WhisprApp:
     # -- UI construction ---------------------------------------------------
 
     def _build_ui(self) -> None:
-        self.root.minsize(680, 600)
+        self.root.minsize(680, 480)
         container = ttk.Frame(self.root, padding=12)
         container.pack(fill="both", expand=True)
 
+        # Collapsible settings sections (hidden as a group when a run starts).
+        self._setting_sections: List[CollapsibleSection] = []
+
         # --- Input & output ------------------------------------------------
-        io_frame = ttk.LabelFrame(container, text="Input & output", padding=10)
-        io_frame.pack(fill="x")
+        io_section = CollapsibleSection(container, "Input & output")
+        io_section.pack(fill="x")
+        self._setting_sections.append(io_section)
+        io_frame = io_section.body
         io_frame.columnconfigure(1, weight=1)
 
         ttk.Label(io_frame, text="Audio / video file").grid(
@@ -132,8 +181,10 @@ class WhisprApp:
         self.output_dir_button.grid(row=2, column=2, padx=(8, 0), pady=4)
 
         # --- Model & language ---------------------------------------------
-        model_frame = ttk.LabelFrame(container, text="Model & language", padding=10)
-        model_frame.pack(fill="x", pady=(10, 0))
+        model_section = CollapsibleSection(container, "Model & language")
+        model_section.pack(fill="x", pady=(8, 0))
+        self._setting_sections.append(model_section)
+        model_frame = model_section.body
         model_frame.columnconfigure(1, weight=1)
 
         # A bundled model name, a size name, or a path to a local CTranslate2
@@ -173,8 +224,10 @@ class WhisprApp:
         ).grid(row=2, column=1, sticky="w", pady=4)
 
         # --- Options -------------------------------------------------------
-        opt_frame = ttk.LabelFrame(container, text="Options", padding=10)
-        opt_frame.pack(fill="x", pady=(10, 0))
+        opt_section = CollapsibleSection(container, "Options")
+        opt_section.pack(fill="x", pady=(8, 0))
+        self._setting_sections.append(opt_section)
+        opt_frame = opt_section.body
         ttk.Checkbutton(
             opt_frame,
             text="Skip silence (voice activity detection)",
@@ -190,8 +243,10 @@ class WhisprApp:
         ).grid(row=2, column=0, sticky="w", pady=2)
 
         # --- Speakers ------------------------------------------------------
-        spk_frame = ttk.LabelFrame(container, text="Speakers", padding=10)
-        spk_frame.pack(fill="x", pady=(10, 0))
+        spk_section = CollapsibleSection(container, "Speakers")
+        spk_section.pack(fill="x", pady=(8, 0))
+        self._setting_sections.append(spk_section)
+        spk_frame = spk_section.body
         spk_frame.columnconfigure(1, weight=1)
         ttk.Checkbutton(
             spk_frame,
@@ -244,6 +299,10 @@ class WhisprApp:
         self.run_button.grid(row=0, column=0, sticky="w")
         self.progress_bar = ttk.Progressbar(run_frame, mode="indeterminate")
         self.progress_bar.grid(row=0, column=1, sticky="ew", padx=(10, 0))
+        self.toggle_settings_button = ttk.Button(
+            run_frame, text="Hide settings", command=self._toggle_all_settings
+        )
+        self.toggle_settings_button.grid(row=0, column=2, padx=(10, 0))
         ttk.Label(run_frame, textvariable=self.progress_label_var).grid(
             row=1, column=0, columnspan=2, sticky="w", pady=(4, 0)
         )
@@ -259,6 +318,19 @@ class WhisprApp:
         # Initialise the enabled/disabled state of dependent fields.
         self._update_output_state()
         self._update_speaker_state()
+
+    def _toggle_all_settings(self) -> None:
+        expand = not any(section.expanded for section in self._setting_sections)
+        for section in self._setting_sections:
+            section.set_expanded(expand)
+        self.toggle_settings_button.configure(
+            text="Hide settings" if expand else "Show settings"
+        )
+
+    def _collapse_all_settings(self) -> None:
+        for section in self._setting_sections:
+            section.set_expanded(False)
+        self.toggle_settings_button.configure(text="Show settings")
 
     def _update_output_state(self) -> None:
         state = "normal" if self.write_output_var.get() else "disabled"
@@ -378,6 +450,8 @@ class WhisprApp:
             self.model_var.set(path)
 
     def run_in_thread(self) -> None:
+        # Collapse the settings so the transcript and progress get the space.
+        self._collapse_all_settings()
         threading.Thread(target=self._run, daemon=True).start()
 
     def _run(self) -> None:
