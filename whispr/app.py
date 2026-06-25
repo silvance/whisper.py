@@ -77,6 +77,9 @@ class WhisprApp:
         self.convert_video_var = tk.BooleanVar(value=True)
         self.diarize_var = tk.BooleanVar(value=False)
         self.num_speakers_var = tk.StringVar(value="")
+        # Optional per-speaker names, created to match the speaker count and
+        # applied to the diarized transcript (Speaker 1 -> first speaker, etc.).
+        self.speaker_name_vars: List[tk.StringVar] = []
         self.sensitivity_var = tk.StringVar(value="0.5")
         self.srt_var = tk.BooleanVar(value=False)
         self.progress_label_var = tk.StringVar(value="Idle")
@@ -204,6 +207,8 @@ class WhisprApp:
             spk_frame, textvariable=self.num_speakers_var, width=10
         )
         self.num_speakers_entry.grid(row=1, column=1, sticky="w", pady=4)
+        # Entering a count reveals a name field per speaker (filled in below).
+        self.num_speakers_var.trace_add("write", self._on_num_speakers_changed)
 
         ttk.Label(
             spk_frame, text="Sensitivity (higher = fewer speakers; auto only)"
@@ -213,16 +218,23 @@ class WhisprApp:
         )
         self.sensitivity_entry.grid(row=2, column=1, sticky="w", pady=4)
 
+        # Dynamic per-speaker name fields, rebuilt when the count changes.
+        self.speaker_names_frame = ttk.Frame(spk_frame)
+        self.speaker_names_frame.grid(
+            row=3, column=0, columnspan=2, sticky="ew", pady=(2, 0)
+        )
+
         ttk.Label(
             spk_frame,
             text=(
                 "Tip: if you know how many people are in the recording, enter it "
-                "above. In the Transcript, click any [speaker] tag to fix that "
-                "line or rename a speaker."
+                "above and (optionally) name them. In the Transcript, click any "
+                "[speaker] tag to rename that speaker everywhere or move a single "
+                "line to a different speaker."
             ),
             wraplength=420,
             justify="left",
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         # --- Run + progress -----------------------------------------------
         run_frame = ttk.Frame(container)
@@ -257,6 +269,44 @@ class WhisprApp:
         state = "normal" if self.diarize_var.get() else "disabled"
         self.num_speakers_entry.configure(state=state)
         self.sensitivity_entry.configure(state=state)
+        self._rebuild_speaker_name_fields()
+
+    def _on_num_speakers_changed(self, *_args: object) -> None:
+        self._rebuild_speaker_name_fields()
+
+    def _rebuild_speaker_name_fields(self) -> None:
+        """Show one name entry per speaker, matching the requested count.
+
+        Existing names are preserved across rebuilds. Fields only appear while
+        diarization is enabled and a positive count is given (capped at 10).
+        """
+        try:
+            count = int(self.num_speakers_var.get().strip())
+        except ValueError:
+            count = 0
+        count = max(0, min(count, 10))
+
+        existing = [var.get() for var in self.speaker_name_vars]
+        for child in self.speaker_names_frame.winfo_children():
+            child.destroy()
+        self.speaker_name_vars = []
+
+        if count <= 0 or not self.diarize_var.get():
+            return
+
+        self.speaker_names_frame.columnconfigure(1, weight=1)
+        ttk.Label(self.speaker_names_frame, text="Speaker names (optional):").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(4, 2)
+        )
+        for i in range(count):
+            var = tk.StringVar(value=existing[i] if i < len(existing) else "")
+            self.speaker_name_vars.append(var)
+            ttk.Label(self.speaker_names_frame, text=f"Speaker {i + 1}").grid(
+                row=i + 1, column=0, sticky="w", padx=(0, 8), pady=2
+            )
+            ttk.Entry(self.speaker_names_frame, textvariable=var, width=24).grid(
+                row=i + 1, column=1, sticky="w", pady=2
+            )
 
     # -- Thread-safe widget helpers ---------------------------------------
 
@@ -401,6 +451,7 @@ class WhisprApp:
             self._result_source = Path(path)
             self._result_outdir = Path(outdir) if outdir else None
             self._speaker_names = {}
+            self._apply_preset_speaker_names()
             self._render_transcript()
 
             if outdir:
@@ -591,6 +642,22 @@ class WhisprApp:
         self._render_transcript()
         if self._result_source and self._result_outdir:
             self._save_outputs(result, self._result_source, self._result_outdir)
+
+    def _apply_preset_speaker_names(self) -> None:
+        """Seed display names from the Speaker N fields onto the diarized result.
+
+        Speakers are matched in label order (SPEAKER_00 -> "Speaker 1", ...).
+        The labelling pyannote assigns is arbitrary, so the operator may still
+        need to swap two names - one click per [speaker] tag in the transcript.
+        """
+        result = self._result
+        if result is None:
+            return
+        ids = sorted({seg.speaker for seg in result.segments if seg.speaker})
+        for sid, var in zip(ids, self.speaker_name_vars):
+            name = var.get().strip()
+            if name:
+                self._speaker_names[sid] = name
 
     def _rename_speaker(self, speaker_id: str) -> None:
         current = self._speaker_names.get(speaker_id, speaker_id)
