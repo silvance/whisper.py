@@ -63,7 +63,21 @@ def test_assign_speakers_splits_segment_by_word():
     assert out[1].text == "how you"
 
 
-def test_assign_speakers_gap_word_uses_nearest():
+def test_assign_speakers_small_gap_uses_nearest():
+    # Word ~1s after the turn ends -> within the gap tolerance, snaps to nearest.
+    segment = Segment(
+        start=6.0,
+        end=6.5,
+        text="orphan",
+        words=[Word(start=6.0, end=6.5, word="orphan")],
+    )
+    speakers = [SpeakerSegment(start=0.0, end=5.0, speaker="SPEAKER_00")]
+    out = assign_speakers([segment], speakers)
+    assert out[0].speaker == "SPEAKER_00"  # nearest turn, not None
+
+
+def test_assign_speakers_large_gap_is_unassigned():
+    # Word many seconds from any turn -> unattributable, left as None.
     segment = Segment(
         start=10.0,
         end=11.0,
@@ -72,7 +86,7 @@ def test_assign_speakers_gap_word_uses_nearest():
     )
     speakers = [SpeakerSegment(start=0.0, end=5.0, speaker="SPEAKER_00")]
     out = assign_speakers([segment], speakers)
-    assert out[0].speaker == "SPEAKER_00"  # nearest turn, not None
+    assert out[0].speaker is None
 
 
 def test_assign_speakers_smooths_spurious_short_run():
