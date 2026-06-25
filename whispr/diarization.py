@@ -142,6 +142,28 @@ def _pyannote_available() -> bool:
         return False
 
 
+def _log_cache_contents(hub, progress: ProgressCallback) -> None:
+    """Report what's actually in the bundled HF cache (diagnostic).
+
+    Lets us see from the status log whether each model's weight file really made
+    it into the bundle, instead of inferring it.
+    """
+    from pathlib import Path
+
+    hub = Path(hub)
+    files = sorted(p for p in hub.rglob("*") if p.is_file())
+    progress(f"Bundled cache: {len(files)} file(s) under {hub}")
+    for p in files:
+        try:
+            size = p.stat().st_size
+        except OSError:
+            size = -1
+        # Highlight the weight files we depend on.
+        rel = p.relative_to(hub)
+        if p.name.endswith((".bin", ".yaml", ".onnx", ".pt", ".safetensors")):
+            progress(f"  {rel}  ({size:,} B)")
+
+
 def _diarize_pyannote(
     wav_path: PathLike,
     *,
@@ -179,10 +201,13 @@ def _diarize_pyannote(
 
             hf_constants.HF_HUB_CACHE = str(hub)
             hf_constants.HF_HUB_OFFLINE = True
-        except Exception:
-            pass
+            patched = hf_constants.HF_HUB_CACHE
+        except Exception as exc:  # noqa: BLE001
+            patched = f"<patch failed: {exc}>"
         if progress is not None:
             progress(f"Using bundled pyannote cache: {hub}")
+            progress(f"HF_HUB_CACHE -> {patched}")
+            _log_cache_contents(hub, progress)
 
     if progress is not None:
         progress("Loading pyannote pipeline...")
