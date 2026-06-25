@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Sequence, Tuple, Union
 
 from .transcription import CancelCallback, CancelledError, ProgressCallback
 
@@ -122,7 +122,7 @@ def translate_text(
 
 
 def translate_files(
-    paths: List[PathLike],
+    paths: Sequence[PathLike],
     *,
     from_code: str,
     to_code: str = DEFAULT_TARGET,
