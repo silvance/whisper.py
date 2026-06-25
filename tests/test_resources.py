@@ -79,10 +79,13 @@ def test_configure_offline_hf_cache_present(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
     cache = resources.configure_offline_hf_cache()
+    hub = str(assets / "pyannote" / "hub")
     assert cache == assets / "pyannote"
     assert os.environ["HF_HOME"] == str(assets / "pyannote")
-    assert os.environ["HF_HUB_CACHE"] == str(assets / "pyannote" / "hub")
+    assert os.environ["HF_HUB_CACHE"] == hub
     assert os.environ["HF_HUB_OFFLINE"] == "1"
+    # pyannote sub-models read PYANNOTE_CACHE, not HF_HUB_CACHE.
+    assert os.environ["PYANNOTE_CACHE"] == hub
 
 
 def test_configure_offline_hf_cache_overrides_stale_env(tmp_path, monkeypatch):
@@ -93,11 +96,14 @@ def test_configure_offline_hf_cache_overrides_stale_env(tmp_path, monkeypatch):
     monkeypatch.setenv(resources.ENV_ASSETS, str(assets))
     monkeypatch.setenv("HF_HOME", "/some/stale/hf")
     monkeypatch.setenv("HF_HUB_CACHE", "/some/stale/hf/hub")
+    monkeypatch.setenv("PYANNOTE_CACHE", "/some/stale/pyannote")
 
     resources.configure_offline_hf_cache()
+    hub = str(assets / "pyannote" / "hub")
     assert os.environ["HF_HOME"] == str(assets / "pyannote")
-    assert os.environ["HF_HUB_CACHE"] == str(assets / "pyannote" / "hub")
+    assert os.environ["HF_HUB_CACHE"] == hub
     assert os.environ["HF_HUB_OFFLINE"] == "1"
+    assert os.environ["PYANNOTE_CACHE"] == hub
 
 
 def test_configure_offline_hf_cache_absent_is_noop(tmp_path, monkeypatch):
