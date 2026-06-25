@@ -175,9 +175,10 @@ def _diarize_pyannote(
     if pipeline is None:
         raise RuntimeError(
             "Could not load the pyannote pipeline. Accept the licenses for "
-            "pyannote/speaker-diarization-3.1 and pyannote/segmentation-3.0 on "
-            "Hugging Face and set HF_TOKEN, or bundle the models under "
-            "whispr_assets/pyannote."
+            "pyannote/speaker-diarization-3.1, pyannote/segmentation-3.0, "
+            "pyannote/wespeaker-voxceleb-resnet34-LM and "
+            "pyannote/speaker-diarization-community-1 on Hugging Face and set "
+            "HF_TOKEN, or bundle the models under whispr_assets/pyannote."
         )
     torch.set_num_threads(max(1, os.cpu_count() or 1))
     pipeline.to(torch.device("cpu"))

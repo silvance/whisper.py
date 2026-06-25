@@ -87,13 +87,16 @@ def fetch_models(names: List[str]) -> None:
         print(f"model {name} -> {out}")
 
 
-# pyannote.audio's speaker-diarization-3.1 pipeline and the two gated models it
-# pulls in (segmentation + speaker embedding). These are gated on the Hugging
-# Face Hub: the account behind HF_TOKEN must have accepted each model's license.
+# pyannote.audio's speaker-diarization-3.1 pipeline and the gated models it pulls
+# in: segmentation, speaker embedding, and the PLDA from speaker-diarization-
+# community-1 (current pyannote 3.1 loads its PLDA transform from there). All are
+# gated on the Hugging Face Hub: the account behind HF_TOKEN must have accepted
+# each model's license.
 PYANNOTE_REPOS = [
     "pyannote/speaker-diarization-3.1",
     "pyannote/segmentation-3.0",
     "pyannote/wespeaker-voxceleb-resnet34-LM",
+    "pyannote/speaker-diarization-community-1",
 ]
 
 
