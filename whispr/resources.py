@@ -162,3 +162,35 @@ def configure_offline_hf_cache() -> Optional[Path]:
     # so the sub-models resolve from the bundle too.
     os.environ["PYANNOTE_CACHE"] = hub
     return cache
+
+
+def bundled_argos_packages_dir() -> Optional[Path]:
+    """Return the bundled Argos Translate packages directory, if present.
+
+    The build installs language packs into ``whispr_assets/argos/packages`` (the
+    standard Argos packages layout); at runtime ``ARGOS_PACKAGES_DIR`` points here
+    so translation works offline.
+    """
+    for base in asset_dirs():
+        directory = base / "argos" / "packages"
+        if directory.is_dir():
+            return directory
+    return None
+
+
+def configure_offline_translation() -> Optional[Path]:
+    """Point Argos Translate at the bundled language packs, offline.
+
+    Returns the packages directory, or ``None`` if none is bundled. Like the HF
+    config this MUST run at startup before ``argostranslate`` is imported (it reads
+    ``ARGOS_PACKAGES_DIR`` / ``ARGOS_STANZA_AVAILABLE`` into module state at import).
+    No-op when no bundle is present, so from-source use is unchanged.
+    """
+    packages = bundled_argos_packages_dir()
+    if packages is None:
+        return None
+    os.environ["ARGOS_PACKAGES_DIR"] = str(packages)
+    # Use the lightweight MiniSBD sentence splitter; stanza's models aren't bundled
+    # and we don't want any model download attempt on an air-gapped machine.
+    os.environ["ARGOS_STANZA_AVAILABLE"] = "false"
+    return packages

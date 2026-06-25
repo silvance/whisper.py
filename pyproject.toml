@@ -43,6 +43,9 @@ optional-dependencies.bundle = [ "pyinstaller", "imageio-ffmpeg", "huggingface-h
 # telemetry - none of which suit an offline, air-gapped build. numpy<2 because
 # 3.1.1 uses np.NaN, which NumPy 2.0 removed.
 optional-dependencies.pyannote = [ "pyannote.audio==3.1.1", "soundfile", "numpy<2" ]
+# Offline text translation backend (CTranslate2-based, CPU). Language packs are
+# bundled into the air-gapped build; see whispr.resources.configure_offline_translation.
+optional-dependencies.translate = [ "argostranslate" ]
 urls = { Homepage = "https://github.com/silvance/whisper.py" }
 scripts.whisper = "whisper.transcribe:cli"
 scripts.whispr = "whispr.app:main"

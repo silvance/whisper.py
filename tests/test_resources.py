@@ -114,3 +114,25 @@ def test_configure_offline_hf_cache_absent_is_noop(tmp_path, monkeypatch):
     assert resources.configure_offline_hf_cache() is None
     # No bundled cache -> normal online HF behaviour is left untouched.
     assert "HF_HUB_OFFLINE" not in os.environ
+
+
+def test_configure_offline_translation_present(tmp_path, monkeypatch):
+    packages = tmp_path / "whispr_assets" / "argos" / "packages"
+    packages.mkdir(parents=True)
+    monkeypatch.setenv(resources.ENV_ASSETS, str(tmp_path / "whispr_assets"))
+    for var in ("ARGOS_PACKAGES_DIR", "ARGOS_STANZA_AVAILABLE"):
+        monkeypatch.delenv(var, raising=False)
+
+    result = resources.configure_offline_translation()
+    assert result == packages
+    assert os.environ["ARGOS_PACKAGES_DIR"] == str(packages)
+    assert os.environ["ARGOS_STANZA_AVAILABLE"] == "false"
+
+
+def test_configure_offline_translation_absent_is_noop(tmp_path, monkeypatch):
+    monkeypatch.setenv(resources.ENV_ASSETS, str(tmp_path / "empty"))
+    for var in ("ARGOS_PACKAGES_DIR", "ARGOS_STANZA_AVAILABLE"):
+        monkeypatch.delenv(var, raising=False)
+
+    assert resources.configure_offline_translation() is None
+    assert "ARGOS_PACKAGES_DIR" not in os.environ
