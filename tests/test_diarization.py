@@ -124,9 +124,41 @@ def test_assign_speakers_keeps_real_short_turn_at_min_length():
     assert [s.speaker for s in out] == ["SPEAKER_00", "SPEAKER_01", "SPEAKER_00"]
 
 
-def test_diarize_without_backend(tmp_path):
-    # sherpa-onnx is not installed in this environment -> clear RuntimeError.
+def test_diarize_without_backend(tmp_path, monkeypatch):
+    # With no pyannote, auto falls back to sherpa; sherpa-onnx isn't installed in
+    # this environment -> clear RuntimeError.
+    import whispr.diarization as d
+
+    monkeypatch.setattr(d, "_pyannote_available", lambda: False)
     wav = tmp_path / "audio.wav"
     wav.write_bytes(b"\x00")
     with pytest.raises(RuntimeError, match="sherpa-onnx is not installed"):
         diarize(wav)
+
+
+def test_diarize_unknown_backend(tmp_path):
+    wav = tmp_path / "audio.wav"
+    wav.write_bytes(b"\x00")
+    with pytest.raises(ValueError, match="unknown diarization backend"):
+        diarize(wav, backend="bogus")
+
+
+def test_diarize_pyannote_backend_requires_pyannote(tmp_path, monkeypatch):
+    import whispr.diarization as d
+
+    monkeypatch.setattr(d, "_pyannote_available", lambda: False)
+    wav = tmp_path / "audio.wav"
+    wav.write_bytes(b"\x00")
+    with pytest.raises(RuntimeError, match="pyannote.audio is not installed"):
+        diarize(wav, backend="pyannote")
+
+
+def test_diarize_sherpa_backend_forced(tmp_path, monkeypatch):
+    import whispr.diarization as d
+
+    # Even when pyannote is available, backend="sherpa" must route to sherpa.
+    monkeypatch.setattr(d, "_pyannote_available", lambda: True)
+    wav = tmp_path / "audio.wav"
+    wav.write_bytes(b"\x00")
+    with pytest.raises(RuntimeError, match="sherpa-onnx is not installed"):
+        diarize(wav, backend="sherpa")

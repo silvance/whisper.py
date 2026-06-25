@@ -213,16 +213,21 @@ everywhere** (bulk) or **move just that line to a different speaker** (individua
 The labelling a diarizer assigns is arbitrary, so if two names land on the wrong
 voices it's a one-click swap.
 
-**Backends.** Two are supported and the app picks automatically:
+**Backends.** Two are supported, chosen with the **Engine** dropdown (default
+**Auto**):
 
-- **pyannote.audio** (`speaker-diarization-3.1`, PyTorch) — used when installed.
-  Much better on hard / low-quality / overlapping audio, so it's the default for
-  deployed bundles. Loads from a bundled offline model cache at
+- **pyannote.audio** (`speaker-diarization-3.1`, PyTorch) — much better on hard /
+  low-quality / overlapping audio. Loads from a bundled offline model cache at
   `whispr_assets/pyannote` (no network or token needed at runtime; see below).
-- **sherpa-onnx** (ONNX / CPU, no PyTorch) — the lighter fallback when pyannote
-  isn't installed. Needs a segmentation model and a speaker embedding model at
-  `whispr_assets/diarization/segmentation.onnx` and `.../embedding.onnx` (embedding
-  is NeMo TitaNet-large, English).
+- **sherpa-onnx** (ONNX / CPU, no PyTorch) — lighter and faster, with no PyTorch
+  to load; a good choice for clean audio. Needs a segmentation model and a speaker
+  embedding model at `whispr_assets/diarization/segmentation.onnx` and
+  `.../embedding.onnx` (embedding is NeMo TitaNet-large, English).
+
+**Auto** uses pyannote when it's installed/bundled and otherwise falls back to
+sherpa; pick a specific engine to force it (e.g. sherpa for a quick pass on clean
+audio). A `both` bundle (see below) ships both so you can switch per recording.
+**Sensitivity** applies to sherpa only.
 
 The audio is normalised to 16 kHz mono with ffmpeg first. Speaker labels are
 assigned **per word** (using Whisper word timestamps): a single transcript segment
@@ -253,16 +258,18 @@ fetched at runtime.
 builds on hosted Windows and Linux runners and uploads `whispr-windows-x86_64` and
 `whispr-linux-x86_64` artifacts. The build runners use the internet; the target
 machines never do. You can choose which models to bundle (default
-`small,medium,large-v3`) and which **diarizer** to include (default `pyannote`).
+`small,medium,large-v3`) and which **diarizer** to include: `both` (default —
+pyannote + sherpa, switchable at runtime via the Engine dropdown), `pyannote`, or
+`sherpa`.
 
-The **pyannote** diarizer uses gated Hugging Face models, so its bundle build
-needs a token. Add a repository secret named **`HF_TOKEN`** (Settings → Secrets
-and variables → Actions) holding a Hugging Face token whose account has accepted
-the licenses for `pyannote/speaker-diarization-3.1`, `pyannote/segmentation-3.0`,
-and `pyannote/wespeaker-voxceleb-resnet34-LM`. The models are downloaded at build
-time and baked into the bundle's offline cache; the deployed app needs neither the
-token nor network access. Choose the `sherpa` diarizer instead for a smaller,
-token-free build.
+Bundling **pyannote** (i.e. `both` or `pyannote`) uses gated Hugging Face models,
+so the build needs a token. Add a repository secret named **`HF_TOKEN`** (Settings
+→ Secrets and variables → Actions) holding a Hugging Face token whose account has
+accepted the licenses for `pyannote/speaker-diarization-3.1`,
+`pyannote/segmentation-3.0`, and `pyannote/wespeaker-voxceleb-resnet34-LM`. The
+models are downloaded at build time and baked into the bundle's offline cache; the
+deployed app needs neither the token nor network access. Choose the `sherpa`
+diarizer for a smaller, token-free build (no PyTorch).
 
 To build locally instead on a connected machine of each OS:
 
