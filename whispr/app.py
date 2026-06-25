@@ -562,7 +562,7 @@ class WhisprApp:
                 mark = "  ✓" if sid == current else ""
                 menu.add_command(
                     label=f"This line is {name}{mark}",
-                    command=lambda s=sid: self._reassign_segment(index, s),
+                    command=self._reassign_command(index, sid),
                 )
             menu.add_separator()
             cur_name = self._speaker_names.get(current, current)
@@ -576,6 +576,12 @@ class WhisprApp:
                 menu.grab_release()
 
         return handler
+
+    def _reassign_command(self, index: int, speaker_id: str) -> Callable[[], None]:
+        def command() -> None:
+            self._reassign_segment(index, speaker_id)
+
+        return command
 
     def _reassign_segment(self, index: int, speaker_id: str) -> None:
         result = self._result
