@@ -163,15 +163,26 @@ def _diarize_pyannote(
 
     token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
 
-    # When the offline cache is bundled, pass it as cache_dir too, so pyannote
-    # reads from it directly rather than relying solely on the HF_HUB_CACHE env
-    # (belt and suspenders against a stray HF cache path on the operator's box).
+    # When the offline cache is bundled, point pyannote at it. Passing cache_dir
+    # only covers the top-level config; pyannote 3.1.1 loads the sub-models
+    # (segmentation / embedding) via hf_hub_download WITHOUT forwarding cache_dir,
+    # so they read huggingface_hub's HF_HUB_CACHE *constant* - which was frozen at
+    # import (before our startup env override). Patch the constant (and offline)
+    # at runtime so the sub-models also resolve from the bundle.
     cache = pyannote_cache_dir()
     load_kwargs = {}
     if cache is not None and (cache / "hub").is_dir():
-        load_kwargs["cache_dir"] = str(cache / "hub")
+        hub = cache / "hub"
+        load_kwargs["cache_dir"] = str(hub)
+        try:
+            import huggingface_hub.constants as hf_constants
+
+            hf_constants.HF_HUB_CACHE = str(hub)
+            hf_constants.HF_HUB_OFFLINE = True
+        except Exception:
+            pass
         if progress is not None:
-            progress(f"Using bundled pyannote cache: {cache / 'hub'}")
+            progress(f"Using bundled pyannote cache: {hub}")
 
     if progress is not None:
         progress("Loading pyannote pipeline...")
