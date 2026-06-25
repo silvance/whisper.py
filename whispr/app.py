@@ -159,6 +159,8 @@ class WhisprApp:
         self.speaker_name_vars: List[tk.StringVar] = []
         self.sensitivity_var = tk.StringVar(value="0.5")
         self.srt_var = tk.BooleanVar(value=False)
+        # Put a blank line between segments in the transcript (and saved .txt).
+        self.blank_lines_var = tk.BooleanVar(value=True)
         self.progress_label_var = tk.StringVar(value="Idle")
 
         # State for the last result, so speakers can be renamed after a run.
@@ -315,6 +317,12 @@ class WhisprApp:
         ttk.Checkbutton(
             opt_frame, text="Also save .srt subtitles", variable=self.srt_var
         ).grid(row=2, column=0, sticky="w", pady=2)
+        ttk.Checkbutton(
+            opt_frame,
+            text="Blank line between segments (easier to read / paste)",
+            variable=self.blank_lines_var,
+            command=self._render_transcript,
+        ).grid(row=3, column=0, sticky="w", pady=2)
 
         # --- Speakers ------------------------------------------------------
         spk_section = CollapsibleSection(container, "Speakers")
@@ -1049,7 +1057,10 @@ class WhisprApp:
             return
         names = self._speaker_names
         txt_path = outdir / (source.name + ".txt")
-        txt_path.write_text(result.to_txt(names), encoding="utf-8")
+        txt_path.write_text(
+            result.to_txt(names, blank_lines=self.blank_lines_var.get()),
+            encoding="utf-8",
+        )
         self._append(self.status, f"Wrote transcript to {txt_path}")
         if self.srt_var.get():
             srt_path = outdir / (source.name + ".srt")
@@ -1069,8 +1080,15 @@ class WhisprApp:
             if result is None:
                 self.output.configure(state="disabled")
                 return
+            # Blank line between segments/turns when enabled (easier to read/paste).
+            line_end = "\n\n" if self.blank_lines_var.get() else "\n"
             if not result.has_speakers:
-                self.output.insert("end", result.text + "\n")
+                if result.segments:
+                    self.output.insert(
+                        "end", line_end.join(s.text for s in result.segments) + "\n"
+                    )
+                else:
+                    self.output.insert("end", result.text + "\n")
             else:
                 bound: set[str] = set()
                 for index, segment in enumerate(result.segments):
@@ -1091,7 +1109,7 @@ class WhisprApp:
                     )
                     self.output.tag_bind(line_tag, "<Leave>", self._cursor_handler(""))
                     self.output.insert("end", f"[{name}]", (spk_tag, line_tag))
-                    self.output.insert("end", f" {segment.text}\n")
+                    self.output.insert("end", f" {segment.text}{line_end}")
             self.output.configure(state="disabled")
 
         self.root.after(0, _do)

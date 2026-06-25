@@ -103,6 +103,23 @@ def test_to_txt_with_speakers():
     )
     assert result.has_speakers
     assert result.to_txt() == "[SPEAKER_00] hello\n[SPEAKER_01] world"
+    # blank_lines puts an empty line between turns.
+    assert result.to_txt(blank_lines=True) == "[SPEAKER_00] hello\n\n[SPEAKER_01] world"
+
+
+def test_to_txt_blank_lines_without_speakers():
+    result = TranscriptionResult(
+        text="one\ntwo",
+        language="en",
+        language_probability=1.0,
+        duration=2.0,
+        segments=[
+            Segment(start=0.0, end=1.0, text="one"),
+            Segment(start=1.0, end=2.0, text="two"),
+        ],
+    )
+    assert result.to_txt() == "one\ntwo"
+    assert result.to_txt(blank_lines=True) == "one\n\ntwo"
 
 
 def test_to_srt_with_speakers():
