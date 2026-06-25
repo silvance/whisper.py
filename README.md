@@ -265,6 +265,16 @@ packs (each `<code>→en`) are bundled for the Translate tab (default
 `ar,ru,zh,fa,uk,he,ko`; empty to skip translation). Packs and their sentence
 splitter are baked in, so translation also runs with no network.
 
+**Lean transcriber-only build.** A full bundle (all models + translation packs)
+is large. For users who only transcribe English, build a much smaller bundle by
+setting **`models=base.en`** and **`translate_langs=`** (empty): this drops the
+multi-GB models and the ~1 GB Argos/translation stack while keeping full
+transcription and diarization. The GUI detects that no translation engine is
+present and **hides the Translate tab**, so the app opens as a clean,
+single-purpose transcriber. (Even on a full bundle, set the `WHISPR_MODE=transcribe`
+environment variable to force the transcriber-only view — e.g. on a locked-down
+shortcut.)
+
 Bundling **pyannote** (i.e. `both` or `pyannote`) uses gated Hugging Face models,
 so the build needs a token. Add a repository secret named **`HF_TOKEN`** (Settings
 → Secrets and variables → Actions) holding a Hugging Face token whose account has
