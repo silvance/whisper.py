@@ -69,3 +69,27 @@ def test_bundled_diarization_models_present(tmp_path, monkeypatch):
 def test_bundled_diarization_models_absent(tmp_path, monkeypatch):
     monkeypatch.setenv(resources.ENV_ASSETS, str(tmp_path / "empty"))
     assert resources.bundled_diarization_models() is None
+
+
+def test_configure_offline_hf_cache_present(tmp_path, monkeypatch):
+    assets = tmp_path / "whispr_assets"
+    (assets / "pyannote" / "hub").mkdir(parents=True)
+    monkeypatch.setenv(resources.ENV_ASSETS, str(assets))
+    for var in ("HF_HOME", "HF_HUB_CACHE", "HF_HUB_OFFLINE"):
+        monkeypatch.delenv(var, raising=False)
+
+    cache = resources.configure_offline_hf_cache()
+    assert cache == assets / "pyannote"
+    assert os.environ["HF_HOME"] == str(assets / "pyannote")
+    assert os.environ["HF_HUB_CACHE"] == str(assets / "pyannote" / "hub")
+    assert os.environ["HF_HUB_OFFLINE"] == "1"
+
+
+def test_configure_offline_hf_cache_absent_is_noop(tmp_path, monkeypatch):
+    monkeypatch.setenv(resources.ENV_ASSETS, str(tmp_path / "empty"))
+    for var in ("HF_HOME", "HF_HUB_CACHE", "HF_HUB_OFFLINE"):
+        monkeypatch.delenv(var, raising=False)
+
+    assert resources.configure_offline_hf_cache() is None
+    # No bundled cache -> normal online HF behaviour is left untouched.
+    assert "HF_HUB_OFFLINE" not in os.environ

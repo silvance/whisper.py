@@ -127,3 +127,26 @@ def pyannote_cache_dir() -> Optional[Path]:
         if directory.is_dir():
             return directory
     return None
+
+
+def configure_offline_hf_cache() -> Optional[Path]:
+    """Point Hugging Face at the bundled pyannote cache, in offline mode.
+
+    Returns the configured cache directory, or ``None`` if none is bundled.
+
+    This MUST run at process startup, before ``huggingface_hub`` (or anything that
+    imports it - ``faster_whisper`` and ``pyannote.audio`` both do) is first
+    imported: huggingface_hub reads ``HF_HOME`` / ``HF_HUB_OFFLINE`` into module
+    constants at import time, so setting them later (e.g. inside the diarization
+    call) has no effect and the app falls back to the network.
+
+    No-op when no bundled cache is present (e.g. running from source), so normal
+    online Hugging Face behaviour is unchanged.
+    """
+    cache = pyannote_cache_dir()
+    if cache is None:
+        return None
+    os.environ.setdefault("HF_HOME", str(cache))
+    os.environ.setdefault("HF_HUB_CACHE", str(cache / "hub"))
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    return cache
