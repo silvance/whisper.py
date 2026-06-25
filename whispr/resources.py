@@ -113,3 +113,17 @@ def bundled_diarization_models() -> Optional[Tuple[Path, Path]]:
         if segmentation.is_file() and embedding.is_file():
             return segmentation, embedding
     return None
+
+
+def pyannote_cache_dir() -> Optional[Path]:
+    """Return a bundled offline Hugging Face cache for pyannote, if present.
+
+    The build copies the downloaded pyannote models into ``whispr_assets/pyannote``
+    (an HF cache layout); at runtime this is used with ``HF_HUB_OFFLINE`` so the
+    air-gapped app needs no network or token.
+    """
+    for base in asset_dirs():
+        directory = base / "pyannote"
+        if directory.is_dir():
+            return directory
+    return None
