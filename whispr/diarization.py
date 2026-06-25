@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence, Tuple, Union
 
-from .resources import bundled_diarization_models
+from .resources import bundled_diarization_models, pyannote_cache_dir
 from .transcription import ProgressCallback, Segment, Word
 
 PathLike = Union[str, Path]
@@ -73,6 +73,102 @@ def _read_wav_mono16k(path: PathLike):
 
 
 def diarize(
+    wav_path: PathLike,
+    *,
+    segmentation_model: Optional[PathLike] = None,
+    embedding_model: Optional[PathLike] = None,
+    num_speakers: Optional[int] = None,
+    threshold: float = 0.5,
+    progress: Optional[ProgressCallback] = None,
+    on_progress: Optional[Callable[[float], None]] = None,
+) -> List[SpeakerSegment]:
+    """Diarize a WAV into speaker-labelled segments.
+
+    Uses pyannote.audio when it is installed (much better on hard/low-quality
+    audio); otherwise falls back to the sherpa-onnx ONNX pipeline. Both return
+    the same ``SpeakerSegment`` list, so the rest of the app is unaffected.
+    """
+    if _pyannote_available():
+        return _diarize_pyannote(
+            wav_path,
+            num_speakers=num_speakers,
+            progress=progress,
+            on_progress=on_progress,
+        )
+    return _diarize_sherpa(
+        wav_path,
+        segmentation_model=segmentation_model,
+        embedding_model=embedding_model,
+        num_speakers=num_speakers,
+        threshold=threshold,
+        progress=progress,
+        on_progress=on_progress,
+    )
+
+
+def _pyannote_available() -> bool:
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec("pyannote.audio") is not None
+    except ModuleNotFoundError:
+        # find_spec raises (rather than returning None) when the parent package
+        # itself is absent.
+        return False
+
+
+def _diarize_pyannote(
+    wav_path: PathLike,
+    *,
+    num_speakers: Optional[int] = None,
+    progress: Optional[ProgressCallback] = None,
+    on_progress: Optional[Callable[[float], None]] = None,
+) -> List[SpeakerSegment]:
+    """Diarize with pyannote.audio (speaker-diarization-3.1) on CPU.
+
+    Loads from a bundled offline HF cache (``whispr_assets/pyannote``) when
+    present; otherwise from the normal HF cache using ``HF_TOKEN``.
+    """
+    import torch
+    from pyannote.audio import Pipeline
+
+    cache = pyannote_cache_dir()
+    if cache is not None:
+        os.environ.setdefault("HF_HOME", str(cache))
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
+
+    if progress is not None:
+        progress("Loading pyannote pipeline...")
+    pipeline = Pipeline.from_pretrained(
+        "pyannote/speaker-diarization-3.1", use_auth_token=token
+    )
+    if pipeline is None:
+        raise RuntimeError(
+            "Could not load the pyannote pipeline. Accept the licenses for "
+            "pyannote/speaker-diarization-3.1 and pyannote/segmentation-3.0 on "
+            "Hugging Face and set HF_TOKEN, or bundle the models under "
+            "whispr_assets/pyannote."
+        )
+    torch.set_num_threads(max(1, os.cpu_count() or 1))
+    pipeline.to(torch.device("cpu"))
+
+    if progress is not None:
+        progress("Identifying speakers (pyannote)...")
+    params = {"num_speakers": num_speakers} if num_speakers else {}
+    annotation = pipeline(str(wav_path), **params)
+
+    segments = [
+        SpeakerSegment(start=turn.start, end=turn.end, speaker=speaker)
+        for turn, _, speaker in annotation.itertracks(yield_label=True)
+    ]
+    segments.sort(key=lambda seg: seg.start)
+    if on_progress is not None:
+        on_progress(1.0)
+    return segments
+
+
+def _diarize_sherpa(
     wav_path: PathLike,
     *,
     segmentation_model: Optional[PathLike] = None,
