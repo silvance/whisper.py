@@ -309,6 +309,80 @@ def _speaker_at(t: float, speaker_segments: Sequence[SpeakerSegment]) -> Optiona
     return nearest
 
 
+@dataclass
+class _Run:
+    """A run of consecutive words attributed to one speaker (pre-segment)."""
+
+    speaker: Optional[str]
+    words: List[Word]
+
+    @property
+    def start(self) -> float:
+        return self.words[0].start
+
+    @property
+    def end(self) -> float:
+        return self.words[-1].end
+
+    @property
+    def duration(self) -> float:
+        return self.end - self.start
+
+
+def _coalesce(runs: List[_Run]) -> List[_Run]:
+    """Merge adjacent runs that share a speaker."""
+    out: List[_Run] = []
+    for run in runs:
+        if out and out[-1].speaker == run.speaker:
+            out[-1].words.extend(run.words)
+        else:
+            out.append(_Run(speaker=run.speaker, words=list(run.words)))
+    return out
+
+
+def _merge_short_runs(
+    runs: List[_Run],
+    *,
+    min_seconds: float = 0.8,
+    max_words: int = 2,
+) -> List[_Run]:
+    """Absorb stray sub-second / 1-2 word runs into an adjacent speaker.
+
+    pyannote's turn boundaries rarely line up exactly with Whisper's word
+    boundaries, so the first word or two of a new turn can be attributed to the
+    previous speaker (and vice versa). These show up as tiny runs wedged between
+    longer ones. We relabel any such fragment to a neighbouring speaker - the
+    only neighbour at the edges, or the longer (by word count) neighbour in the
+    middle - then coalesce. This trades the occasional genuinely short
+    interjection for far fewer boundary leaks.
+    """
+    runs = [_Run(speaker=r.speaker, words=list(r.words)) for r in runs]
+    changed = True
+    while changed and len(runs) > 1:
+        changed = False
+        for i, run in enumerate(runs):
+            if run.duration >= min_seconds or len(run.words) > max_words:
+                continue
+            prev = runs[i - 1] if i > 0 else None
+            nxt = runs[i + 1] if i + 1 < len(runs) else None
+            if prev is None and nxt is None:
+                continue
+            if prev is None:
+                target = nxt
+            elif nxt is None:
+                target = prev
+            else:
+                target = prev if len(prev.words) >= len(nxt.words) else nxt
+            if target is None or target.speaker == run.speaker:
+                continue
+            run.speaker = target.speaker
+            changed = True
+            break
+        if changed:
+            runs = _coalesce(runs)
+    return runs
+
+
 def assign_speakers(
     segments: List[Segment],
     speaker_segments: Sequence[SpeakerSegment],
@@ -316,47 +390,49 @@ def assign_speakers(
     """Attach speaker labels to a transcript, splitting on speaker changes.
 
     When per-word timestamps are available, each word is assigned to the speaker
-    active at its midpoint, and consecutive same-speaker words are merged into a
-    new segment - so a single Whisper segment that spans a speaker change is
-    split correctly. Segments without word timestamps fall back to whole-segment
-    overlap. Returns the (possibly longer) list of speaker-labelled segments.
+    active at its midpoint and consecutive same-speaker words are grouped into
+    runs - so a single Whisper segment that spans a speaker change is split
+    correctly. A smoothing pass (:func:`_merge_short_runs`) then absorbs tiny
+    stray fragments at turn boundaries, where pyannote's turn edges don't line
+    up with Whisper's word edges. Each surviving run becomes one segment.
+    Segments without word timestamps fall back to whole-segment overlap.
     """
     out: List[Segment] = []
+    pending: List[_Run] = []
+
+    def _emit_pending() -> None:
+        for run in _merge_short_runs(pending):
+            text = "".join(w.word for w in run.words).strip()
+            if not text:
+                continue
+            out.append(
+                Segment(
+                    start=run.words[0].start,
+                    end=run.words[-1].end,
+                    text=text,
+                    speaker=run.speaker,
+                    words=list(run.words),
+                )
+            )
+        pending.clear()
+
     for segment in segments:
         if not segment.words:
+            # Mixed/no-word segment: flush what we have, then attribute whole.
+            _emit_pending()
             segment.speaker = _best_overlap_speaker(
                 segment.start, segment.end, speaker_segments
             )
             out.append(segment)
             continue
 
-        run_speaker: Optional[str] = None
-        run_words: List[Word] = []
-
-        def _flush() -> None:
-            if not run_words:
-                return
-            text = "".join(w.word for w in run_words).strip()
-            if not text:
-                return
-            out.append(
-                Segment(
-                    start=run_words[0].start,
-                    end=run_words[-1].end,
-                    text=text,
-                    speaker=run_speaker,
-                    words=list(run_words),
-                )
-            )
-
         for word in segment.words:
             midpoint = (word.start + word.end) / 2.0
             speaker = _speaker_at(midpoint, speaker_segments)
-            if run_words and speaker != run_speaker:
-                _flush()
-                run_words = []
-            run_speaker = speaker
-            run_words.append(word)
-        _flush()
+            if pending and pending[-1].speaker == speaker:
+                pending[-1].words.append(word)
+            else:
+                pending.append(_Run(speaker=speaker, words=[word]))
 
+    _emit_pending()
     return out
