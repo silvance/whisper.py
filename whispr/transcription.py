@@ -128,12 +128,24 @@ class TranscriptionResult:
             return speaker_names.get(label, label)
         return label
 
-    def to_txt(self, speaker_names: Optional[Dict[str, str]] = None) -> str:
+    def to_txt(
+        self,
+        speaker_names: Optional[Dict[str, str]] = None,
+        *,
+        blank_lines: bool = False,
+    ) -> str:
         """Plain-text transcript. When diarized, lines are prefixed with the
-        speaker (optionally remapped via ``speaker_names``: id -> display name)."""
+        speaker (optionally remapped via ``speaker_names``: id -> display name).
+
+        ``blank_lines`` puts an empty line between segments (between speaker turns
+        when diarized) - easier to read and to paste into a document.
+        """
+        sep = "\n\n" if blank_lines else "\n"
         if not self.has_speakers:
+            if self.segments:
+                return sep.join(segment.text for segment in self.segments)
             return self.text
-        return "\n".join(
+        return sep.join(
             f"[{self._speaker_label(segment.speaker, speaker_names)}] {segment.text}"
             for segment in self.segments
         )
