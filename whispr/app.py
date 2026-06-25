@@ -155,7 +155,14 @@ class WhisprApp:
 
     def _build_ui(self) -> None:
         self.root.minsize(680, 480)
-        container = ttk.Frame(self.root, padding=12)
+
+        # Top-level mode switch: audio/video transcription vs text translation.
+        self.main_nb = ttk.Notebook(self.root)
+        self.main_nb.pack(fill="both", expand=True)
+        transcribe_tab = ttk.Frame(self.main_nb)
+        self.main_nb.add(transcribe_tab, text="Transcribe")
+
+        container = ttk.Frame(transcribe_tab, padding=12)
         container.pack(fill="both", expand=True)
 
         # Collapsible settings sections (hidden as a group when a run starts).
@@ -350,6 +357,106 @@ class WhisprApp:
         self._update_output_state()
         self._update_speaker_state()
 
+        # --- Translate tab -------------------------------------------------
+        self._build_translate_tab()
+
+    def _build_translate_tab(self) -> None:
+        """Build the text-translation tab (paste box + batch files, foreign->EN)."""
+        tab = ttk.Frame(self.main_nb)
+        self.main_nb.add(tab, text="Translate")
+        container = ttk.Frame(tab, padding=12)
+        container.pack(fill="both", expand=True)
+
+        # --- Languages -----------------------------------------------------
+        lang_frame = ttk.LabelFrame(container, text="Languages", padding=10)
+        lang_frame.pack(fill="x")
+        lang_frame.columnconfigure(1, weight=1)
+        ttk.Label(lang_frame, text="From").grid(
+            row=0, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        self.translate_from_var = tk.StringVar()
+        self.translate_from_combo = ttk.Combobox(
+            lang_frame, textvariable=self.translate_from_var, state="readonly", width=28
+        )
+        self.translate_from_combo.grid(row=0, column=1, sticky="w", pady=4)
+        ttk.Button(lang_frame, text="Refresh", command=self._refresh_languages).grid(
+            row=0, column=2, padx=(8, 0), pady=4
+        )
+        ttk.Label(lang_frame, text="To").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        ttk.Label(lang_frame, text="English").grid(row=1, column=1, sticky="w", pady=4)
+        self.translate_hint_var = tk.StringVar()
+        ttk.Label(
+            lang_frame,
+            textvariable=self.translate_hint_var,
+            wraplength=460,
+            justify="left",
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
+        # --- Paste box -----------------------------------------------------
+        paste_frame = ttk.LabelFrame(container, text="Translate text", padding=10)
+        paste_frame.pack(fill="both", expand=True, pady=(10, 0))
+        ttk.Label(paste_frame, text="Paste text to translate:").pack(anchor="w")
+        self.translate_input = ScrolledText(paste_frame, wrap="word", height=6)
+        self.translate_input.pack(fill="both", expand=True, pady=(2, 6))
+        ttk.Button(
+            paste_frame, text="Translate", command=self._translate_paste_in_thread
+        ).pack(anchor="w")
+        ttk.Label(paste_frame, text="Result:").pack(anchor="w", pady=(6, 0))
+        self.translate_output = ScrolledText(
+            paste_frame, wrap="word", height=6, state="disabled"
+        )
+        self.translate_output.pack(fill="both", expand=True, pady=(2, 0))
+
+        # --- Batch files ---------------------------------------------------
+        batch_frame = ttk.LabelFrame(
+            container, text="Translate files (batch)", padding=10
+        )
+        batch_frame.pack(fill="x", pady=(10, 0))
+        self._translate_files: List[Path] = []
+        self.translate_files_var = tk.StringVar(value="No files selected.")
+        row = ttk.Frame(batch_frame)
+        row.pack(fill="x")
+        ttk.Button(row, text="Add files…", command=self._add_translate_files).pack(
+            side="left"
+        )
+        ttk.Button(row, text="Clear", command=self._clear_translate_files).pack(
+            side="left", padx=(8, 0)
+        )
+        ttk.Button(
+            row, text="Translate files", command=self._translate_files_in_thread
+        ).pack(side="left", padx=(8, 0))
+        ttk.Label(
+            batch_frame,
+            textvariable=self.translate_files_var,
+            wraplength=460,
+            justify="left",
+        ).pack(anchor="w", pady=(6, 0))
+        ttk.Label(
+            batch_frame,
+            text="Each file is translated to <name>.en.<ext> next to the original.",
+            wraplength=460,
+            justify="left",
+        ).pack(anchor="w")
+
+        # --- Run controls + progress --------------------------------------
+        run_frame = ttk.Frame(container)
+        run_frame.pack(fill="x", pady=(12, 0))
+        run_frame.columnconfigure(1, weight=1)
+        self.translate_cancel_button = ttk.Button(
+            run_frame, text="Cancel", command=self.cancel, state="disabled"
+        )
+        self.translate_cancel_button.grid(row=0, column=0, sticky="w")
+        self.translate_progress = ttk.Progressbar(run_frame, mode="determinate")
+        self.translate_progress.grid(row=0, column=1, sticky="ew", padx=(10, 0))
+        self.translate_status_var = tk.StringVar(value="Idle")
+        ttk.Label(run_frame, textvariable=self.translate_status_var).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(4, 0)
+        )
+
+        self._refresh_languages()
+
     def _toggle_all_settings(self) -> None:
         expand = not any(section.expanded for section in self._setting_sections)
         for section in self._setting_sections:
@@ -492,11 +599,179 @@ class WhisprApp:
         threading.Thread(target=self._run, daemon=True).start()
 
     def cancel(self) -> None:
-        """Request the running job stop at its next cancellation checkpoint."""
+        """Request the running job (transcribe or translate) stop at its next
+        cancellation checkpoint."""
         self._cancel_event.set()
-        self.cancel_button.configure(state="disabled")
+        for button in (
+            getattr(self, "cancel_button", None),
+            getattr(self, "translate_cancel_button", None),
+        ):
+            if button is not None:
+                button.configure(state="disabled")
         self._append(self.status, "Cancelling… (will stop at the next checkpoint)")
         self.progress_label_var.set("Cancelling…")
+        if hasattr(self, "translate_status_var"):
+            self.translate_status_var.set("Cancelling…")
+
+    # -- Translation -------------------------------------------------------
+
+    def _refresh_languages(self) -> None:
+        self.translate_hint_var.set("Loading languages…")
+        threading.Thread(target=self._load_languages, daemon=True).start()
+
+    def _load_languages(self) -> None:
+        try:
+            from .translation import available_source_languages
+
+            langs = available_source_languages()
+            err: Optional[Exception] = None
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user as a hint
+            langs, err = [], exc
+
+        def _apply() -> None:
+            self._translate_lang_codes = {name: code for code, name in langs}
+            names = list(self._translate_lang_codes)
+            self.translate_from_combo.configure(values=names)
+            if names:
+                if self.translate_from_var.get() not in names:
+                    self.translate_from_var.set(names[0])
+                self.translate_hint_var.set("")
+            elif err is not None:
+                self.translate_hint_var.set(self._friendly_error(err))
+            else:
+                self.translate_hint_var.set(
+                    "No language packs found. Use a build with bundled packs, or "
+                    "install Argos packs."
+                )
+
+        self.root.after(0, _apply)
+
+    def _selected_from_code(self) -> Optional[str]:
+        codes = getattr(self, "_translate_lang_codes", {})
+        return codes.get(self.translate_from_var.get())
+
+    def _add_translate_files(self) -> None:
+        paths = filedialog.askopenfilenames(
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+        )
+        for raw in paths:
+            path = Path(raw)
+            if raw and path not in self._translate_files:
+                self._translate_files.append(path)
+        self._update_translate_files_label()
+
+    def _clear_translate_files(self) -> None:
+        self._translate_files = []
+        self._update_translate_files_label()
+
+    def _update_translate_files_label(self) -> None:
+        count = len(self._translate_files)
+        if not count:
+            self.translate_files_var.set("No files selected.")
+            return
+        names = ", ".join(p.name for p in self._translate_files[:5])
+        more = "" if count <= 5 else f" (+{count - 5} more)"
+        self.translate_files_var.set(f"{count} file(s): {names}{more}")
+
+    def _set_translate_busy(self, busy: bool, message: Optional[str] = None) -> None:
+        def _do() -> None:
+            self.translate_cancel_button.configure(
+                state="normal" if busy else "disabled"
+            )
+            if not busy:
+                self.translate_progress["value"] = 0
+            self.translate_status_var.set(message or ("Working…" if busy else "Idle"))
+
+        self.root.after(0, _do)
+
+    def _set_translate_progress(self, fraction: float) -> None:
+        pct = max(0.0, min(1.0, fraction)) * 100.0
+        self.root.after(0, lambda: self.translate_progress.configure(value=pct))
+
+    def _set_translate_status(self, message: str) -> None:
+        self.root.after(0, lambda: self.translate_status_var.set(message))
+
+    def _set_translate_output(self, text: str) -> None:
+        def _do() -> None:
+            self.translate_output.configure(state="normal")
+            self.translate_output.delete("1.0", "end")
+            self.translate_output.insert("end", text)
+            self.translate_output.configure(state="disabled")
+
+        self.root.after(0, _do)
+
+    def _translate_paste_in_thread(self) -> None:
+        from_code = self._selected_from_code()
+        if not from_code:
+            self.translate_status_var.set("Pick a 'From' language first.")
+            return
+        text = self.translate_input.get("1.0", "end-1c")
+        if not text.strip():
+            self.translate_status_var.set("Nothing to translate.")
+            return
+        self._cancel_event.clear()
+        threading.Thread(
+            target=self._translate_paste, args=(text, from_code), daemon=True
+        ).start()
+
+    def _translate_paste(self, text: str, from_code: str) -> None:
+        from .translation import translate_text
+
+        self._set_translate_busy(True, "Translating…")
+        final = "Done"
+        try:
+            result = translate_text(
+                text,
+                from_code=from_code,
+                to_code="en",
+                on_progress=self._set_translate_progress,
+                cancelled=self._cancel_event.is_set,
+            )
+            self._set_translate_output(result)
+        except CancelledError:
+            final = "Cancelled"
+        except Exception as exc:  # noqa: BLE001
+            self._set_translate_output(self._friendly_error(exc))
+            final = "Error"
+        finally:
+            self._set_translate_busy(False, final)
+
+    def _translate_files_in_thread(self) -> None:
+        from_code = self._selected_from_code()
+        if not from_code:
+            self.translate_status_var.set("Pick a 'From' language first.")
+            return
+        if not self._translate_files:
+            self.translate_status_var.set("Add files first.")
+            return
+        self._cancel_event.clear()
+        files = list(self._translate_files)
+        threading.Thread(
+            target=self._translate_files_worker, args=(files, from_code), daemon=True
+        ).start()
+
+    def _translate_files_worker(self, files: List[Path], from_code: str) -> None:
+        from .translation import translate_files
+
+        self._set_translate_busy(True, "Translating files…")
+        final = "Done"
+        try:
+            outputs = translate_files(
+                files,
+                from_code=from_code,
+                to_code="en",
+                progress=self._set_translate_status,
+                on_progress=self._set_translate_progress,
+                cancelled=self._cancel_event.is_set,
+            )
+            final = f"Done — wrote {len(outputs)} file(s)"
+        except CancelledError:
+            final = "Cancelled"
+        except Exception as exc:  # noqa: BLE001
+            self._set_translate_status(self._friendly_error(exc))
+            final = "Error"
+        finally:
+            self._set_translate_busy(False, final)
 
     def _run(self) -> None:
         task = self.task_var.get()
