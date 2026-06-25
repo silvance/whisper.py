@@ -22,6 +22,13 @@ from .resources import find_ffmpeg
 
 PathLike = Union[str, Path]
 ProgressCallback = Callable[[str], None]
+# A predicate the GUI can pass so long-running work can be stopped cooperatively.
+CancelCallback = Callable[[], bool]
+
+
+class CancelledError(Exception):
+    """Raised to unwind a transcription/diarization that the user cancelled."""
+
 
 # Media container extensions the GUI offers for transcription. faster-whisper
 # decodes via ffmpeg, so anything ffmpeg can read will work; this list just
@@ -251,6 +258,7 @@ def transcribe_audio(
     word_timestamps: bool = False,
     progress: Optional[ProgressCallback] = None,
     on_progress: Optional[Callable[[float], None]] = None,
+    cancelled: Optional[CancelCallback] = None,
 ) -> TranscriptionResult:
     """Transcribe a single audio/video file with faster-whisper.
 
@@ -315,6 +323,8 @@ def transcribe_audio(
     segments: List[Segment] = []
     texts: List[str] = []
     for raw in segments_iter:
+        if cancelled is not None and cancelled():
+            raise CancelledError("Transcription cancelled.")
         text = raw.text.strip()
         words = [Word(start=w.start, end=w.end, word=w.word) for w in (raw.words or [])]
         segments.append(Segment(start=raw.start, end=raw.end, text=text, words=words))
