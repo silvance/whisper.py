@@ -49,16 +49,16 @@ def friendly_error(exc: Exception) -> str:
             "Ran out of memory. Try a smaller model (e.g. base.en) or a "
             "shorter recording."
         )
-    if "tesseract" in low:
+    if (
+        "tesseract" in low
+        or "pytesseract" in low
+        or "pypdfium2" in low
+        or "pillow" in low
+    ):
+        detail = msg.splitlines()[0] if msg else name
         return (
-            "OCR needs the Tesseract engine, which this build can't find. Use a "
-            "build that bundles it (set 'ocr_langs' in the release workflow), or "
-            "install Tesseract."
-        )
-    if "pytesseract" in low or "pypdfium2" in low or "pillow" in low:
-        return (
-            "The OCR components aren't installed. Use a build with OCR bundled "
-            "(pip install 'silvance-whisper[ocr]')."
+            "OCR couldn't run in this build (it must be built with OCR bundled — "
+            f"'ocr_langs' set). Details: {detail}"
         )
     short = msg.splitlines()[0] if msg else name
     return f"Something went wrong ({name}): {short}"
