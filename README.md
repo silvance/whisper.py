@@ -190,6 +190,16 @@ appear in the *Status* tab, and you can optionally write `.txt` (and `.srt`
 subtitle) output to a folder. Work runs on a background thread so the UI stays
 responsive.
 
+**Custom words.** Enter names, places, jargon or callsigns likely in the audio in
+the **Custom words** box to prime the model toward that vocabulary (Whisper's
+``initial_prompt``) — a cheap accuracy win on domain-specific recordings where
+proper nouns are otherwise mangled.
+
+**Confidence highlighting.** Tick **Highlight low-confidence words** to colour the
+parts the model was unsure about (per-word when available, otherwise per
+segment), so an analyst can jump straight to what needs verifying on low-quality
+audio.
+
 When **Convert video to WAV first (ffmpeg)** is enabled (the default), choosing a
 video file (`.mp4`, `.mkv`, `.mov`, `.avi`, `.webm`) extracts its audio to a 16 kHz
 mono WAV with [`ffmpeg`](https://ffmpeg.org/) before transcribing. If an output

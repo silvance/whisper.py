@@ -15,7 +15,14 @@ from tkinter.scrolledtext import ScrolledText
 from typing import Callable, Dict, List, Optional
 
 from ..editing import coalesce_segments, split_segment_on_word
-from ..transcription import TranscriptionResult
+from ..transcription import (
+    TranscriptionResult,
+    is_low_confidence_segment,
+    is_low_confidence_word,
+)
+
+# Foreground colour for low-confidence text when highlighting is enabled.
+_LOW_CONFIDENCE_COLOR = "#ff7a7a"
 
 
 class TranscriptView:
@@ -27,9 +34,12 @@ class TranscriptView:
         root: tk.Misc,
         blank_lines_var: tk.BooleanVar,
         on_change: Callable[[], None],
+        highlight_var: Optional[tk.BooleanVar] = None,
     ) -> None:
         self.root = root
         self.blank_lines_var = blank_lines_var
+        # When set/enabled, low-confidence words (or segments) are colored.
+        self.highlight_var = highlight_var
         # Called after an edit mutates the result, so the owner can re-save outputs.
         self._on_change = on_change
         self._result: Optional[TranscriptionResult] = None
@@ -52,10 +62,18 @@ class TranscriptView:
     def render(self) -> None:
         """Render the current result, with clickable speaker tags / words."""
 
+        highlight = self.highlight_var is not None and self.highlight_var.get()
+
+        def _lowconf_seg(segment) -> tuple:
+            return (
+                ("lowconf",) if highlight and is_low_confidence_segment(segment) else ()
+            )
+
         def _do() -> None:
             result = self._result
             self.widget.configure(state="normal")
             self.widget.delete("1.0", "end")
+            self.widget.tag_config("lowconf", foreground=_LOW_CONFIDENCE_COLOR)
             if result is None:
                 self.widget.configure(state="disabled")
                 return
@@ -63,9 +81,11 @@ class TranscriptView:
             line_end = "\n\n" if self.blank_lines_var.get() else "\n"
             if not result.has_speakers:
                 if result.segments:
-                    self.widget.insert(
-                        "end", line_end.join(s.text for s in result.segments) + "\n"
-                    )
+                    for index, segment in enumerate(result.segments):
+                        if index:
+                            self.widget.insert("end", line_end)
+                        self.widget.insert("end", segment.text, _lowconf_seg(segment))
+                    self.widget.insert("end", "\n")
                 else:
                     self.widget.insert("end", result.text + "\n")
             else:
@@ -107,10 +127,16 @@ class TranscriptView:
                             self.widget.tag_bind(
                                 wtag, "<Leave>", self._cursor_handler("")
                             )
-                            self.widget.insert("end", text, (wtag,))
+                            wtags: tuple[str, ...] = (wtag,)
+                            if highlight and is_low_confidence_word(word):
+                                wtags = (wtag, "lowconf")
+                            self.widget.insert("end", text, wtags)
                         self.widget.insert("end", line_end)
                     else:
-                        self.widget.insert("end", f" {segment.text}{line_end}")
+                        self.widget.insert(
+                            "end", f" {segment.text}", _lowconf_seg(segment)
+                        )
+                        self.widget.insert("end", line_end)
             self.widget.configure(state="disabled")
 
         self.root.after(0, _do)

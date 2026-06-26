@@ -4,12 +4,33 @@ from whispr import transcription
 from whispr.transcription import (
     Segment,
     TranscriptionResult,
+    Word,
     _format_timestamp,
     convert_to_wav,
+    is_low_confidence_segment,
+    is_low_confidence_word,
     is_supported_media,
     is_video,
     transcribe_audio,
 )
+
+
+@pytest.mark.parametrize(
+    "prob,expected",
+    [(0.95, False), (0.55, False), (0.4, True), (None, False)],
+)
+def test_is_low_confidence_word(prob, expected):
+    word = Word(start=0.0, end=1.0, word="x", probability=prob)
+    assert is_low_confidence_word(word) is expected
+
+
+@pytest.mark.parametrize(
+    "logprob,expected",
+    [(-0.1, False), (-0.7, False), (-1.2, True), (None, False)],
+)
+def test_is_low_confidence_segment(logprob, expected):
+    seg = Segment(start=0.0, end=1.0, text="x", avg_logprob=logprob)
+    assert is_low_confidence_segment(seg) is expected
 
 
 @pytest.mark.parametrize(
