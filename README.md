@@ -224,9 +224,12 @@ effect when a count is set or when using pyannote.
 
 **Correcting speakers.** Diarization on hard or overlapping audio is never perfect,
 so the transcript is editable: click any `[speaker]` tag to **rename that speaker
-everywhere** (bulk) or **move just that line to a different speaker** (individual).
-The labelling a diarizer assigns is arbitrary, so if two names land on the wrong
-voices it's a one-click swap.
+everywhere** (bulk) or **move just that line to a different speaker** (individual);
+click a single **word** to move just that word (or from it onward); or **highlight
+a run of words and right-click** to move just that span — for when one speaker's
+sentence is lumped into the middle of another's line. The labelling a diarizer
+assigns is arbitrary, so if two names land on the wrong voices it's a one-click
+swap.
 
 **Backends.** Two are supported, chosen with the **Engine** dropdown (default
 **Auto**):

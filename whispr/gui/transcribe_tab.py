@@ -318,8 +318,10 @@ class TranscribeTab:
             text=(
                 "Tip: if you know how many people are in the recording, enter it "
                 "above and (optionally) name them. In the Transcript, click a "
-                "[speaker] tag to rename or move the whole line, or click a single "
-                "word to move just that word (or from it onward) to another speaker."
+                "[speaker] tag to rename or move the whole line, click a single "
+                "word to move just that word (or from it onward), or highlight a "
+                "run of words and right-click to move just that span to another "
+                "speaker."
             ),
             wraplength=420,
             justify="left",
