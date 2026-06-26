@@ -130,6 +130,11 @@ class TranscribeTab:
         self._result_outdir: Optional[Path] = None
         self._speaker_names: Dict[str, str] = {}
 
+        # Optional batch queue; when non-empty, Run transcribes all of these
+        # instead of the single "Audio / video file" above.
+        self._batch_files: List[Path] = []
+        self.batch_files_var = tk.StringVar(value="")
+
         # Offline segment playback (click a line to re-listen). Disabled cleanly
         # when neither ffmpeg nor an OS player is available.
         self._player = SegmentPlayer()
@@ -178,6 +183,27 @@ class TranscribeTab:
             io_frame, text="Select…", command=self.choose_output_dir
         )
         self.output_dir_button.grid(row=2, column=2, padx=(8, 0), pady=4)
+
+        # Batch queue (optional): Run transcribes all of these instead of the
+        # single file above. Outputs go to the chosen folder, else beside each
+        # source so a multi-file run never loses results.
+        ttk.Label(io_frame, text="Batch (optional)").grid(
+            row=3, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        batch_row = ttk.Frame(io_frame)
+        batch_row.grid(row=3, column=1, columnspan=2, sticky="w", pady=4)
+        ttk.Button(batch_row, text="Add files…", command=self._add_batch_files).pack(
+            side="left"
+        )
+        ttk.Button(batch_row, text="Clear", command=self._clear_batch_files).pack(
+            side="left", padx=(8, 0)
+        )
+        ttk.Label(
+            io_frame,
+            textvariable=self.batch_files_var,
+            wraplength=420,
+            justify="left",
+        ).grid(row=4, column=1, columnspan=2, sticky="w")
 
         # --- Model & language ---------------------------------------------
         model_section = CollapsibleSection(container, "Model & language")
@@ -536,37 +562,93 @@ class TranscribeTab:
         self._cancel_event.clear()
         threading.Thread(target=self._run, daemon=True).start()
 
+    def _collect_jobs(self) -> List[Path]:
+        """The files to transcribe: the batch queue, else the single input file."""
+        if self._batch_files:
+            return list(self._batch_files)
+        path = self.input_file_var.get().strip()
+        return [Path(path)] if path else []
+
     def _run(self) -> None:
         task = self.task_var.get()
         self._set_busy(
             True, "Translating..." if task == "translate" else "Transcribing..."
         )
         final_status = "Finished"
-        temp_wav: Optional[Path] = None
         try:
             self.transcript_view.set_result(None, {})
-            path = self.input_file_var.get()
-            if not path or not Path(path).exists():
+            jobs = self._collect_jobs()
+            if not jobs:
                 append_line(
                     self.status,
-                    "Couldn't find that file. Pick an audio or video file with "
-                    f"Browse… (got: {path or 'nothing selected'}).",
+                    "Couldn't find a file. Pick an audio/video file with Browse… "
+                    "or add files to the batch.",
                 )
                 final_status = "No input file"
                 return
 
+            outdir = self.output_dir_var.get() if self.write_output_var.get() else None
+            total = len(jobs)
+            done = 0
+            for index, src in enumerate(jobs, start=1):
+                if self._cancel_event.is_set():
+                    raise CancelledError("Transcription cancelled.")
+                if not src.exists():
+                    append_line(self.status, f"Skipped (file not found): {src}")
+                    continue
+                prefix = f"({index}/{total}) " if total > 1 else ""
+                # Where to write: the chosen folder, else beside the source for a
+                # batch (so a multi-file run never silently drops output). A single
+                # file with no output folder keeps the old "don't write" behaviour.
+                if outdir:
+                    save_dir: Optional[Path] = Path(outdir)
+                elif total > 1:
+                    save_dir = src.parent
+                else:
+                    save_dir = None
+                self._transcribe_one(
+                    src, task, save_dir, prefix, set_view=(index == total)
+                )
+                done += 1
+            final_status = f"Finished {done} file(s)" if total > 1 else "Finished"
+        except CancelledError:
+            append_line(self.status, "Cancelled.")
+            final_status = "Cancelled"
+        except Exception as exc:
+            append_line(self.status, friendly_error(exc))
+            # Keep the full traceback in the log for troubleshooting.
+            append_line(self.status, traceback.format_exc())
+            final_status = "Error"
+        finally:
+            self._set_busy(False, final_status)
+
+    def _transcribe_one(
+        self,
+        src: Path,
+        task: str,
+        save_dir: Optional[Path],
+        prefix: str,
+        *,
+        set_view: bool,
+    ) -> None:
+        """Transcribe one file: convert, transcribe, diarize, save, show.
+
+        ``set_view`` loads the result into the transcript pane (used for the last
+        file of a batch, or the only file). ``save_dir`` writes outputs there when
+        set; ``prefix`` is the ``(i/n)`` batch marker for status lines.
+        """
+        temp_wav: Optional[Path] = None
+        try:
             language = self.language_var.get().strip()
             language_arg = None if language in ("", "Auto") else language
-            outdir = self.output_dir_var.get() if self.write_output_var.get() else None
-
-            append_line(self.status, f"Processing: {path}")
+            append_line(self.status, f"{prefix}Processing: {src}")
 
             # Optionally pre-convert video to WAV with ffmpeg before transcribing.
-            media_path = Path(path)
+            media_path = src
             media_is_normalized = False  # True when media_path is our 16 kHz mono WAV
             if self.convert_video_var.get() and is_video(media_path):
-                if outdir and Path(outdir).is_dir():
-                    wav_dest: Optional[Path] = Path(outdir) / (media_path.stem + ".wav")
+                if save_dir and save_dir.is_dir():
+                    wav_dest: Optional[Path] = save_dir / (media_path.stem + ".wav")
                 else:
                     wav_dest = None  # convert to a temp file we clean up afterwards
                 media_path = convert_to_wav(
@@ -584,7 +666,8 @@ class TranscribeTab:
             model_sel = self.model_var.get()
             model = str(self._bundled_models.get(model_sel, model_sel))
 
-            transcribe_label = "Translating" if task == "translate" else "Transcribing"
+            verb = "Translating" if task == "translate" else "Transcribing"
+            transcribe_label = f"{prefix}{verb}"
             # Word timestamps power word-level speaker assignment (diarization) and
             # word-level confidence highlighting; skip the extra alignment pass when
             # neither is needed so plain transcription stays fast.
@@ -610,35 +693,25 @@ class TranscribeTab:
             )
 
             if self.diarize_var.get():
-                self._diarize_into(result, Path(path), media_path, media_is_normalized)
+                self._diarize_into(result, src, media_path, media_is_normalized)
 
-            # Remember the result so speakers can be renamed afterwards.
-            self._result = result
-            self._result_source = Path(path)
-            self._result_outdir = Path(outdir) if outdir else None
-            self._speaker_names = {}
-            self._apply_preset_speaker_names()
-            self.transcript_view.set_result(result, self._speaker_names)
+            names = self._preset_names_for(result)
+            if set_view:
+                # Remember the result so speakers can be renamed afterwards.
+                self._result = result
+                self._result_source = src
+                self._result_outdir = save_dir
+                self._speaker_names = names
+                self.transcript_view.set_result(result, names)
 
-            if outdir:
-                self._save_outputs(result, Path(path), Path(outdir))
-
-            append_line(self.status, "Finished.")
-        except CancelledError:
-            append_line(self.status, "Cancelled.")
-            final_status = "Cancelled"
-        except Exception as exc:
-            append_line(self.status, friendly_error(exc))
-            # Keep the full traceback in the log for troubleshooting.
-            append_line(self.status, traceback.format_exc())
-            final_status = "Error"
+            if save_dir is not None:
+                self._save_outputs(result, src, save_dir, names)
         finally:
             if temp_wav is not None:
                 try:
                     temp_wav.unlink()
                 except OSError:
                     pass
-            self._set_busy(False, final_status)
 
     def _parse_num_speakers(self) -> Optional[int]:
         raw = self.num_speakers_var.get().strip()
@@ -702,12 +775,16 @@ class TranscribeTab:
     # -- Output / export ---------------------------------------------------
 
     def _save_outputs(
-        self, result: TranscriptionResult, source: Path, outdir: Path
+        self,
+        result: TranscriptionResult,
+        source: Path,
+        outdir: Path,
+        names: Optional[Dict[str, str]] = None,
     ) -> None:
         if not outdir.is_dir():
             append_line(self.status, f"Output folder does not exist: {outdir}")
             return
-        names = self._speaker_names
+        names = self._speaker_names if names is None else names
         txt_path = outdir / (source.name + ".txt")
         txt_path.write_text(
             result.to_txt(names, blank_lines=self.blank_lines_var.get()),
@@ -817,10 +894,42 @@ class TranscribeTab:
         self.progress_label_var.set(f"Opened {Path(path).name}")
 
     def _on_drop_media(self, paths: List[Path]) -> None:
-        """Handle a file dropped on the transcript pane: load it as input."""
-        if paths:
+        """A dropped file loads as input; several dropped files fill the batch."""
+        if not paths:
+            return
+        if len(paths) == 1:
             self.input_file_var.set(str(paths[0]))
             self.progress_label_var.set(f"Loaded {paths[0].name}")
+        else:
+            self._add_batch_paths(paths)
+
+    # -- Batch queue -------------------------------------------------------
+
+    def _add_batch_files(self) -> None:
+        patterns = " ".join(f"*{ext}" for ext in AUDIO_EXTENSIONS)
+        paths = filedialog.askopenfilenames(
+            filetypes=[("Audio/Video", patterns), ("All files", "*.*")]
+        )
+        self._add_batch_paths([Path(p) for p in paths if p])
+
+    def _add_batch_paths(self, paths: List[Path]) -> None:
+        for path in paths:
+            if path not in self._batch_files:
+                self._batch_files.append(path)
+        self._update_batch_label()
+
+    def _clear_batch_files(self) -> None:
+        self._batch_files = []
+        self._update_batch_label()
+
+    def _update_batch_label(self) -> None:
+        count = len(self._batch_files)
+        if not count:
+            self.batch_files_var.set("")
+            return
+        names = ", ".join(p.name for p in self._batch_files[:4])
+        more = "" if count <= 4 else f" (+{count - 4} more)"
+        self.batch_files_var.set(f"Batch: {count} file(s) — {names}{more}")
 
     # -- Audio playback ----------------------------------------------------
 
@@ -852,18 +961,17 @@ class TranscribeTab:
         seconds = max(0, int(seconds))
         return f"{seconds // 60}:{seconds % 60:02d}"
 
-    def _apply_preset_speaker_names(self) -> None:
-        """Seed display names from the Speaker N fields onto the diarized result.
+    def _preset_names_for(self, result: TranscriptionResult) -> Dict[str, str]:
+        """Build a speaker-id -> display-name map from the Speaker N fields.
 
         Speakers are matched in label order (SPEAKER_00 -> "Speaker 1", ...).
         The labelling pyannote assigns is arbitrary, so the operator may still
         need to swap two names - one click per [speaker] tag in the transcript.
         """
-        result = self._result
-        if result is None:
-            return
+        names: Dict[str, str] = {}
         ids = sorted({seg.speaker for seg in result.segments if seg.speaker})
         for sid, var in zip(ids, self.speaker_name_vars):
             name = var.get().strip()
             if name:
-                self._speaker_names[sid] = name
+                names[sid] = name
+        return names
