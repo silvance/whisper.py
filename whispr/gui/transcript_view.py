@@ -1,0 +1,256 @@
+"""The transcript pane: renders a result and supports speaker/word corrections.
+
+Diarization on hard or overlapping audio is never perfect, so the transcript is
+interactive: click a ``[speaker]`` tag to rename that speaker everywhere or move
+the whole line to another speaker, or click a single word to move just that word
+(or from it onward) to another speaker. The underlying split/merge logic lives in
+:mod:`whispr.editing`; this module is the Tk view around it.
+"""
+
+from __future__ import annotations
+
+import tkinter as tk
+from tkinter import simpledialog
+from tkinter.scrolledtext import ScrolledText
+from typing import Callable, Dict, List, Optional
+
+from ..editing import coalesce_segments, split_segment_on_word
+from ..transcription import TranscriptionResult
+
+
+class TranscriptView:
+    """Owns the transcript text widget plus the current result and speaker names."""
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        root: tk.Misc,
+        blank_lines_var: tk.BooleanVar,
+        on_change: Callable[[], None],
+    ) -> None:
+        self.root = root
+        self.blank_lines_var = blank_lines_var
+        # Called after an edit mutates the result, so the owner can re-save outputs.
+        self._on_change = on_change
+        self._result: Optional[TranscriptionResult] = None
+        self._speaker_names: Dict[str, str] = {}
+        self.widget = ScrolledText(
+            parent, wrap="word", state="disabled", height=14, font="TkFixedFont"
+        )
+
+    def set_result(
+        self, result: Optional[TranscriptionResult], speaker_names: Dict[str, str]
+    ) -> None:
+        """Show ``result`` (sharing the ``speaker_names`` dict with the owner)."""
+        self._result = result
+        self._speaker_names = speaker_names
+        self.render()
+
+    def get_text(self) -> str:
+        return self.widget.get("1.0", "end-1c")
+
+    def render(self) -> None:
+        """Render the current result, with clickable speaker tags / words."""
+
+        def _do() -> None:
+            result = self._result
+            self.widget.configure(state="normal")
+            self.widget.delete("1.0", "end")
+            if result is None:
+                self.widget.configure(state="disabled")
+                return
+            # Blank line between segments/turns when enabled (easier to read/paste).
+            line_end = "\n\n" if self.blank_lines_var.get() else "\n"
+            if not result.has_speakers:
+                if result.segments:
+                    self.widget.insert(
+                        "end", line_end.join(s.text for s in result.segments) + "\n"
+                    )
+                else:
+                    self.widget.insert("end", result.text + "\n")
+            else:
+                bound: set[str] = set()
+                for index, segment in enumerate(result.segments):
+                    sid = segment.speaker or "UNKNOWN"
+                    name = self._speaker_names.get(sid, sid)
+                    spk_tag = f"spk::{sid}"
+                    line_tag = f"line::{index}"
+                    if sid not in bound:
+                        bound.add(sid)
+                        self.widget.tag_config(spk_tag, underline=True)
+                    # Bind on a per-line tag so a click knows which segment it hit:
+                    # the menu can both fix this one line and rename globally.
+                    self.widget.tag_bind(
+                        line_tag, "<Button-1>", self._speaker_menu_handler(index)
+                    )
+                    self.widget.tag_bind(
+                        line_tag, "<Enter>", self._cursor_handler("hand2")
+                    )
+                    self.widget.tag_bind(line_tag, "<Leave>", self._cursor_handler(""))
+                    self.widget.insert("end", f"[{name}]", (spk_tag, line_tag))
+                    if segment.words:
+                        # Render words individually so a single misattributed word
+                        # can be clicked and moved to another speaker.
+                        for w_index, word in enumerate(segment.words):
+                            text = word.word
+                            if w_index == 0 and not text[:1].isspace():
+                                text = " " + text
+                            wtag = f"word::{index}::{w_index}"
+                            self.widget.tag_bind(
+                                wtag,
+                                "<Button-1>",
+                                self._word_menu_handler(index, w_index),
+                            )
+                            self.widget.tag_bind(
+                                wtag, "<Enter>", self._cursor_handler("hand2")
+                            )
+                            self.widget.tag_bind(
+                                wtag, "<Leave>", self._cursor_handler("")
+                            )
+                            self.widget.insert("end", text, (wtag,))
+                        self.widget.insert("end", line_end)
+                    else:
+                        self.widget.insert("end", f" {segment.text}{line_end}")
+            self.widget.configure(state="disabled")
+
+        self.root.after(0, _do)
+
+    def _changed(self) -> None:
+        """Re-render after an edit and notify the owner to persist the change."""
+        self.render()
+        self._on_change()
+
+    def _cursor_handler(self, cursor: str) -> Callable[[object], None]:
+        def handler(_event: object) -> None:
+            self.widget.config(cursor=cursor)
+
+        return handler
+
+    def _ordered_speaker_ids(self) -> List[str]:
+        """Distinct speaker ids in first-appearance order across the result."""
+        ids: List[str] = []
+        seen: set[str] = set()
+        if self._result is not None:
+            for segment in self._result.segments:
+                sid = segment.speaker or "UNKNOWN"
+                if sid not in seen:
+                    seen.add(sid)
+                    ids.append(sid)
+        return ids
+
+    def _speaker_menu_handler(self, index: int) -> Callable[[object], None]:
+        def handler(event: object) -> None:
+            result = self._result
+            if result is None or index >= len(result.segments):
+                return
+            current = result.segments[index].speaker or "UNKNOWN"
+            menu = tk.Menu(self.root, tearoff=0)
+            # Reassign just this line to the correct speaker - the fix for the
+            # boundary/overlap errors diarization can't get right on its own.
+            for sid in self._ordered_speaker_ids():
+                name = self._speaker_names.get(sid, sid)
+                mark = "  ✓" if sid == current else ""
+                menu.add_command(
+                    label=f"This line is {name}{mark}",
+                    command=self._reassign_command(index, sid),
+                )
+            menu.add_separator()
+            cur_name = self._speaker_names.get(current, current)
+            menu.add_command(
+                label=f"Rename '{cur_name}' everywhere…",
+                command=lambda: self._rename_speaker(current),
+            )
+            try:
+                menu.tk_popup(event.x_root, event.y_root)  # type: ignore[attr-defined]
+            finally:
+                menu.grab_release()
+
+        return handler
+
+    def _reassign_command(self, index: int, speaker_id: str) -> Callable[[], None]:
+        def command() -> None:
+            self._reassign_segment(index, speaker_id)
+
+        return command
+
+    def _reassign_segment(self, index: int, speaker_id: str) -> None:
+        result = self._result
+        if result is None or index >= len(result.segments):
+            return
+        result.segments[index].speaker = speaker_id
+        self._changed()
+
+    def _word_menu_handler(
+        self, seg_index: int, word_index: int
+    ) -> Callable[[object], None]:
+        def handler(event: object) -> None:
+            result = self._result
+            if result is None or seg_index >= len(result.segments):
+                return
+            segment = result.segments[seg_index]
+            if word_index >= len(segment.words):
+                return
+            current = segment.speaker or "UNKNOWN"
+            word_text = segment.words[word_index].word.strip()
+            menu = tk.Menu(self.root, tearoff=0)
+            # Move just this word (splits the segment around it).
+            for sid in self._ordered_speaker_ids():
+                if sid == current:
+                    continue
+                name = self._speaker_names.get(sid, sid)
+                menu.add_command(
+                    label=f"Move “{word_text}” → {name}",
+                    command=self._word_command(seg_index, word_index, sid, False),
+                )
+            menu.add_separator()
+            # Reassign from this word to the end of the line (the common case: a
+            # new speaker's turn actually starts mid-line).
+            for sid in self._ordered_speaker_ids():
+                if sid == current:
+                    continue
+                name = self._speaker_names.get(sid, sid)
+                menu.add_command(
+                    label=f"From “{word_text}” onward → {name}",
+                    command=self._word_command(seg_index, word_index, sid, True),
+                )
+            try:
+                menu.tk_popup(event.x_root, event.y_root)  # type: ignore[attr-defined]
+            finally:
+                menu.grab_release()
+
+        return handler
+
+    def _word_command(
+        self, seg_index: int, word_index: int, speaker_id: str, to_end: bool
+    ) -> Callable[[], None]:
+        def command() -> None:
+            self._reassign_word_span(seg_index, word_index, speaker_id, to_end)
+
+        return command
+
+    def _reassign_word_span(
+        self, seg_index: int, word_index: int, speaker_id: str, to_end: bool
+    ) -> None:
+        result = self._result
+        if result is None or seg_index >= len(result.segments):
+            return
+        segment = result.segments[seg_index]
+        if word_index >= len(segment.words):
+            return
+        parts = split_segment_on_word(segment, word_index, speaker_id, to_end=to_end)
+        result.segments[seg_index : seg_index + 1] = parts
+        result.segments = coalesce_segments(result.segments)
+        self._changed()
+
+    def _rename_speaker(self, speaker_id: str) -> None:
+        current = self._speaker_names.get(speaker_id, speaker_id)
+        new_name = simpledialog.askstring(
+            "Rename speaker",
+            f"New name for {current}:",
+            initialvalue=current,
+            parent=self.root,
+        )
+        if not new_name or not new_name.strip():
+            return
+        self._speaker_names[speaker_id] = new_name.strip()
+        self._changed()
