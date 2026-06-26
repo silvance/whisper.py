@@ -192,3 +192,30 @@ def test_configure_offline_ocr_absent_is_noop(tmp_path, monkeypatch):
     monkeypatch.delenv("TESSDATA_PREFIX", raising=False)
     assert resources.configure_offline_ocr() is None
     assert "TESSDATA_PREFIX" not in os.environ
+
+
+def test_find_bundled_tesseract_at_relocated_frozen_root(tmp_path, monkeypatch):
+    # PyInstaller can move the .exe out of whispr_assets/tesseract to the bundle
+    # root; find_bundled_tesseract should still locate it via the frozen root.
+    monkeypatch.setenv(resources.ENV_ASSETS, str(tmp_path / "empty"))
+    name = "tesseract.exe" if os.name == "nt" else "tesseract"
+    (tmp_path / name).write_bytes(b"\x00")
+    monkeypatch.setattr(resources.sys, "_MEIPASS", str(tmp_path), raising=False)
+    found = resources.find_bundled_tesseract()
+    assert found == tmp_path / name
+
+
+def test_configure_offline_ocr_adds_binary_and_root_to_path(tmp_path, monkeypatch):
+    assets = tmp_path / "whispr_assets"
+    tessdata = assets / "tesseract" / "tessdata"
+    tessdata.mkdir(parents=True)
+    name = "tesseract.exe" if os.name == "nt" else "tesseract"
+    (assets / "tesseract" / name).write_bytes(b"\x00")
+    monkeypatch.setenv(resources.ENV_ASSETS, str(assets))
+    var = "PATH" if os.name == "nt" else "LD_LIBRARY_PATH"
+    monkeypatch.setenv(var, "/pre-existing")
+
+    resources.configure_offline_ocr()
+    entries = os.environ[var].split(os.pathsep)
+    assert str(assets / "tesseract") in entries  # binary's folder is searchable
+    assert "/pre-existing" in entries  # existing entries preserved

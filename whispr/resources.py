@@ -88,15 +88,36 @@ def find_ffmpeg() -> Optional[Path]:
     return Path(on_path) if on_path else None
 
 
+def _frozen_roots() -> List[Path]:
+    """Bundle root dir(s) when frozen with PyInstaller (one-file / one-dir).
+
+    PyInstaller reclassifies executables/shared libraries shipped as data into the
+    binary set, which can land at the bundle root rather than under
+    ``whispr_assets/...``. These roots let us still find such a relocated binary.
+    """
+    roots: List[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        roots.append(Path(meipass))
+    if getattr(sys, "frozen", False):
+        roots.append(Path(sys.executable).resolve().parent)
+    return roots
+
+
 def find_bundled_tesseract() -> Optional[Path]:
     """Return the bundled Tesseract OCR executable, if shipped in the assets."""
     names = ("tesseract.exe", "tesseract") if os.name == "nt" else ("tesseract",)
+    search_dirs: List[Path] = []
     for base in asset_dirs():
-        for directory in (base / "tesseract", base):
-            for name in names:
-                candidate = directory / name
-                if candidate.is_file():
-                    return candidate
+        search_dirs += [base / "tesseract", base]
+    # Also the frozen bundle root(s): PyInstaller may relocate the .exe there.
+    for root in _frozen_roots():
+        search_dirs += [root / "tesseract", root]
+    for directory in search_dirs:
+        for name in names:
+            candidate = directory / name
+            if candidate.is_file():
+                return candidate
     return None
 
 
@@ -137,10 +158,18 @@ def configure_offline_ocr() -> Optional[Path]:
     os.environ["TESSDATA_PREFIX"] = str(tessdata)
     tess_dir = tessdata.parent
     var = "PATH" if os.name == "nt" else "LD_LIBRARY_PATH"
-    existing = os.environ.get(var, "")
-    entry = str(tess_dir)
-    if entry not in existing.split(os.pathsep):
-        os.environ[var] = entry + (os.pathsep + existing if existing else "")
+    existing = os.environ.get(var, "").split(os.pathsep)
+    # Put the tesseract folder, the actual binary's folder, and the bundle root(s)
+    # on the library search path. PyInstaller can scatter the binary and its DLLs
+    # between whispr_assets/tesseract and the bundle root, so cover both.
+    candidates: List[Path] = [tess_dir]
+    binary = find_bundled_tesseract()
+    if binary is not None:
+        candidates.append(binary.parent)
+    candidates += _frozen_roots()
+    new_entries = [str(p) for p in candidates if str(p) not in existing]
+    if new_entries:
+        os.environ[var] = os.pathsep.join(new_entries + existing).strip(os.pathsep)
     return tess_dir
 
 
