@@ -40,6 +40,36 @@ def _argos_translate():
     return translate_mod
 
 
+# langdetect returns a few codes that differ from the ISO 639-1 codes Argos uses
+# for its packs; normalise them so a detected language maps to an installed pack.
+_DETECT_ALIASES = {
+    "zh-cn": "zh",
+    "zh-tw": "zh",
+}
+
+
+def detect_language(text: str) -> Optional[str]:
+    """Best-effort detect the language of ``text`` (ISO 639-1), or ``None``.
+
+    Uses langdetect offline (it ships its own profiles - no model download). The
+    detector is seeded for reproducibility. Returns ``None`` when the library is
+    missing or detection fails (e.g. too little text), so callers can fall back to
+    a manually chosen language.
+    """
+    if not text or not text.strip():
+        return None
+    try:
+        from langdetect import DetectorFactory, detect
+    except ImportError:
+        return None
+    DetectorFactory.seed = 0
+    try:
+        code = detect(text)
+    except Exception:  # noqa: BLE001 - langdetect raises LangDetectException; treat as unknown
+        return None
+    return _DETECT_ALIASES.get(code, code)
+
+
 def available_source_languages(
     target: str = DEFAULT_TARGET,
 ) -> List[Tuple[str, str]]:

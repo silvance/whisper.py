@@ -1,6 +1,9 @@
+import importlib.util
+
 import pytest
 
 from whispr import translation
+from whispr.translation import detect_language
 
 
 def test_chunk_text_rejoins_and_bounds():
@@ -40,3 +43,21 @@ def test_translate_files_without_argos(tmp_path):
     f.write_text("hola", encoding="utf-8")
     with pytest.raises(RuntimeError, match="Argos Translate is not installed"):
         translation.translate_files([f], from_code="es", to_code="en")
+
+
+def test_detect_language_empty_is_none():
+    assert detect_language("") is None
+    assert detect_language("   ") is None
+
+
+def test_detect_language_without_langdetect():
+    if importlib.util.find_spec("langdetect") is not None:
+        pytest.skip("langdetect installed; missing-dependency path not exercised")
+    assert detect_language("this is plainly english text") is None
+
+
+def test_detect_language_english():
+    pytest.importorskip("langdetect")
+    assert detect_language("This is a clearly English sentence about the weather.") == (
+        "en"
+    )

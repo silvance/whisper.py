@@ -138,3 +138,57 @@ def test_configure_offline_translation_absent_is_noop(tmp_path, monkeypatch):
 
     assert resources.configure_offline_translation() is None
     assert "ARGOS_CHUNK_TYPE" not in os.environ
+
+
+def test_find_bundled_tesseract(tmp_path, monkeypatch):
+    assets = tmp_path / "whispr_assets"
+    (assets / "tesseract").mkdir(parents=True)
+    name = "tesseract.exe" if os.name == "nt" else "tesseract"
+    (assets / "tesseract" / name).write_bytes(b"\x00")
+    monkeypatch.setenv(resources.ENV_ASSETS, str(assets))
+    found = resources.find_bundled_tesseract()
+    assert found is not None and found.parent == assets / "tesseract"
+
+
+def test_find_tesseract_prefers_bundled(tmp_path, monkeypatch):
+    assets = tmp_path / "whispr_assets"
+    (assets / "tesseract").mkdir(parents=True)
+    name = "tesseract.exe" if os.name == "nt" else "tesseract"
+    (assets / "tesseract" / name).write_bytes(b"\x00")
+    monkeypatch.setenv(resources.ENV_ASSETS, str(assets))
+    monkeypatch.setattr(resources, "which", lambda _: "/usr/bin/tesseract")
+    found = resources.find_tesseract()
+    assert found is not None and found.parent == assets / "tesseract"
+
+
+def test_find_tesseract_falls_back_to_path(tmp_path, monkeypatch):
+    monkeypatch.setenv(resources.ENV_ASSETS, str(tmp_path / "empty"))
+    monkeypatch.setattr(resources, "which", lambda _: "/usr/bin/tesseract")
+    assert str(resources.find_tesseract()) == "/usr/bin/tesseract"
+
+
+def test_find_tesseract_none_when_absent(tmp_path, monkeypatch):
+    monkeypatch.setenv(resources.ENV_ASSETS, str(tmp_path / "empty"))
+    monkeypatch.setattr(resources, "which", lambda _: None)
+    assert resources.find_tesseract() is None
+
+
+def test_configure_offline_ocr_present(tmp_path, monkeypatch):
+    assets = tmp_path / "whispr_assets"
+    tessdata = assets / "tesseract" / "tessdata"
+    tessdata.mkdir(parents=True)
+    monkeypatch.setenv(resources.ENV_ASSETS, str(assets))
+    monkeypatch.delenv("TESSDATA_PREFIX", raising=False)
+
+    result = resources.configure_offline_ocr()
+    assert result == assets / "tesseract"
+    assert os.environ["TESSDATA_PREFIX"] == str(tessdata)
+    var = "PATH" if os.name == "nt" else "LD_LIBRARY_PATH"
+    assert str(assets / "tesseract") in os.environ[var].split(os.pathsep)
+
+
+def test_configure_offline_ocr_absent_is_noop(tmp_path, monkeypatch):
+    monkeypatch.setenv(resources.ENV_ASSETS, str(tmp_path / "empty"))
+    monkeypatch.delenv("TESSDATA_PREFIX", raising=False)
+    assert resources.configure_offline_ocr() is None
+    assert "TESSDATA_PREFIX" not in os.environ

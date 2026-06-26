@@ -21,10 +21,19 @@ from tkinter.scrolledtext import ScrolledText
 from typing import Callable, Dict, List, Optional
 
 from .diarization import assign_speakers, diarize
+from .export import text_to_docx, transcript_to_docx
+from .ocr import (
+    OCR_EXTENSIONS,
+    extract_text,
+    is_ocr_file,
+    ocr_available,
+    tesseract_lang,
+)
 from .resources import (
     bundled_argos_data_dir,
     bundled_models,
     configure_offline_hf_cache,
+    configure_offline_ocr,
     configure_offline_translation,
 )
 from .transcription import (
@@ -38,6 +47,11 @@ from .transcription import (
     is_video,
     transcribe_audio,
 )
+from .translation import detect_language
+
+# Sentinel shown in the "From" dropdown for automatic language detection.
+AUTO_DETECT_LABEL = "Auto-detect language"
+AUTO_DETECT_CODE = "__auto__"
 
 # A handful of common languages for the dropdown; "Auto" lets Whisper detect.
 COMMON_LANGUAGES = [
@@ -129,9 +143,12 @@ class CollapsibleSection(ttk.Frame):
 class WhisprApp:
     """The main application window."""
 
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk, *, drag_and_drop: bool = False) -> None:
         self.root = root
         self.root.title("Whispers")
+        # Whether tkdnd was loaded (see _enable_drag_and_drop) so widgets can
+        # register file-drop targets.
+        self._dnd_ok = drag_and_drop
 
         # Bundled (offline) models take priority so the app works air-gapped.
         # Prefer the fast English base.en, then small, else the first bundled.
@@ -192,6 +209,10 @@ class WhisprApp:
             _translation_available()
             and os.environ.get("WHISPR_MODE", "").lower() != "transcribe"
         )
+        # OCR (image/PDF -> text) is offered in the Translate tab when a Tesseract
+        # engine is available; auto-detect needs langdetect. Both degrade cleanly.
+        self._ocr_available = ocr_available()
+        self._detect_available = importlib.util.find_spec("langdetect") is not None
 
         # App header.
         subtitle = (
@@ -418,11 +439,24 @@ class WhisprApp:
         tabs.add(self.output, text="Transcript")
         tabs.add(self.status, text="Status")
 
+        # Copy / export the transcript (handy for pasting into Word).
+        export_row = ttk.Frame(container)
+        export_row.pack(fill="x", pady=(6, 0))
+        ttk.Button(
+            export_row, text="Copy transcript", command=self._copy_transcript
+        ).pack(side="left")
+        ttk.Button(
+            export_row, text="Save as Word…", command=self._save_transcript_docx
+        ).pack(side="left", padx=(8, 0))
+
         # Initialise the enabled/disabled state of dependent fields.
         self._update_output_state()
         self._update_speaker_state()
         # Mouse-wheel scrolls the page (the scrollbar always works regardless).
         self._bind_wheel(transcribe_canvas, container)
+        # Drag an audio/video file onto the transcript pane to load it.
+        self._register_drop(self.output, self._on_drop_media)
+        self._register_drop(self.status, self._on_drop_media)
 
         # --- Translate tab (only when translation is available) ------------
         if self._show_translate:
@@ -489,6 +523,39 @@ class WhisprApp:
         _bind(canvas)
         _bind(root_widget)
 
+    def _register_drop(
+        self, widget: tk.Misc, handler: Callable[[List[Path]], None]
+    ) -> None:
+        """Register ``widget`` as a file-drop target calling ``handler(paths)``.
+
+        No-op when tkdnd isn't loaded. Uses tkinterdnd2's wrapper methods directly
+        on the widget (the root is a themed ttkbootstrap window, not a
+        ``TkinterDnD.Tk``), and parses the platform-specific drop payload into
+        clean ``Path`` objects.
+        """
+        if not self._dnd_ok:
+            return
+        try:
+            from tkinterdnd2 import DND_FILES, TkinterDnD
+        except Exception:  # noqa: BLE001 - convenience feature only
+            return
+
+        def _on_drop(event: object) -> None:
+            data = getattr(event, "data", "")
+            try:
+                raw = self.root.tk.splitlist(data)
+            except Exception:  # noqa: BLE001 - fall back to a naive split
+                raw = str(data).split()
+            paths = [Path(item) for item in raw if item]
+            if paths:
+                handler(paths)
+
+        try:
+            TkinterDnD.DnDWrapper.drop_target_register(widget, DND_FILES)
+            TkinterDnD.DnDWrapper.dnd_bind(widget, "<<Drop>>", _on_drop)
+        except Exception:  # noqa: BLE001 - never let DnD wiring break the UI
+            pass
+
     def _build_translate_tab(self) -> None:
         """Build the text-translation tab (paste box + batch files, foreign->EN)."""
         assert self.main_nb is not None  # only called when the notebook exists
@@ -531,14 +598,34 @@ class WhisprApp:
             paste_frame, wrap="word", height=6, font="TkFixedFont"
         )
         self.translate_input.pack(fill="both", expand=True, pady=(2, 6))
+        paste_buttons = ttk.Frame(paste_frame)
+        paste_buttons.pack(fill="x")
         ttk.Button(
-            paste_frame, text="Translate", command=self._translate_paste_in_thread
-        ).pack(anchor="w")
-        ttk.Label(paste_frame, text="Result:").pack(anchor="w", pady=(6, 0))
+            paste_buttons, text="Translate", command=self._translate_paste_in_thread
+        ).pack(side="left")
+        if self._ocr_available:
+            # OCR a single image/PDF into the box so its text can be reviewed and
+            # corrected before translating (OCR is rarely perfect).
+            ttk.Button(
+                paste_buttons,
+                text="Extract from image/PDF…",
+                command=self._extract_to_paste,
+            ).pack(side="left", padx=(8, 0))
+        result_header = ttk.Frame(paste_frame)
+        result_header.pack(fill="x", pady=(6, 0))
+        ttk.Label(result_header, text="Result:").pack(side="left")
+        ttk.Button(result_header, text="Copy", command=self._copy_translation).pack(
+            side="right"
+        )
+        ttk.Button(
+            result_header, text="Save as Word…", command=self._save_translation_docx
+        ).pack(side="right", padx=(0, 8))
         self.translate_output = ScrolledText(
             paste_frame, wrap="word", height=6, state="disabled", font="TkFixedFont"
         )
         self.translate_output.pack(fill="both", expand=True, pady=(2, 0))
+        # Drop an image/PDF (or text file) onto the paste box to extract its text.
+        self._register_drop(self.translate_input, self._on_drop_translate_source)
 
         # --- Batch files ---------------------------------------------------
         batch_frame = ttk.LabelFrame(
@@ -564,12 +651,20 @@ class WhisprApp:
             wraplength=460,
             justify="left",
         ).pack(anchor="w", pady=(6, 0))
+        batch_help = "Each file is translated to <name>.en.<ext> next to the original."
+        if self._ocr_available:
+            batch_help += (
+                " Images and PDFs are OCR'd first (the extracted text is also saved "
+                "as <name>.ocr.txt)."
+            )
         ttk.Label(
             batch_frame,
-            text="Each file is translated to <name>.en.<ext> next to the original.",
+            text=batch_help,
             wraplength=460,
             justify="left",
         ).pack(anchor="w")
+        # Drop files onto the batch box to add them to the queue.
+        self._register_drop(batch_frame, self._on_drop_translate_files)
 
         # --- Run controls + progress --------------------------------------
         run_frame = ttk.Frame(container)
@@ -763,6 +858,10 @@ class WhisprApp:
         def _apply() -> None:
             self._translate_lang_codes = {name: code for code, name in langs}
             names = list(self._translate_lang_codes)
+            # Offer automatic detection (langdetect) as the first choice.
+            if names and self._detect_available:
+                self._translate_lang_codes[AUTO_DETECT_LABEL] = AUTO_DETECT_CODE
+                names = [AUTO_DETECT_LABEL] + names
             self.translate_from_combo.configure(values=names)
             if names:
                 if self.translate_from_var.get() not in names:
@@ -782,13 +881,54 @@ class WhisprApp:
         codes = getattr(self, "_translate_lang_codes", {})
         return codes.get(self.translate_from_var.get())
 
+    def _installed_from_codes(self) -> set[str]:
+        """Set of source language codes that have an installed pack to English."""
+        codes = getattr(self, "_translate_lang_codes", {})
+        return {code for code in codes.values() if code != AUTO_DETECT_CODE}
+
+    def _resolve_from_code(self, text: str) -> Optional[str]:
+        """Resolve the source language for ``text``, honouring auto-detect.
+
+        Returns a concrete language code with an installed pack, or ``None`` if
+        nothing usable (no selection, detection failed, or detected language has
+        no bundled pack) - the caller reports a friendly message.
+        """
+        selected = self._selected_from_code()
+        if selected and selected != AUTO_DETECT_CODE:
+            return selected
+        if selected != AUTO_DETECT_CODE:
+            return None
+        detected = detect_language(text)
+        if detected and detected in self._installed_from_codes():
+            return detected
+        return None
+
+    def _ocr_lang_code(self) -> Optional[str]:
+        """Tesseract language for OCR, from the selected 'From' language.
+
+        OCR needs to know the script up front, so a concrete 'From' language must
+        be chosen (auto-detect can't pick a script before reading the text).
+        """
+        selected = self._selected_from_code()
+        if not selected or selected == AUTO_DETECT_CODE:
+            return None
+        return tesseract_lang(selected)
+
     def _add_translate_files(self) -> None:
-        paths = filedialog.askopenfilenames(
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
-        )
-        for raw in paths:
-            path = Path(raw)
-            if raw and path not in self._translate_files:
+        if self._ocr_available:
+            ocr_patterns = " ".join(f"*{ext}" for ext in OCR_EXTENSIONS)
+            filetypes = [
+                ("Text, images & PDFs", f"*.txt {ocr_patterns}"),
+                ("All files", "*.*"),
+            ]
+        else:
+            filetypes = [("Text files", "*.txt"), ("All files", "*.*")]
+        paths = filedialog.askopenfilenames(filetypes=filetypes)
+        self._add_translate_paths([Path(raw) for raw in paths if raw])
+
+    def _add_translate_paths(self, paths: List[Path]) -> None:
+        for path in paths:
+            if path not in self._translate_files:
                 self._translate_files.append(path)
         self._update_translate_files_label()
 
@@ -833,8 +973,7 @@ class WhisprApp:
         self.root.after(0, _do)
 
     def _translate_paste_in_thread(self) -> None:
-        from_code = self._selected_from_code()
-        if not from_code:
+        if not self._selected_from_code():
             self.translate_status_var.set("Pick a 'From' language first.")
             return
         text = self.translate_input.get("1.0", "end-1c")
@@ -843,15 +982,22 @@ class WhisprApp:
             return
         self._cancel_event.clear()
         threading.Thread(
-            target=self._translate_paste, args=(text, from_code), daemon=True
+            target=self._translate_paste, args=(text,), daemon=True
         ).start()
 
-    def _translate_paste(self, text: str, from_code: str) -> None:
+    def _translate_paste(self, text: str) -> None:
         from .translation import translate_text
 
         self._set_translate_busy(True, "Translating…")
         final = "Done"
         try:
+            from_code = self._resolve_from_code(text)
+            if not from_code:
+                self._set_translate_output(
+                    "Couldn't determine the source language. Pick a specific 'From' "
+                    "language (auto-detect found no bundled pack for this text)."
+                )
+                return
             result = translate_text(
                 text,
                 from_code=from_code,
@@ -869,8 +1015,7 @@ class WhisprApp:
             self._set_translate_busy(False, final)
 
     def _translate_files_in_thread(self) -> None:
-        from_code = self._selected_from_code()
-        if not from_code:
+        if not self._selected_from_code():
             self.translate_status_var.set("Pick a 'From' language first.")
             return
         if not self._translate_files:
@@ -879,24 +1024,66 @@ class WhisprApp:
         self._cancel_event.clear()
         files = list(self._translate_files)
         threading.Thread(
-            target=self._translate_files_worker, args=(files, from_code), daemon=True
+            target=self._translate_files_worker, args=(files,), daemon=True
         ).start()
 
-    def _translate_files_worker(self, files: List[Path], from_code: str) -> None:
-        from .translation import translate_files
+    def _translate_files_worker(self, files: List[Path]) -> None:
+        from .translation import translate_text
 
         self._set_translate_busy(True, "Translating files…")
         final = "Done"
+        written = 0
+        skipped = 0
         try:
-            outputs = translate_files(
-                files,
-                from_code=from_code,
-                to_code="en",
-                progress=self._set_translate_status,
-                on_progress=self._set_translate_progress,
-                cancelled=self._cancel_event.is_set,
-            )
-            final = f"Done — wrote {len(outputs)} file(s)"
+            total = max(1, len(files))
+            for index, src in enumerate(files):
+                if self._cancel_event.is_set():
+                    raise CancelledError("Translation cancelled.")
+                # Get the foreign text: read text files directly, OCR images/PDFs.
+                if is_ocr_file(src):
+                    ocr_lang = self._ocr_lang_code()
+                    if ocr_lang is None:
+                        self._set_translate_status(
+                            f"Skipped {src.name}: pick a specific 'From' language to "
+                            "OCR images/PDFs."
+                        )
+                        skipped += 1
+                        continue
+                    self._set_translate_status(f"Reading {src.name} (OCR)…")
+                    text = extract_text(
+                        src,
+                        lang=ocr_lang,
+                        progress=self._set_translate_status,
+                        cancelled=self._cancel_event.is_set,
+                    )
+                    ocr_dest = src.with_name(f"{src.stem}.ocr.txt")
+                    ocr_dest.write_text(text, encoding="utf-8")
+                    dest = src.with_name(f"{src.stem}.en.txt")
+                else:
+                    text = src.read_text(encoding="utf-8", errors="replace")
+                    dest = src.with_name(f"{src.stem}.en{src.suffix}")
+
+                from_code = self._resolve_from_code(text)
+                if not from_code:
+                    self._set_translate_status(
+                        f"Skipped {src.name}: couldn't determine its language."
+                    )
+                    skipped += 1
+                    continue
+                self._set_translate_status(f"Translating {src.name}…")
+                translated = translate_text(
+                    text,
+                    from_code=from_code,
+                    to_code="en",
+                    cancelled=self._cancel_event.is_set,
+                )
+                dest.write_text(translated, encoding="utf-8")
+                written += 1
+                self._set_translate_status(f"Wrote {dest.name}")
+                self._set_translate_progress((index + 1) / total)
+            final = f"Done — wrote {written} file(s)"
+            if skipped:
+                final += f", skipped {skipped}"
         except CancelledError:
             final = "Cancelled"
         except Exception as exc:  # noqa: BLE001
@@ -904,6 +1091,109 @@ class WhisprApp:
             final = "Error"
         finally:
             self._set_translate_busy(False, final)
+
+    def _set_translate_input(self, text: str) -> None:
+        def _do() -> None:
+            self.translate_input.delete("1.0", "end")
+            self.translate_input.insert("end", text)
+
+        self.root.after(0, _do)
+
+    def _extract_to_paste(self) -> None:
+        """OCR a single image/PDF into the paste box for review before translating."""
+        lang = self._ocr_lang_code()
+        if lang is None:
+            self.translate_status_var.set(
+                "Pick a specific 'From' language (not Auto-detect) to OCR a file."
+            )
+            return
+        patterns = " ".join(f"*{ext}" for ext in OCR_EXTENSIONS)
+        path = filedialog.askopenfilename(
+            title="Choose an image or PDF",
+            filetypes=[("Images & PDFs", patterns), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        self._cancel_event.clear()
+        threading.Thread(
+            target=self._extract_to_paste_worker, args=(Path(path), lang), daemon=True
+        ).start()
+
+    def _extract_to_paste_worker(self, path: Path, lang: str) -> None:
+        self._set_translate_busy(True, f"Reading {path.name} (OCR)…")
+        final = "Extracted — review, then Translate"
+        try:
+            text = extract_text(
+                path,
+                lang=lang,
+                progress=self._set_translate_status,
+                cancelled=self._cancel_event.is_set,
+            )
+            self._set_translate_input(text)
+            if not text.strip():
+                final = "No text found in that file."
+        except CancelledError:
+            final = "Cancelled"
+        except Exception as exc:  # noqa: BLE001
+            self._set_translate_status(self._friendly_error(exc))
+            final = "Error"
+        finally:
+            self._set_translate_busy(False, final)
+
+    def _copy_translation(self) -> None:
+        text = self.translate_output.get("1.0", "end-1c")
+        if not text.strip():
+            self.translate_status_var.set("Nothing to copy yet.")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.translate_status_var.set("Translation copied to clipboard.")
+
+    def _save_translation_docx(self) -> None:
+        text = self.translate_output.get("1.0", "end-1c")
+        if not text.strip():
+            self.translate_status_var.set("Nothing to save yet.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Save translation as Word",
+            defaultextension=".docx",
+            initialfile="translation.docx",
+            filetypes=[("Word document", "*.docx")],
+        )
+        if not path:
+            return
+        try:
+            text_to_docx(text, path)
+            self.translate_status_var.set(f"Saved {Path(path).name}")
+        except Exception as exc:  # noqa: BLE001
+            self.translate_status_var.set(self._friendly_error(exc))
+
+    def _on_drop_translate_source(self, paths: List[Path]) -> None:
+        """A file dropped on the paste box: OCR an image/PDF, or load a text file."""
+        path = paths[0]
+        if is_ocr_file(path):
+            lang = self._ocr_lang_code()
+            if lang is None:
+                self.translate_status_var.set(
+                    "Pick a specific 'From' language (not Auto-detect) to OCR a file."
+                )
+                return
+            self._cancel_event.clear()
+            threading.Thread(
+                target=self._extract_to_paste_worker, args=(path, lang), daemon=True
+            ).start()
+        else:
+            try:
+                self._set_translate_input(
+                    path.read_text(encoding="utf-8", errors="replace")
+                )
+            except OSError as exc:
+                self.translate_status_var.set(self._friendly_error(exc))
+
+    def _on_drop_translate_files(self, paths: List[Path]) -> None:
+        """Files dropped on the batch box: add them to the queue."""
+        self._add_translate_paths(paths)
+        self.translate_status_var.set(f"Added {len(paths)} file(s) to the batch.")
 
     def _run(self) -> None:
         task = self.task_var.get()
@@ -1130,6 +1420,54 @@ class WhisprApp:
             srt_path = outdir / (source.name + ".srt")
             srt_path.write_text(result.to_srt(names), encoding="utf-8")
             self._append(self.status, f"Wrote subtitles to {srt_path}")
+
+    # -- Transcript copy / export -----------------------------------------
+
+    def _copy_transcript(self) -> None:
+        """Copy the rendered transcript text to the clipboard."""
+        text = self.output.get("1.0", "end-1c")
+        if not text.strip():
+            self.progress_label_var.set("Nothing to copy yet.")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.progress_label_var.set("Transcript copied to clipboard.")
+
+    def _save_transcript_docx(self) -> None:
+        """Save the current transcript as a Word document."""
+        result = self._result
+        if result is None:
+            self.progress_label_var.set("Run a transcription first.")
+            return
+        default = (
+            f"{self._result_source.stem}.docx"
+            if self._result_source
+            else "transcript.docx"
+        )
+        path = filedialog.asksaveasfilename(
+            title="Save transcript as Word",
+            defaultextension=".docx",
+            initialfile=default,
+            filetypes=[("Word document", "*.docx")],
+        )
+        if not path:
+            return
+        try:
+            transcript_to_docx(
+                result,
+                path,
+                self._speaker_names,
+                blank_lines=self.blank_lines_var.get(),
+            )
+            self.progress_label_var.set(f"Saved {Path(path).name}")
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            self.progress_label_var.set(self._friendly_error(exc))
+
+    def _on_drop_media(self, paths: List[Path]) -> None:
+        """Handle a file dropped on the transcript pane: load it as input."""
+        if paths:
+            self.input_file_var.set(str(paths[0]))
+            self.progress_label_var.set(f"Loaded {paths[0].name}")
 
     # -- Transcript rendering + speaker renaming ---------------------------
 
@@ -1408,6 +1746,7 @@ def main() -> None:
     # both are no-ops otherwise.
     configure_offline_hf_cache()
     configure_offline_translation()
+    configure_offline_ocr()
 
     try:
         # ttkbootstrap gives a modern theme; fall back to stock Tk if absent.
@@ -1417,8 +1756,28 @@ def main() -> None:
     except ImportError:
         root = tk.Tk()
 
-    WhisprApp(root)
+    # Best-effort: load the tkdnd extension so files can be dragged onto the
+    # window. No-op (and the app works normally) when tkinterdnd2 isn't bundled.
+    dnd_ok = _enable_drag_and_drop(root)
+
+    WhisprApp(root, drag_and_drop=dnd_ok)
     root.mainloop()
+
+
+def _enable_drag_and_drop(root: tk.Misc) -> bool:
+    """Initialise tkinterdnd2's tkdnd on ``root``; return True on success.
+
+    We load tkdnd onto the existing (ttkbootstrap-themed) root rather than using
+    ``TkinterDnD.Tk()`` so the theme is preserved. Individual widgets opt in via
+    :meth:`WhisprApp._register_drop`.
+    """
+    try:
+        from tkinterdnd2 import TkinterDnD
+
+        TkinterDnD._require(root)
+        return True
+    except Exception:  # noqa: BLE001 - DnD is a convenience; never block startup
+        return False
 
 
 if __name__ == "__main__":
