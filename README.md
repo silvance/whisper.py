@@ -205,6 +205,11 @@ play just that span of the source audio — or use **▶ Play this line** in the
 right-click menu and **⏹ Stop audio**. The segment is extracted on the fly with
 the bundled ffmpeg and played with the OS's built-in audio, so it works offline.
 
+**Save & reopen a project.** Transcription and the manual speaker fixes are real
+work, so **Save project…** writes the result, your speaker names and corrections,
+and the source path to a `.whispr.json` file; **Open project…** loads it back so
+you can keep editing (and re-listening) in a later session.
+
 When **Convert video to WAV first (ffmpeg)** is enabled (the default), choosing a
 video file (`.mp4`, `.mkv`, `.mov`, `.avi`, `.webm`) extracts its audio to a 16 kHz
 mono WAV with [`ffmpeg`](https://ffmpeg.org/) before transcribing. If an output
