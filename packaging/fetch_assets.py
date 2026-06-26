@@ -297,8 +297,21 @@ def fetch_tesseract(codes: List[str]) -> None:
 
     binary = shutil.which("tesseract")
     if binary is None:
+        # choco/apt update the machine PATH, but the current step's process often
+        # doesn't see it via `which` (e.g. choco on a Windows runner). Check the
+        # standard install locations directly before giving up.
+        for candidate in (
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+            "/usr/bin/tesseract",
+            "/usr/local/bin/tesseract",
+        ):
+            if os.path.exists(candidate):
+                binary = candidate
+                break
+    if binary is None:
         print(
-            "WARNING: no 'tesseract' binary on PATH to bundle. Install it in the "
+            "WARNING: no 'tesseract' binary found to bundle. Install it in the "
             "build step (apt-get install tesseract-ocr / choco install tesseract); "
             "at runtime the app will otherwise need a system Tesseract."
         )
