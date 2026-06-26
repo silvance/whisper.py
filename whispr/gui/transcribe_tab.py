@@ -19,6 +19,7 @@ from typing import Callable, Dict, List, Optional
 from ..diarization import assign_speakers, diarize
 from ..export import transcript_to_docx
 from ..playback import PlaybackError, SegmentPlayer, playback_available
+from ..project import PROJECT_SUFFIX, load_project, save_project
 from ..resources import bundled_models
 from ..transcription import (
     AUDIO_EXTENSIONS,
@@ -373,6 +374,12 @@ class TranscribeTab:
         ttk.Button(
             export_row, text="Save as Word…", command=self._save_transcript_docx
         ).pack(side="left", padx=(8, 0))
+        ttk.Button(export_row, text="Save project…", command=self._save_project).pack(
+            side="left", padx=(8, 0)
+        )
+        ttk.Button(export_row, text="Open project…", command=self._open_project).pack(
+            side="left", padx=(8, 0)
+        )
         if self._playback_ok:
             ttk.Button(export_row, text="⏹ Stop audio", command=self._stop_audio).pack(
                 side="left", padx=(8, 0)
@@ -759,6 +766,55 @@ class TranscribeTab:
             self.progress_label_var.set(f"Saved {Path(path).name}")
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             self.progress_label_var.set(friendly_error(exc))
+
+    def _save_project(self) -> None:
+        """Save the result + speaker edits to a reloadable project file."""
+        result = self._result
+        if result is None:
+            self.progress_label_var.set("Run a transcription first.")
+            return
+        stem = self._result_source.stem if self._result_source else "transcript"
+        path = filedialog.asksaveasfilename(
+            title="Save project",
+            defaultextension=PROJECT_SUFFIX,
+            initialfile=f"{stem}{PROJECT_SUFFIX}",
+            filetypes=[
+                ("Whispers project", f"*{PROJECT_SUFFIX}"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        try:
+            save_project(path, result, self._speaker_names, self._result_source)
+            self.progress_label_var.set(f"Saved {Path(path).name}")
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            self.progress_label_var.set(friendly_error(exc))
+
+    def _open_project(self) -> None:
+        """Load a saved project so its transcript can be reviewed/edited again."""
+        path = filedialog.askopenfilename(
+            title="Open project",
+            filetypes=[
+                ("Whispers project", f"*{PROJECT_SUFFIX}"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        try:
+            result, speaker_names, source = load_project(path)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            self.progress_label_var.set(friendly_error(exc))
+            return
+        self._result = result
+        self._speaker_names = speaker_names
+        # Restore the source path so audio playback still works; outputs are no
+        # longer auto-saved to a folder until the next run (re-save the project).
+        self._result_source = Path(source) if source else None
+        self._result_outdir = None
+        self.transcript_view.set_result(result, self._speaker_names)
+        self.progress_label_var.set(f"Opened {Path(path).name}")
 
     def _on_drop_media(self, paths: List[Path]) -> None:
         """Handle a file dropped on the transcript pane: load it as input."""
