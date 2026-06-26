@@ -82,11 +82,16 @@ MODEL_SIZES = (
 
 @dataclass
 class Word:
-    """A single timestamped word (from faster-whisper word timestamps)."""
+    """A single timestamped word (from faster-whisper word timestamps).
+
+    ``probability`` is the model's confidence for this word (0..1), when word
+    timestamps were computed; used to highlight shaky words in the GUI.
+    """
 
     start: float
     end: float
     word: str
+    probability: Optional[float] = None
 
 
 @dataclass
@@ -104,6 +109,27 @@ class Segment:
     text: str
     speaker: Optional[str] = None
     words: List[Word] = field(default_factory=list)
+    # Average token log-probability for the segment (higher is more confident);
+    # None when not provided by the backend. Used for confidence highlighting.
+    avg_logprob: Optional[float] = None
+
+
+# Thresholds for the GUI's low-confidence highlighting. Word ``probability`` is
+# 0..1 (from word timestamps); segment ``avg_logprob`` is a log-prob (roughly
+# -0.1 is excellent, below ~-0.7 is shaky). Below these, text is flagged so an
+# analyst knows which parts to re-check.
+LOW_WORD_PROBABILITY = 0.55
+LOW_SEGMENT_LOGPROB = -0.7
+
+
+def is_low_confidence_word(word: "Word") -> bool:
+    """True if ``word`` has a probability below the low-confidence threshold."""
+    return word.probability is not None and word.probability < LOW_WORD_PROBABILITY
+
+
+def is_low_confidence_segment(segment: "Segment") -> bool:
+    """True if ``segment``'s average log-prob is below the low-confidence cut."""
+    return segment.avg_logprob is not None and segment.avg_logprob < LOW_SEGMENT_LOGPROB
 
 
 @dataclass
@@ -309,6 +335,7 @@ def transcribe_audio(
     beam_size: int = 5,
     vad_filter: bool = True,
     word_timestamps: bool = False,
+    initial_prompt: Optional[str] = None,
     progress: Optional[ProgressCallback] = None,
     on_progress: Optional[Callable[[float], None]] = None,
     cancelled: Optional[CancelCallback] = None,
@@ -337,6 +364,10 @@ def transcribe_audio(
         Beam search width.
     vad_filter
         Drop non-speech with the Silero VAD before transcription.
+    initial_prompt
+        Optional text to prime the decoder - e.g. names, places, jargon or
+        callsigns likely in the audio - which biases recognition toward that
+        vocabulary. ``None`` (default) disables it.
     progress
         Optional callback invoked with human-readable status/segment strings;
         the GUI uses this to stream output as it is produced.
@@ -362,6 +393,8 @@ def transcribe_audio(
         # Word timestamps add an alignment pass; only compute them when needed
         # (diarization uses them for word-level speaker assignment).
         word_timestamps=word_timestamps,
+        # None is the faster-whisper default (no priming).
+        initial_prompt=initial_prompt or None,
     )
 
     segments: List[Segment] = []
@@ -370,8 +403,24 @@ def transcribe_audio(
         if cancelled is not None and cancelled():
             raise CancelledError("Transcription cancelled.")
         text = raw.text.strip()
-        words = [Word(start=w.start, end=w.end, word=w.word) for w in (raw.words or [])]
-        segments.append(Segment(start=raw.start, end=raw.end, text=text, words=words))
+        words = [
+            Word(
+                start=w.start,
+                end=w.end,
+                word=w.word,
+                probability=getattr(w, "probability", None),
+            )
+            for w in (raw.words or [])
+        ]
+        segments.append(
+            Segment(
+                start=raw.start,
+                end=raw.end,
+                text=text,
+                words=words,
+                avg_logprob=getattr(raw, "avg_logprob", None),
+            )
+        )
         texts.append(text)
         _report(f"[{_format_timestamp(raw.end)}] {text}")
         # Real progress: how far the latest segment's end is through the audio.

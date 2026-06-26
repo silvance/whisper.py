@@ -115,6 +115,10 @@ class TranscribeTab:
         self.srt_var = tk.BooleanVar(value=False)
         # Put a blank line between segments in the transcript (and saved .txt).
         self.blank_lines_var = tk.BooleanVar(value=True)
+        # Optional vocabulary hint (names/jargon) to prime the decoder.
+        self.vocab_var = tk.StringVar(value="")
+        # Colour low-confidence words/segments so they can be verified.
+        self.highlight_conf_var = tk.BooleanVar(value=False)
         self.progress_label_var = tk.StringVar(value="Idle")
 
         # State for the last result, so speakers can be renamed after a run. The
@@ -211,6 +215,18 @@ class TranscribeTab:
             width=16,
         ).grid(row=2, column=1, sticky="w", pady=4)
 
+        ttk.Label(model_frame, text="Custom words").grid(
+            row=3, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        ttk.Entry(model_frame, textvariable=self.vocab_var).grid(
+            row=3, column=1, columnspan=2, sticky="ew", pady=4
+        )
+        ttk.Label(
+            model_frame,
+            text="Names, places, jargon or callsigns to expect (improves accuracy).",
+            font=("", 8),
+        ).grid(row=4, column=1, columnspan=2, sticky="w")
+
         # --- Options -------------------------------------------------------
         opt_section = CollapsibleSection(container, "Options")
         opt_section.pack(fill="x", pady=(8, 0))
@@ -235,6 +251,12 @@ class TranscribeTab:
             variable=self.blank_lines_var,
             command=self._rerender_transcript,
         ).grid(row=3, column=0, sticky="w", pady=2)
+        ttk.Checkbutton(
+            opt_frame,
+            text="Highlight low-confidence words (verify these)",
+            variable=self.highlight_conf_var,
+            command=self._rerender_transcript,
+        ).grid(row=4, column=0, sticky="w", pady=2)
 
         # --- Speakers ------------------------------------------------------
         spk_section = CollapsibleSection(container, "Speakers")
@@ -321,7 +343,11 @@ class TranscribeTab:
         tabs = ttk.Notebook(container)
         tabs.pack(fill="both", expand=True, pady=(12, 0))
         self.transcript_view = TranscriptView(
-            tabs, self.root, self.blank_lines_var, self._save_outputs_if_possible
+            tabs,
+            self.root,
+            self.blank_lines_var,
+            self._save_outputs_if_possible,
+            highlight_var=self.highlight_conf_var,
         )
         self.status = ScrolledText(
             tabs, wrap="word", state="disabled", height=14, font="TkFixedFont"
@@ -534,15 +560,18 @@ class TranscribeTab:
             model = str(self._bundled_models.get(model_sel, model_sel))
 
             transcribe_label = "Translating" if task == "translate" else "Transcribing"
+            # Word timestamps power word-level speaker assignment (diarization) and
+            # word-level confidence highlighting; skip the extra alignment pass when
+            # neither is needed so plain transcription stays fast.
+            need_words = self.diarize_var.get() or self.highlight_conf_var.get()
             result = transcribe_audio(
                 media_path,
                 model_size=model,
                 task=task,
                 language=language_arg,
                 vad_filter=self.vad_var.get(),
-                # Word timestamps are only needed for diarization; skipping them
-                # when not diarizing makes plain transcription noticeably faster.
-                word_timestamps=self.diarize_var.get(),
+                word_timestamps=need_words,
+                initial_prompt=self.vocab_var.get().strip() or None,
                 progress=lambda msg: append_line(self.status, msg),
                 on_progress=lambda f: self._set_progress(f, transcribe_label),
                 cancelled=self._cancel_event.is_set,
