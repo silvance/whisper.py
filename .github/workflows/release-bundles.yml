@@ -1,6 +1,6 @@
 name: release-bundles
 
-# Builds self-contained, offline W.H.I.S.P.R. bundles for Windows and Linux.
+# Builds self-contained, offline Whispers bundles for Windows and Linux.
 # Each bundle includes the Python runtime, all dependencies, an ffmpeg binary, and
 # the selected Whisper models, so it can be copied to an air-gapped machine and run
 # with no network access. The build runners use the internet; the targets do not.
@@ -28,6 +28,9 @@ on:
         default: both
       translate_langs:
         description: "Argos text-translation packs to bundle (<code>->en, comma-separated; empty to skip translation)"
+        default: "ar,ru,zh,fa,uk,he,ko"
+      ocr_langs:
+        description: "Tesseract OCR language packs to bundle (image/PDF -> text; comma-separated; empty to skip OCR)"
         default: "ar,ru,zh,fa,uk,he,ko"
   push:
     tags:
@@ -64,6 +67,8 @@ jobs:
       DIARIZER: ${{ github.event.inputs.diarizer || 'both' }}
       # Argos text-translation packs (<code>->en). Empty string skips translation.
       TRANSLATE_LANGS: ${{ github.event.inputs.translate_langs || 'ar,ru,zh,fa,uk,he,ko' }}
+      # Tesseract OCR language packs (image/PDF -> text). Empty string skips OCR.
+      OCR_LANGS: ${{ github.event.inputs.ocr_langs || 'ar,ru,zh,fa,uk,he,ko' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -79,6 +84,9 @@ jobs:
           # huggingface_hub <1.0: pyannote 3.1.1 forwards the (removed-in-1.0)
           # use_auth_token kwarg into hf_hub_download; 0.x still accepts it.
           pip install pyinstaller imageio-ffmpeg "huggingface_hub<1.0"
+          # Small UX add-ons bundled when present: Word export, source-language
+          # auto-detect, and file drag-and-drop.
+          pip install python-docx langdetect tkinterdnd2
       - name: Install pyannote diarizer (CPU PyTorch)
         if: env.DIARIZER != 'sherpa'
         # Install CPU-only torch from PyTorch's CPU index FIRST so pyannote.audio
@@ -98,6 +106,18 @@ jobs:
         # numpy<2 keeps a single numpy across the bundle (matches the pyannote pin
         # and stanza's expectations).
         run: pip install argostranslate "numpy<2"
+      - name: Install Tesseract OCR engine (Linux)
+        if: env.OCR_LANGS != '' && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+      - name: Install Tesseract OCR engine (Windows)
+        if: env.OCR_LANGS != '' && runner.os == 'Windows'
+        # choco ships on windows-latest; tesseract.exe lands on PATH.
+        run: choco install --no-progress -y tesseract
+      - name: Install OCR Python deps
+        if: env.OCR_LANGS != ''
+        run: pip install pytesseract pypdfium2 pillow "numpy<2"
       - name: Install whispr package
         # --no-deps: the GUI doesn't need the whisper engine's torch dep; pyannote
         # (when selected) already provided CPU torch above.
@@ -117,6 +137,9 @@ jobs:
       - name: Fetch translation packs (Argos) + warm offline splitter
         if: env.TRANSLATE_LANGS != ''
         run: python packaging/fetch_assets.py argos ${{ env.TRANSLATE_LANGS }}
+      - name: Fetch OCR engine (Tesseract binary + language data)
+        if: env.OCR_LANGS != ''
+        run: python packaging/fetch_assets.py tesseract ${{ env.OCR_LANGS }}
       - name: Build bundle
         run: pyinstaller --noconfirm packaging/whispr.spec
       - name: Upload bundle

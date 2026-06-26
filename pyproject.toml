@@ -30,9 +30,18 @@ dependencies = [
   "triton>=2; (platform_machine=='x86_64' and sys_platform=='linux') or sys_platform=='linux2'",
 ]
 optional-dependencies.dev = [ "mypy", "pytest", "pytest-cov", "ruff", "scipy" ]
-# GUI / CPU-optimized transcription extras for the W.H.I.S.P.R. desktop app.
+# GUI / CPU-optimized transcription extras for the Whispers desktop app.
 # tkinter ships with CPython; faster-whisper (CTranslate2) is the CPU backend.
-optional-dependencies.gui = [ "faster-whisper", "ttkbootstrap", "sherpa-onnx" ]
+# python-docx (Word export), langdetect (auto source-language) and tkinterdnd2
+# (file drag-and-drop) are small UX add-ons used when present.
+optional-dependencies.gui = [
+  "faster-whisper",
+  "ttkbootstrap",
+  "sherpa-onnx",
+  "python-docx",
+  "langdetect",
+  "tkinterdnd2",
+]
 # Build-time tooling for producing offline, air-gapped PyInstaller bundles.
 # huggingface-hub <1.0: pyannote 3.1.1 forwards the use_auth_token kwarg (removed
 # in huggingface_hub 1.0) into hf_hub_download.
@@ -46,6 +55,9 @@ optional-dependencies.pyannote = [ "pyannote.audio==3.1.1", "soundfile", "numpy<
 # Offline text translation backend (CTranslate2-based, CPU). Language packs are
 # bundled into the air-gapped build; see whispr.resources.configure_offline_translation.
 optional-dependencies.translate = [ "argostranslate" ]
+# Offline OCR for the translation workflow (image/PDF -> text). pytesseract drives
+# a bundled Tesseract binary; pypdfium2 + Pillow handle PDFs and images.
+optional-dependencies.ocr = [ "pytesseract", "pypdfium2", "pillow" ]
 urls = { Homepage = "https://github.com/silvance/whisper.py" }
 scripts.whisper = "whisper.transcribe:cli"
 scripts.whispr = "whispr.app:main"

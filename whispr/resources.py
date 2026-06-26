@@ -88,6 +88,62 @@ def find_ffmpeg() -> Optional[Path]:
     return Path(on_path) if on_path else None
 
 
+def find_bundled_tesseract() -> Optional[Path]:
+    """Return the bundled Tesseract OCR executable, if shipped in the assets."""
+    names = ("tesseract.exe", "tesseract") if os.name == "nt" else ("tesseract",)
+    for base in asset_dirs():
+        for directory in (base / "tesseract", base):
+            for name in names:
+                candidate = directory / name
+                if candidate.is_file():
+                    return candidate
+    return None
+
+
+def find_tesseract() -> Optional[Path]:
+    """Return the Tesseract to use: a bundled one if present, else one on PATH."""
+    bundled = find_bundled_tesseract()
+    if bundled is not None:
+        return bundled
+    on_path = which("tesseract")
+    return Path(on_path) if on_path else None
+
+
+def bundled_tessdata_dir() -> Optional[Path]:
+    """Return the bundled Tesseract ``tessdata`` directory, if present.
+
+    The build populates ``whispr_assets/tesseract/tessdata`` with the
+    ``<lang>.traineddata`` files; at runtime OCR points Tesseract at it.
+    """
+    for base in asset_dirs():
+        directory = base / "tesseract" / "tessdata"
+        if directory.is_dir():
+            return directory
+    return None
+
+
+def configure_offline_ocr() -> Optional[Path]:
+    """Point Tesseract at the bundled tessdata and co-located libraries, offline.
+
+    Returns the bundled tesseract directory, or ``None`` if none is bundled
+    (so running from a system Tesseract is unchanged). Sets ``TESSDATA_PREFIX``
+    and prepends the bundle's tesseract directory to the OS library search path
+    (``PATH`` on Windows, ``LD_LIBRARY_PATH`` on Linux) so the binary we spawn
+    finds the shared libraries shipped beside it.
+    """
+    tessdata = bundled_tessdata_dir()
+    if tessdata is None:
+        return None
+    os.environ["TESSDATA_PREFIX"] = str(tessdata)
+    tess_dir = tessdata.parent
+    var = "PATH" if os.name == "nt" else "LD_LIBRARY_PATH"
+    existing = os.environ.get(var, "")
+    entry = str(tess_dir)
+    if entry not in existing.split(os.pathsep):
+        os.environ[var] = entry + (os.pathsep + existing if existing else "")
+    return tess_dir
+
+
 def bundled_models() -> Dict[str, Path]:
     """Map of bundled model name -> directory (a CTranslate2 model folder).
 

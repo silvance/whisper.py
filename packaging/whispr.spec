@@ -20,10 +20,19 @@
 #     python packaging/fetch_assets.py argos ar,ru,zh,fa,uk,he,ko
 #     (plus the steps above, then pyinstaller)
 #
-# The spec auto-detects whether pyannote.audio / argostranslate are installed: it
-# bundles the PyTorch stack + offline pyannote cache and/or the Argos stack +
-# language packs accordingly; otherwise it builds the lighter sherpa-onnx-only
-# bundle and excludes torch.
+# Optional OCR for the translation workflow (images + PDFs):
+#     # install a system Tesseract first (apt-get install tesseract-ocr /
+#     # choco install tesseract), then:
+#     pip install "silvance-whisper[gui,bundle,ocr]"
+#     python packaging/fetch_assets.py tesseract ar,ru,zh,fa,uk,he,ko
+#     (plus the steps above, then pyinstaller)
+#
+# The spec auto-detects whether pyannote.audio / argostranslate / pytesseract are
+# installed: it bundles the PyTorch stack + offline pyannote cache, the Argos
+# stack + language packs, and/or the OCR stack (Tesseract + tessdata) accordingly;
+# otherwise it builds the lighter sherpa-onnx-only bundle and excludes torch.
+# python-docx (Word export), langdetect (auto-detect) and tkinterdnd2 (drag-and-
+# drop) are bundled when present too.
 #
 # The resulting dist/whispr/ folder is fully self-contained (Python runtime, all
 # dependencies, the ffmpeg binary, and the Whisper + diarization models) and can be
@@ -51,6 +60,15 @@ PYANNOTE = importlib.util.find_spec("pyannote.audio") is not None
 # hard-imports stanza, so stanza is pulled in too; spacy is optional (guarded) and
 # left out via excludes below.
 ARGOS = importlib.util.find_spec("argostranslate") is not None
+
+# OCR (image/PDF -> text) for the translation workflow. pytesseract drives the
+# Tesseract binary (bundled under whispr_assets/tesseract); pypdfium2 + Pillow
+# handle PDFs and images. langdetect (auto source-language), python-docx (Word
+# export) and tkinterdnd2 (drag-and-drop) are small UX add-ons, each guarded.
+OCR = importlib.util.find_spec("pytesseract") is not None
+DOCX = importlib.util.find_spec("docx") is not None
+LANGDETECT = importlib.util.find_spec("langdetect") is not None
+TKDND = importlib.util.find_spec("tkinterdnd2") is not None
 
 datas = []
 binaries = []
@@ -98,6 +116,17 @@ if ARGOS:
         "ctranslate2",
     ]
 
+# OCR + UX add-ons. langdetect ships its language profiles as package data and
+# tkinterdnd2 ships the native tkdnd Tcl extension, so both need collect_all.
+if OCR:
+    packages += ["pytesseract", "PIL", "pypdfium2"]
+if DOCX:
+    packages += ["docx"]
+if LANGDETECT:
+    packages += ["langdetect"]
+if TKDND:
+    packages += ["tkinterdnd2"]
+
 for package in packages:
     try:
         pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
@@ -138,6 +167,22 @@ if ARGOS:
         "ctranslate2",
         "minisbd",
     ):
+        try:
+            datas += copy_metadata(dist)
+        except Exception as exc:  # noqa: BLE001 - metadata may be absent
+            print(f"whispr.spec: skipping copy_metadata({dist!r}): {exc}")
+
+# Some OCR/UX libraries read their own distribution metadata at runtime; bundle it
+# (note python-docx's distribution name differs from its import name).
+for enabled, dists in (
+    (OCR, ("pytesseract", "pypdfium2", "pillow")),
+    (DOCX, ("python-docx",)),
+    (LANGDETECT, ("langdetect",)),
+    (TKDND, ("tkinterdnd2",)),
+):
+    if not enabled:
+        continue
+    for dist in dists:
         try:
             datas += copy_metadata(dist)
         except Exception as exc:  # noqa: BLE001 - metadata may be absent

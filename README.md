@@ -246,6 +246,29 @@ result = transcribe_audio(
 print(result.text)
 ```
 
+### Translating text, images and PDFs
+
+When translation packs are bundled (or `argostranslate` is installed), a
+**Translate** tab appears for turning foreign text into English, fully offline.
+Pick the source language under **From** — or **Auto-detect language**, which
+identifies it for you (via `langdetect`) — then either paste text and click
+**Translate**, or add files under **Translate files (batch)** to write a
+`<name>.en.<ext>` beside each original.
+
+**Images and PDFs (OCR).** With OCR bundled, the batch picker also accepts images
+(`.png`, `.jpg`, …) and PDFs: each is read with [Tesseract](https://github.com/tesseract-ocr/tesseract)
+(digital PDFs use their embedded text; scans are rendered and OCR'd), the
+extracted text is saved as `<name>.ocr.txt`, and its translation as
+`<name>.en.txt`. For a single file, **Extract from image/PDF…** drops the text
+into the paste box so you can fix OCR errors before translating. OCR needs a
+specific **From** language (so Tesseract knows the script), so it isn't available
+under Auto-detect.
+
+**Export & drag-and-drop.** Transcripts and translations can be copied to the
+clipboard or saved as Word (`.docx`); when `tkinterdnd2` is present you can also
+drag a file straight onto the window (audio onto the transcript pane, an
+image/PDF/text file onto the Translate tab).
+
 ## Offline / air-gapped deployment (sneakernet)
 
 For machines with no internet access, the GUI can be shipped as a **self-contained
@@ -263,13 +286,16 @@ pyannote + sherpa, switchable at runtime via the Engine dropdown), `pyannote`, o
 `sherpa`. The **`translate_langs`** input controls which offline text-translation
 packs (each `<code>→en`) are bundled for the Translate tab (default
 `ar,ru,zh,fa,uk,he,ko`; empty to skip translation). Packs and their sentence
-splitter are baked in, so translation also runs with no network.
+splitter are baked in, so translation also runs with no network. The
+**`ocr_langs`** input bundles Tesseract OCR language data (and the Tesseract
+binary) for translating images/PDFs (default `ar,ru,zh,fa,uk,he,ko`; empty to
+skip OCR), so OCR also runs air-gapped.
 
 **Lean transcriber-only build.** A full bundle (all models + translation packs)
 is large. For users who only transcribe English, build a much smaller bundle by
-setting **`models=base.en`** and **`translate_langs=`** (empty): this drops the
-multi-GB models and the ~1 GB Argos/translation stack while keeping full
-transcription and diarization. The GUI detects that no translation engine is
+setting **`models=base.en`**, **`translate_langs=`** and **`ocr_langs=`** (both
+empty): this drops the multi-GB models and the ~1 GB Argos/translation and OCR
+stacks while keeping full transcription and diarization. The GUI detects that no translation engine is
 present and **hides the Translate tab**, so the app opens as a clean,
 single-purpose transcriber. (Even on a full bundle, set the `WHISPR_MODE=transcribe`
 environment variable to force the transcriber-only view — e.g. on a locked-down

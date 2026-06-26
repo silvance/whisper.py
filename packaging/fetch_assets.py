@@ -215,11 +215,117 @@ def fetch_argos(codes: List[str]) -> None:
     print(f"argos data -> {argos_home / 'argos-translate'}")
 
 
+# Tesseract OCR language data. tessdata_fast gives the best speed/size trade-off
+# for CPU OCR. We always add eng (often present in mixed docs) and osd (orientation
+# + script detection). The intel-leaning default mirrors the Argos set.
+TESSDATA_BASE_URL = "https://github.com/tesseract-ocr/tessdata_fast/raw/main"
+OCR_DEFAULT_LANGS = ["ar", "ru", "zh", "fa", "uk", "he", "ko"]
+
+# Shared libraries we must NOT relocate when bundling a Linux Tesseract: the C
+# runtime and dynamic loader belong to the target system, not the build runner.
+_LINUX_LIB_DENYLIST = (
+    "libc.so",
+    "libm.so",
+    "libpthread.so",
+    "libdl.so",
+    "librt.so",
+    "libresolv.so",
+    "ld-linux",
+)
+
+
+def _copy_linux_tesseract_libs(binary: Path, dest_dir: Path) -> None:
+    """Copy the Tesseract binary's shared-lib dependencies beside it (Linux).
+
+    Uses ``ldd`` and skips the C runtime / loader (kept from the target system).
+    At runtime the app prepends this directory to ``LD_LIBRARY_PATH`` so the
+    bundled binary resolves libtesseract/leptonica/etc. from here.
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["ldd", str(binary)], capture_output=True, text=True, check=False
+        )
+    except FileNotFoundError:
+        print("WARNING: ldd not available; not bundling Tesseract libraries")
+        return
+    for line in out.stdout.splitlines():
+        if "=>" not in line:
+            continue
+        rhs = line.split("=>", 1)[1].strip()
+        lib_path = rhs.split(" (")[0].strip()
+        if not lib_path or not os.path.exists(lib_path):
+            continue
+        base = os.path.basename(lib_path)
+        if any(base.startswith(name) for name in _LINUX_LIB_DENYLIST):
+            continue
+        shutil.copy2(lib_path, dest_dir / base)
+        print(f"  lib {base}")
+
+
+def fetch_tesseract(codes: List[str]) -> None:
+    """Bundle Tesseract OCR: language data plus the binary and its libraries.
+
+    Downloads ``<lang>.traineddata`` into ``whispr_assets/tesseract/tessdata`` and
+    copies a system Tesseract binary (installed by the build step) plus its
+    dependent libraries next to it, so the air-gapped target needs no Tesseract
+    install. Unknown/unavailable language codes are skipped with a warning.
+    """
+    from whispr.ocr import tesseract_lang
+
+    tess_dir = ASSETS / "tesseract"
+    tessdata = tess_dir / "tessdata"
+    tessdata.mkdir(parents=True, exist_ok=True)
+
+    wanted = ["eng", "osd"] + [tesseract_lang(c) for c in codes]
+    seen = set()
+    for lang in wanted:
+        if lang in seen:
+            continue
+        seen.add(lang)
+        url = f"{TESSDATA_BASE_URL}/{lang}.traineddata"
+        dest = tessdata / f"{lang}.traineddata"
+        print(f"downloading tessdata {lang}")
+        try:
+            urllib.request.urlretrieve(url, dest)
+            print(f"tessdata {lang} -> {dest}")
+        except Exception as exc:  # noqa: BLE001 - report and continue
+            print(f"WARNING: could not fetch tessdata {lang!r}: {exc}")
+            if dest.exists():
+                dest.unlink()
+
+    binary = shutil.which("tesseract")
+    if binary is None:
+        print(
+            "WARNING: no 'tesseract' binary on PATH to bundle. Install it in the "
+            "build step (apt-get install tesseract-ocr / choco install tesseract); "
+            "at runtime the app will otherwise need a system Tesseract."
+        )
+        return
+
+    src = Path(binary)
+    dest_name = "tesseract.exe" if src.suffix.lower() == ".exe" else "tesseract"
+    dest = tess_dir / dest_name
+    shutil.copy2(src, dest)
+    if dest.suffix.lower() != ".exe":
+        dest.chmod(0o755)
+    print(f"tesseract binary -> {dest}")
+
+    if os.name == "nt":
+        # Windows DLLs live next to tesseract.exe in the install dir.
+        for dll in src.parent.glob("*.dll"):
+            shutil.copy2(dll, tess_dir / dll.name)
+            print(f"  dll {dll.name}")
+    else:
+        _copy_linux_tesseract_libs(src, tess_dir)
+
+
 def main(argv: List[str]) -> None:
     if not argv:
         raise SystemExit(
-            "usage: fetch_assets.py "
-            "[ffmpeg | models <names> | diarization | pyannote | argos <codes>]"
+            "usage: fetch_assets.py [ffmpeg | models <names> | diarization | "
+            "pyannote | argos <codes> | tesseract <codes>]"
         )
     command = argv[0]
     if command == "ffmpeg":
@@ -234,6 +340,9 @@ def main(argv: List[str]) -> None:
     elif command == "argos":
         codes = argv[1].split(",") if len(argv) > 1 else ARGOS_DEFAULT_LANGS
         fetch_argos([c.strip() for c in codes if c.strip()])
+    elif command == "tesseract":
+        codes = argv[1].split(",") if len(argv) > 1 else OCR_DEFAULT_LANGS
+        fetch_tesseract([c.strip() for c in codes if c.strip()])
     else:
         raise SystemExit(f"unknown command: {command}")
 
