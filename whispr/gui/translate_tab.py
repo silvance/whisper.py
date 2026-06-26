@@ -24,6 +24,10 @@ from .widgets import bind_wheel, register_drop, scrollable_body
 # Sentinel shown in the "From" dropdown for automatic language detection.
 AUTO_DETECT_LABEL = "Auto-detect language"
 AUTO_DETECT_CODE = "__auto__"
+# Lets users OCR an English document by picking English explicitly. There is no
+# English->English translation, so this is extract-only (the OCR'd text is the
+# output). Mapped to the target code "en".
+ENGLISH_LABEL = "English (OCR only, no translation)"
 # OCR needs a script up front; when "From" is Auto-detect we default to Latin/
 # English so the common case (English/Latin documents) works without a manual pick.
 DEFAULT_OCR_LANG = "eng"
@@ -209,6 +213,11 @@ class TranslateTab:
             if names and self._detect_available:
                 self._translate_lang_codes[AUTO_DETECT_LABEL] = AUTO_DETECT_CODE
                 names = [AUTO_DETECT_LABEL] + names
+            # Offer English explicitly so English images/PDFs can be OCR'd
+            # (extract-only; there's no English->English translation).
+            if names and self._ocr_available:
+                self._translate_lang_codes[ENGLISH_LABEL] = "en"
+                names = names + [ENGLISH_LABEL]
             self.translate_from_combo.configure(values=names)
             if names:
                 if self.translate_from_var.get() not in names:
@@ -229,27 +238,30 @@ class TranslateTab:
 
     def _installed_from_codes(self) -> set[str]:
         """Set of source language codes that have an installed pack to English."""
+        # Exclude the auto sentinel and the target ("en"): there's no en->en pack.
         return {
             code
             for code in self._translate_lang_codes.values()
-            if code != AUTO_DETECT_CODE
+            if code not in (AUTO_DETECT_CODE, "en")
         }
 
     def _resolve_from_code(self, text: str) -> Optional[str]:
-        """Resolve the source language for ``text``, honouring auto-detect.
+        """Resolve the translation source language for ``text``.
 
-        Returns a concrete language code with an installed pack, or ``None`` if
-        nothing usable (no selection, detection failed, or detected language has
-        no bundled pack) - the caller reports a friendly message.
+        Returns a concrete foreign language code with an installed pack, or
+        ``None`` when there's nothing to translate (no selection, English source,
+        auto-detect failed, or the detected language has no bundled pack) - the
+        caller reports a friendly message or treats it as extract-only.
         """
         selected = self._selected_from_code()
-        if selected and selected != AUTO_DETECT_CODE:
-            return selected
-        if selected != AUTO_DETECT_CODE:
+        if selected == AUTO_DETECT_CODE:
+            detected = detect_language(text)
+            if detected and detected in self._installed_from_codes():
+                return detected
             return None
-        detected = detect_language(text)
-        if detected and detected in self._installed_from_codes():
-            return detected
+        # A concrete foreign language; English ("en") is extract-only (no en->en).
+        if selected and selected != "en":
+            return selected
         return None
 
     def _ocr_lang_code(self) -> str:
@@ -356,10 +368,18 @@ class TranslateTab:
         try:
             from_code = self._resolve_from_code(text)
             if not from_code:
-                self._set_translate_output(
-                    "Couldn't determine the source language. Pick a specific 'From' "
-                    "language (auto-detect found no bundled pack for this text)."
-                )
+                if self._selected_from_code() == "en":
+                    self._set_translate_output(
+                        "That's English already — there's nothing to translate. To "
+                        "pull text out of an image or PDF, use 'Extract from "
+                        "image/PDF…'."
+                    )
+                else:
+                    self._set_translate_output(
+                        "Couldn't determine the source language. Pick a specific "
+                        "'From' language (auto-detect found no bundled pack for this "
+                        "text)."
+                    )
                 return
             result = translate_text(
                 text,
@@ -462,8 +482,10 @@ class TranslateTab:
         except CancelledError:
             final = "Cancelled"
         except Exception as exc:  # noqa: BLE001
-            self._set_translate_status(friendly_error(exc))
-            final = "Error"
+            # Show the cause in the Result box; the status line is too short and
+            # gets overwritten by the final "busy off" message below.
+            self._set_translate_output(friendly_error(exc))
+            final = "Error — see Result box"
         finally:
             self._set_translate_busy(False, final)
 
@@ -500,8 +522,8 @@ class TranslateTab:
         except CancelledError:
             final = "Cancelled"
         except Exception as exc:  # noqa: BLE001
-            self._set_translate_status(friendly_error(exc))
-            final = "Error"
+            self._set_translate_output(friendly_error(exc))
+            final = "Error — see Result box"
         finally:
             self._set_translate_busy(False, final)
 
