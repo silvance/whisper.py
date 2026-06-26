@@ -52,6 +52,9 @@ from .translation import detect_language
 # Sentinel shown in the "From" dropdown for automatic language detection.
 AUTO_DETECT_LABEL = "Auto-detect language"
 AUTO_DETECT_CODE = "__auto__"
+# OCR needs a script up front; when "From" is Auto-detect we default to Latin/
+# English so the common case (English/Latin documents) works without a manual pick.
+DEFAULT_OCR_LANG = "eng"
 
 # A handful of common languages for the dropdown; "Auto" lets Whisper detect.
 COMMON_LANGUAGES = [
@@ -903,15 +906,16 @@ class WhisprApp:
             return detected
         return None
 
-    def _ocr_lang_code(self) -> Optional[str]:
+    def _ocr_lang_code(self) -> str:
         """Tesseract language for OCR, from the selected 'From' language.
 
-        OCR needs to know the script up front, so a concrete 'From' language must
-        be chosen (auto-detect can't pick a script before reading the text).
+        When a specific 'From' language is chosen we use it; otherwise (Auto-detect)
+        we default to Latin/English so the common case - English/Latin-script
+        documents - just works. For a non-Latin scan, pick that language first.
         """
         selected = self._selected_from_code()
         if not selected or selected == AUTO_DETECT_CODE:
-            return None
+            return DEFAULT_OCR_LANG
         return tesseract_lang(selected)
 
     def _add_translate_files(self) -> None:
@@ -1032,7 +1036,8 @@ class WhisprApp:
 
         self._set_translate_busy(True, "Translating files…")
         final = "Done"
-        written = 0
+        translated_count = 0
+        extracted_count = 0
         skipped = 0
         try:
             total = max(1, len(files))
@@ -1040,24 +1045,20 @@ class WhisprApp:
                 if self._cancel_event.is_set():
                     raise CancelledError("Translation cancelled.")
                 # Get the foreign text: read text files directly, OCR images/PDFs.
-                if is_ocr_file(src):
-                    ocr_lang = self._ocr_lang_code()
-                    if ocr_lang is None:
-                        self._set_translate_status(
-                            f"Skipped {src.name}: pick a specific 'From' language to "
-                            "OCR images/PDFs."
-                        )
-                        skipped += 1
-                        continue
+                is_ocr = is_ocr_file(src)
+                if is_ocr:
                     self._set_translate_status(f"Reading {src.name} (OCR)…")
                     text = extract_text(
                         src,
-                        lang=ocr_lang,
+                        lang=self._ocr_lang_code(),
                         progress=self._set_translate_status,
                         cancelled=self._cancel_event.is_set,
                     )
+                    # Always keep the extracted text, even if we can't translate it.
                     ocr_dest = src.with_name(f"{src.stem}.ocr.txt")
                     ocr_dest.write_text(text, encoding="utf-8")
+                    extracted_count += 1
+                    self._set_translate_status(f"Extracted {ocr_dest.name}")
                     dest = src.with_name(f"{src.stem}.en.txt")
                 else:
                     text = src.read_text(encoding="utf-8", errors="replace")
@@ -1065,10 +1066,18 @@ class WhisprApp:
 
                 from_code = self._resolve_from_code(text)
                 if not from_code:
-                    self._set_translate_status(
-                        f"Skipped {src.name}: couldn't determine its language."
-                    )
-                    skipped += 1
+                    # OCR files already produced .ocr.txt; text files yield nothing.
+                    if is_ocr:
+                        self._set_translate_status(
+                            f"{src.name}: extracted text only (no foreign language "
+                            "to translate)."
+                        )
+                    else:
+                        self._set_translate_status(
+                            f"Skipped {src.name}: couldn't determine its language."
+                        )
+                        skipped += 1
+                    self._set_translate_progress((index + 1) / total)
                     continue
                 self._set_translate_status(f"Translating {src.name}…")
                 translated = translate_text(
@@ -1078,12 +1087,17 @@ class WhisprApp:
                     cancelled=self._cancel_event.is_set,
                 )
                 dest.write_text(translated, encoding="utf-8")
-                written += 1
+                translated_count += 1
                 self._set_translate_status(f"Wrote {dest.name}")
                 self._set_translate_progress((index + 1) / total)
-            final = f"Done — wrote {written} file(s)"
+            parts = []
+            if translated_count:
+                parts.append(f"translated {translated_count}")
+            if extracted_count:
+                parts.append(f"extracted {extracted_count}")
             if skipped:
-                final += f", skipped {skipped}"
+                parts.append(f"skipped {skipped}")
+            final = "Done — " + (", ".join(parts) if parts else "nothing to do")
         except CancelledError:
             final = "Cancelled"
         except Exception as exc:  # noqa: BLE001
@@ -1102,11 +1116,6 @@ class WhisprApp:
     def _extract_to_paste(self) -> None:
         """OCR a single image/PDF into the paste box for review before translating."""
         lang = self._ocr_lang_code()
-        if lang is None:
-            self.translate_status_var.set(
-                "Pick a specific 'From' language (not Auto-detect) to OCR a file."
-            )
-            return
         patterns = " ".join(f"*{ext}" for ext in OCR_EXTENSIONS)
         path = filedialog.askopenfilename(
             title="Choose an image or PDF",
@@ -1173,11 +1182,6 @@ class WhisprApp:
         path = paths[0]
         if is_ocr_file(path):
             lang = self._ocr_lang_code()
-            if lang is None:
-                self.translate_status_var.set(
-                    "Pick a specific 'From' language (not Auto-detect) to OCR a file."
-                )
-                return
             self._cancel_event.clear()
             threading.Thread(
                 target=self._extract_to_paste_worker, args=(path, lang), daemon=True
