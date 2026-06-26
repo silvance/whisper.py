@@ -31,7 +31,9 @@ from .transcription import (
     AUDIO_EXTENSIONS,
     MODEL_SIZES,
     CancelledError,
+    Segment,
     TranscriptionResult,
+    Word,
     convert_to_wav,
     is_video,
     transcribe_audio,
@@ -377,9 +379,9 @@ class WhisprApp:
             spk_frame,
             text=(
                 "Tip: if you know how many people are in the recording, enter it "
-                "above and (optionally) name them. In the Transcript, click any "
-                "[speaker] tag to rename that speaker everywhere or move a single "
-                "line to a different speaker."
+                "above and (optionally) name them. In the Transcript, click a "
+                "[speaker] tag to rename or move the whole line, or click a single "
+                "word to move just that word (or from it onward) to another speaker."
             ),
             wraplength=420,
             justify="left",
@@ -1109,7 +1111,29 @@ class WhisprApp:
                     )
                     self.output.tag_bind(line_tag, "<Leave>", self._cursor_handler(""))
                     self.output.insert("end", f"[{name}]", (spk_tag, line_tag))
-                    self.output.insert("end", f" {segment.text}{line_end}")
+                    if segment.words:
+                        # Render words individually so a single misattributed
+                        # word can be clicked and moved to another speaker.
+                        for w_index, word in enumerate(segment.words):
+                            text = word.word
+                            if w_index == 0 and not text[:1].isspace():
+                                text = " " + text
+                            wtag = f"word::{index}::{w_index}"
+                            self.output.tag_bind(
+                                wtag,
+                                "<Button-1>",
+                                self._word_menu_handler(index, w_index),
+                            )
+                            self.output.tag_bind(
+                                wtag, "<Enter>", self._cursor_handler("hand2")
+                            )
+                            self.output.tag_bind(
+                                wtag, "<Leave>", self._cursor_handler("")
+                            )
+                            self.output.insert("end", text, (wtag,))
+                        self.output.insert("end", line_end)
+                    else:
+                        self.output.insert("end", f" {segment.text}{line_end}")
             self.output.configure(state="disabled")
 
         self.root.after(0, _do)
@@ -1175,6 +1199,111 @@ class WhisprApp:
         self._render_transcript()
         if self._result_source and self._result_outdir:
             self._save_outputs(result, self._result_source, self._result_outdir)
+
+    def _word_menu_handler(
+        self, seg_index: int, word_index: int
+    ) -> Callable[[object], None]:
+        def handler(event: object) -> None:
+            result = self._result
+            if result is None or seg_index >= len(result.segments):
+                return
+            segment = result.segments[seg_index]
+            if word_index >= len(segment.words):
+                return
+            current = segment.speaker or "UNKNOWN"
+            word_text = segment.words[word_index].word.strip()
+            menu = tk.Menu(self.root, tearoff=0)
+            # Move just this word (splits the segment around it).
+            for sid in self._ordered_speaker_ids():
+                if sid == current:
+                    continue
+                name = self._speaker_names.get(sid, sid)
+                menu.add_command(
+                    label=f"Move “{word_text}” → {name}",
+                    command=self._word_command(seg_index, word_index, sid, False),
+                )
+            menu.add_separator()
+            # Reassign from this word to the end of the line (the common case: a
+            # new speaker's turn actually starts mid-line).
+            for sid in self._ordered_speaker_ids():
+                if sid == current:
+                    continue
+                name = self._speaker_names.get(sid, sid)
+                menu.add_command(
+                    label=f"From “{word_text}” onward → {name}",
+                    command=self._word_command(seg_index, word_index, sid, True),
+                )
+            try:
+                menu.tk_popup(event.x_root, event.y_root)  # type: ignore[attr-defined]
+            finally:
+                menu.grab_release()
+
+        return handler
+
+    def _word_command(
+        self, seg_index: int, word_index: int, speaker_id: str, to_end: bool
+    ) -> Callable[[], None]:
+        def command() -> None:
+            self._reassign_word_span(seg_index, word_index, speaker_id, to_end)
+
+        return command
+
+    def _reassign_word_span(
+        self, seg_index: int, word_index: int, speaker_id: str, to_end: bool
+    ) -> None:
+        result = self._result
+        if result is None or seg_index >= len(result.segments):
+            return
+        segment = result.segments[seg_index]
+        words = segment.words
+        if word_index >= len(words):
+            return
+        end = len(words) if to_end else word_index + 1
+        before, middle, after = (
+            words[:word_index],
+            words[word_index:end],
+            words[end:],
+        )
+
+        def _make(chunk: List[Word], spk: Optional[str]) -> Optional[Segment]:
+            if not chunk:
+                return None
+            return Segment(
+                start=chunk[0].start,
+                end=chunk[-1].end,
+                text="".join(w.word for w in chunk).strip(),
+                speaker=spk,
+                words=list(chunk),
+            )
+
+        parts = [
+            seg
+            for seg in (
+                _make(before, segment.speaker),
+                _make(middle, speaker_id),
+                _make(after, segment.speaker),
+            )
+            if seg is not None
+        ]
+        result.segments[seg_index : seg_index + 1] = parts
+        result.segments = self._coalesce_segments(result.segments)
+        self._render_transcript()
+        if self._result_source and self._result_outdir:
+            self._save_outputs(result, self._result_source, self._result_outdir)
+
+    @staticmethod
+    def _coalesce_segments(segments: List[Segment]) -> List[Segment]:
+        """Merge adjacent segments that share a speaker (rebuilding text/words)."""
+        out: List[Segment] = []
+        for seg in segments:
+            if out and out[-1].speaker == seg.speaker and out[-1].words and seg.words:
+                prev = out[-1]
+                prev.words = prev.words + seg.words
+                prev.end = seg.end
+                prev.text = "".join(w.word for w in prev.words).strip()
+            else:
+                out.append(seg)
+        return out
 
     def _apply_preset_speaker_names(self) -> None:
         """Seed display names from the Speaker N fields onto the diarized result.
