@@ -35,6 +35,7 @@ class TranscriptView:
         blank_lines_var: tk.BooleanVar,
         on_change: Callable[[], None],
         highlight_var: Optional[tk.BooleanVar] = None,
+        on_play: Optional[Callable[[float, float], None]] = None,
     ) -> None:
         self.root = root
         self.blank_lines_var = blank_lines_var
@@ -42,6 +43,8 @@ class TranscriptView:
         self.highlight_var = highlight_var
         # Called after an edit mutates the result, so the owner can re-save outputs.
         self._on_change = on_change
+        # Play a [start, end] span of the source audio; None disables playback.
+        self._on_play = on_play
         self._result: Optional[TranscriptionResult] = None
         self._speaker_names: Dict[str, str] = {}
         self.widget = ScrolledText(
@@ -107,6 +110,12 @@ class TranscriptView:
                         line_tag, "<Enter>", self._cursor_handler("hand2")
                     )
                     self.widget.tag_bind(line_tag, "<Leave>", self._cursor_handler(""))
+                    if self._on_play is not None:
+                        self.widget.tag_bind(
+                            line_tag,
+                            "<Control-Button-1>",
+                            self._play_line_handler(index),
+                        )
                     self.widget.insert("end", f"[{name}]", (spk_tag, line_tag))
                     if segment.words:
                         # Render words individually so a single misattributed word
@@ -127,6 +136,12 @@ class TranscriptView:
                             self.widget.tag_bind(
                                 wtag, "<Leave>", self._cursor_handler("")
                             )
+                            if self._on_play is not None:
+                                self.widget.tag_bind(
+                                    wtag,
+                                    "<Control-Button-1>",
+                                    self._play_word_handler(index, w_index),
+                                )
                             wtags: tuple[str, ...] = (wtag,)
                             if highlight and is_low_confidence_word(word):
                                 wtags = (wtag, "lowconf")
@@ -171,6 +186,12 @@ class TranscriptView:
                 return
             current = result.segments[index].speaker or "UNKNOWN"
             menu = tk.Menu(self.root, tearoff=0)
+            if self._on_play is not None:
+                menu.add_command(
+                    label="▶ Play this line",
+                    command=lambda: self._play_line(index),
+                )
+                menu.add_separator()
             # Reassign just this line to the correct speaker - the fix for the
             # boundary/overlap errors diarization can't get right on its own.
             for sid in self._ordered_speaker_ids():
@@ -206,6 +227,40 @@ class TranscriptView:
         result.segments[index].speaker = speaker_id
         self._changed()
 
+    # -- Playback ----------------------------------------------------------
+
+    def _play_line_handler(self, index: int) -> Callable[[object], str]:
+        def handler(_event: object) -> str:
+            self._play_line(index)
+            return "break"  # don't also fire the speaker-menu single-click
+
+        return handler
+
+    def _play_word_handler(
+        self, seg_index: int, word_index: int
+    ) -> Callable[[object], str]:
+        def handler(_event: object) -> str:
+            self._play_from_word(seg_index, word_index)
+            return "break"
+
+        return handler
+
+    def _play_line(self, index: int) -> None:
+        result = self._result
+        if self._on_play is None or result is None or index >= len(result.segments):
+            return
+        segment = result.segments[index]
+        self._on_play(segment.start, segment.end)
+
+    def _play_from_word(self, seg_index: int, word_index: int) -> None:
+        result = self._result
+        if self._on_play is None or result is None or seg_index >= len(result.segments):
+            return
+        segment = result.segments[seg_index]
+        if word_index >= len(segment.words):
+            return
+        self._on_play(segment.words[word_index].start, segment.end)
+
     def _word_menu_handler(
         self, seg_index: int, word_index: int
     ) -> Callable[[object], None]:
@@ -219,6 +274,12 @@ class TranscriptView:
             current = segment.speaker or "UNKNOWN"
             word_text = segment.words[word_index].word.strip()
             menu = tk.Menu(self.root, tearoff=0)
+            if self._on_play is not None:
+                menu.add_command(
+                    label="▶ Play from here",
+                    command=lambda: self._play_from_word(seg_index, word_index),
+                )
+                menu.add_separator()
             # Move just this word (splits the segment around it).
             for sid in self._ordered_speaker_ids():
                 if sid == current:

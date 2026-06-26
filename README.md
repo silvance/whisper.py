@@ -200,6 +200,11 @@ parts the model was unsure about (per-word when available, otherwise per
 segment), so an analyst can jump straight to what needs verifying on low-quality
 audio.
 
+**Re-listen to any line.** **Ctrl-click** a transcript line (or a single word) to
+play just that span of the source audio — or use **▶ Play this line** in the
+right-click menu and **⏹ Stop audio**. The segment is extracted on the fly with
+the bundled ffmpeg and played with the OS's built-in audio, so it works offline.
+
 When **Convert video to WAV first (ffmpeg)** is enabled (the default), choosing a
 video file (`.mp4`, `.mkv`, `.mov`, `.avi`, `.webm`) extracts its audio to a 16 kHz
 mono WAV with [`ffmpeg`](https://ffmpeg.org/) before transcribing. If an output

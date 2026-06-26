@@ -18,6 +18,7 @@ from typing import Callable, Dict, List, Optional
 
 from ..diarization import assign_speakers, diarize
 from ..export import transcript_to_docx
+from ..playback import PlaybackError, SegmentPlayer, playback_available
 from ..resources import bundled_models
 from ..transcription import (
     AUDIO_EXTENSIONS,
@@ -127,6 +128,11 @@ class TranscribeTab:
         self._result_source: Optional[Path] = None
         self._result_outdir: Optional[Path] = None
         self._speaker_names: Dict[str, str] = {}
+
+        # Offline segment playback (click a line to re-listen). Disabled cleanly
+        # when neither ffmpeg nor an OS player is available.
+        self._player = SegmentPlayer()
+        self._playback_ok = playback_available()
 
         self._build()
 
@@ -348,6 +354,7 @@ class TranscribeTab:
             self.blank_lines_var,
             self._save_outputs_if_possible,
             highlight_var=self.highlight_conf_var,
+            on_play=self._play_segment if self._playback_ok else None,
         )
         self.status = ScrolledText(
             tabs, wrap="word", state="disabled", height=14, font="TkFixedFont"
@@ -364,6 +371,15 @@ class TranscribeTab:
         ttk.Button(
             export_row, text="Save as Word…", command=self._save_transcript_docx
         ).pack(side="left", padx=(8, 0))
+        if self._playback_ok:
+            ttk.Button(export_row, text="⏹ Stop audio", command=self._stop_audio).pack(
+                side="left", padx=(8, 0)
+            )
+            ttk.Label(
+                export_row,
+                text="Ctrl-click a line (or a word) to play its audio.",
+                font=("", 8),
+            ).pack(side="left", padx=(10, 0))
 
         # Initialise the enabled/disabled state of dependent fields.
         self._update_output_state()
@@ -747,6 +763,36 @@ class TranscribeTab:
         if paths:
             self.input_file_var.set(str(paths[0]))
             self.progress_label_var.set(f"Loaded {paths[0].name}")
+
+    # -- Audio playback ----------------------------------------------------
+
+    def _play_segment(self, start: float, end: float) -> None:
+        """Play the source audio between ``start`` and ``end`` (off the UI thread)."""
+        source = self._result_source
+        if source is None:
+            self.progress_label_var.set("Run a transcription first.")
+            return
+
+        def _worker() -> None:
+            try:
+                self._player.play_segment(source, start, end)
+                self.progress_label_var.set(
+                    f"Playing {self._clock(start)}–{self._clock(end)}…"
+                )
+            except PlaybackError as exc:
+                self.progress_label_var.set(friendly_error(exc))
+
+        # ffmpeg extraction is quick but still I/O; keep the click responsive.
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _stop_audio(self) -> None:
+        self._player.stop()
+        self.progress_label_var.set("Stopped.")
+
+    @staticmethod
+    def _clock(seconds: float) -> str:
+        seconds = max(0, int(seconds))
+        return f"{seconds // 60}:{seconds % 60:02d}"
 
     def _apply_preset_speaker_names(self) -> None:
         """Seed display names from the Speaker N fields onto the diarized result.
