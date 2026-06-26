@@ -218,8 +218,7 @@ class WhisprApp:
             transcribe_root = ttk.Frame(self.root)
             transcribe_root.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
-        container = ttk.Frame(transcribe_root, padding=12)
-        container.pack(fill="both", expand=True)
+        transcribe_canvas, container = self._scrollable_body(transcribe_root)
 
         # Collapsible settings sections (hidden as a group when a run starts).
         self._setting_sections: List[CollapsibleSection] = []
@@ -422,18 +421,80 @@ class WhisprApp:
         # Initialise the enabled/disabled state of dependent fields.
         self._update_output_state()
         self._update_speaker_state()
+        # Mouse-wheel scrolls the page (the scrollbar always works regardless).
+        self._bind_wheel(transcribe_canvas, container)
 
         # --- Translate tab (only when translation is available) ------------
         if self._show_translate:
             self._build_translate_tab()
+
+    def _scrollable_body(self, parent: tk.Misc) -> tuple[tk.Canvas, ttk.Frame]:
+        """Wrap a scrollable region in ``parent`` and return ``(canvas, inner)``.
+
+        Settings sections can stack taller than the window (especially on small
+        screens), which previously pushed the Run button and transcript off the
+        bottom with no way to reach them. This puts everything in a vertically
+        scrollable canvas: the scrollbar always works, and the mouse wheel is
+        wired up by :meth:`_bind_wheel`.
+        """
+        canvas = tk.Canvas(parent, highlightthickness=0)
+        vsb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        inner = ttk.Frame(canvas, padding=12)
+        window = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _sync() -> None:
+            # Match the inner frame's width to the canvas, and let it stretch to
+            # fill the viewport when the content is shorter than it (so widgets
+            # that expand look right) while still allowing it to overflow+scroll.
+            canvas.itemconfigure(window, width=canvas.winfo_width())
+            canvas.itemconfigure(
+                window, height=max(inner.winfo_reqheight(), canvas.winfo_height())
+            )
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        # Re-sync both when the viewport resizes and when the content grows or
+        # shrinks (e.g. as settings sections are expanded/collapsed).
+        canvas.bind("<Configure>", lambda _e: _sync())
+        inner.bind("<Configure>", lambda _e: _sync())
+        return canvas, inner
+
+    def _bind_wheel(self, canvas: tk.Canvas, root_widget: tk.Misc) -> None:
+        """Make the mouse wheel scroll ``canvas`` while over its content.
+
+        Bound recursively to every widget except ``tk.Text`` (and its
+        ``ScrolledText`` subclass), which keep their own native scrolling so the
+        transcript/status panes don't fight the page scroll.
+        """
+
+        def _on_wheel(event: "tk.Event[tk.Misc]") -> None:
+            if getattr(event, "num", None) == 4:
+                canvas.yview_scroll(-1, "units")
+            elif getattr(event, "num", None) == 5:
+                canvas.yview_scroll(1, "units")
+            else:
+                canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+        def _bind(widget: tk.Misc) -> None:
+            if not isinstance(widget, tk.Text):
+                widget.bind("<MouseWheel>", _on_wheel, add="+")  # Windows / macOS
+                widget.bind("<Button-4>", _on_wheel, add="+")  # Linux scroll up
+                widget.bind("<Button-5>", _on_wheel, add="+")  # Linux scroll down
+            for child in widget.winfo_children():
+                _bind(child)
+
+        _bind(canvas)
+        _bind(root_widget)
 
     def _build_translate_tab(self) -> None:
         """Build the text-translation tab (paste box + batch files, foreign->EN)."""
         assert self.main_nb is not None  # only called when the notebook exists
         tab = ttk.Frame(self.main_nb)
         self.main_nb.add(tab, text="Translate")
-        container = ttk.Frame(tab, padding=12)
-        container.pack(fill="both", expand=True)
+        translate_canvas, container = self._scrollable_body(tab)
 
         # --- Languages -----------------------------------------------------
         lang_frame = ttk.LabelFrame(container, text="Languages", padding=10)
@@ -526,6 +587,7 @@ class WhisprApp:
         )
 
         self._refresh_languages()
+        self._bind_wheel(translate_canvas, container)
 
     def _toggle_all_settings(self) -> None:
         expand = not any(section.expanded for section in self._setting_sections)
