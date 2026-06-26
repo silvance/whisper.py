@@ -14,7 +14,11 @@ from tkinter import simpledialog
 from tkinter.scrolledtext import ScrolledText
 from typing import Callable, Dict, List, Optional
 
-from ..editing import coalesce_segments, split_segment_on_word
+from ..editing import (
+    coalesce_segments,
+    split_segment_on_span,
+    split_segment_on_word,
+)
 from ..transcription import (
     TranscriptionResult,
     is_low_confidence_segment,
@@ -50,6 +54,11 @@ class TranscriptView:
         self.widget = ScrolledText(
             parent, wrap="word", state="disabled", height=14, font="TkFixedFont"
         )
+        # Right-click: move a highlighted span of words to another speaker (for the
+        # case where a sentence mid-line belongs to someone else). Button-3 on
+        # Windows/Linux, Button-2 on macOS.
+        self.widget.bind("<Button-3>", self._selection_menu)
+        self.widget.bind("<Button-2>", self._selection_menu)
 
     def set_result(
         self, result: Optional[TranscriptionResult], speaker_names: Dict[str, str]
@@ -363,6 +372,86 @@ class TranscriptView:
         if word_index >= len(segment.words):
             return
         parts = split_segment_on_word(segment, word_index, speaker_id, to_end=to_end)
+        result.segments[seg_index : seg_index + 1] = parts
+        result.segments = coalesce_segments(result.segments)
+        self._changed()
+
+    # -- Move a highlighted span of words ----------------------------------
+
+    def _selected_word_span(self) -> "Optional[tuple[int, int, int]]":
+        """Map the current text selection to ``(seg_index, first_word, last_word)``.
+
+        Returns ``None`` unless the selection covers a contiguous run of words
+        within a single segment (the supported case: a sentence mid-line).
+        """
+        result = self._result
+        if result is None:
+            return None
+        try:
+            sel_first = self.widget.index("sel.first")
+            sel_last = self.widget.index("sel.last")
+        except tk.TclError:
+            return None  # nothing selected
+        hits: List[tuple[int, int]] = []
+        for s_idx, segment in enumerate(result.segments):
+            for w_idx in range(len(segment.words)):
+                ranges = self.widget.tag_ranges(f"word::{s_idx}::{w_idx}")
+                if not ranges:
+                    continue
+                w_start, w_end = str(ranges[0]), str(ranges[1])
+                # Overlap test between the word's range and the selection.
+                if self.widget.compare(w_start, "<", sel_last) and self.widget.compare(
+                    w_end, ">", sel_first
+                ):
+                    hits.append((s_idx, w_idx))
+        if not hits:
+            return None
+        if len({s for s, _ in hits}) != 1:
+            return None  # selection spans multiple segments - not supported
+        s_idx = hits[0][0]
+        w_idxs = sorted(w for _, w in hits)
+        if w_idxs != list(range(w_idxs[0], w_idxs[-1] + 1)):
+            return None  # non-contiguous (shouldn't happen for a normal drag)
+        return (s_idx, w_idxs[0], w_idxs[-1])
+
+    def _selection_menu(self, event: object) -> None:
+        result = self._result
+        span = self._selected_word_span()
+        if result is None or span is None:
+            return
+        seg_index, first_word, last_word = span
+        current = result.segments[seg_index].speaker or "UNKNOWN"
+        targets = [sid for sid in self._ordered_speaker_ids() if sid != current]
+        if not targets:
+            return
+        menu = tk.Menu(self.root, tearoff=0)
+        for sid in targets:
+            name = self._speaker_names.get(sid, sid)
+            menu.add_command(
+                label=f"Move selection → {name}",
+                command=self._span_command(seg_index, first_word, last_word, sid),
+            )
+        try:
+            menu.tk_popup(event.x_root, event.y_root)  # type: ignore[attr-defined]
+        finally:
+            menu.grab_release()
+
+    def _span_command(
+        self, seg_index: int, first_word: int, last_word: int, speaker_id: str
+    ) -> Callable[[], None]:
+        def command() -> None:
+            self._reassign_span(seg_index, first_word, last_word, speaker_id)
+
+        return command
+
+    def _reassign_span(
+        self, seg_index: int, first_word: int, last_word: int, speaker_id: str
+    ) -> None:
+        result = self._result
+        if result is None or seg_index >= len(result.segments):
+            return
+        segment = result.segments[seg_index]
+        parts = split_segment_on_span(segment, first_word, last_word, speaker_id)
         result.segments[seg_index : seg_index + 1] = parts
         result.segments = coalesce_segments(result.segments)
         self._changed()

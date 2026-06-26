@@ -26,6 +26,39 @@ def _segment_from_words(words: List[Word], speaker: Optional[str]) -> Optional[S
     )
 
 
+def split_segment_on_span(
+    segment: Segment,
+    start_index: int,
+    end_index: int,
+    speaker_id: str,
+) -> List[Segment]:
+    """Reassign the word span ``[start_index, end_index]`` to another speaker.
+
+    Splits ``segment`` into up to three parts - the words before the span
+    (original speaker), the span itself (``speaker_id``), and the words after it
+    (original speaker). Empty parts are dropped. Returns the segment unchanged
+    when it has no word timestamps or the indices are out of range/inverted.
+    """
+    words = segment.words
+    if (
+        not words
+        or start_index < 0
+        or end_index >= len(words)
+        or start_index > end_index
+    ):
+        return [segment]
+    parts = [
+        seg
+        for seg in (
+            _segment_from_words(words[:start_index], segment.speaker),
+            _segment_from_words(words[start_index : end_index + 1], speaker_id),
+            _segment_from_words(words[end_index + 1 :], segment.speaker),
+        )
+        if seg is not None
+    ]
+    return parts
+
+
 def split_segment_on_word(
     segment: Segment,
     word_index: int,
@@ -35,26 +68,14 @@ def split_segment_on_word(
 ) -> List[Segment]:
     """Reassign a word (or from it to the line's end) to another speaker.
 
-    Splits ``segment`` around the target word into up to three parts - the words
-    before it (original speaker), the moved span (``speaker_id``), and the words
-    after it (original speaker). ``to_end`` moves from ``word_index`` to the end of
-    the line; otherwise only the single word moves. Empty parts are dropped. When
-    the segment has no word timestamps, the segment is returned unchanged.
+    ``to_end`` moves from ``word_index`` to the end of the line; otherwise only
+    the single word moves. A thin wrapper over :func:`split_segment_on_span`.
     """
     words = segment.words
     if not words or word_index >= len(words):
         return [segment]
-    end = len(words) if to_end else word_index + 1
-    parts = [
-        seg
-        for seg in (
-            _segment_from_words(words[:word_index], segment.speaker),
-            _segment_from_words(words[word_index:end], speaker_id),
-            _segment_from_words(words[end:], segment.speaker),
-        )
-        if seg is not None
-    ]
-    return parts
+    end_index = len(words) - 1 if to_end else word_index
+    return split_segment_on_span(segment, word_index, end_index, speaker_id)
 
 
 def coalesce_segments(segments: List[Segment]) -> List[Segment]:
