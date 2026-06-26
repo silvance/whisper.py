@@ -1,4 +1,5 @@
 import importlib.util
+import os
 
 import pytest
 
@@ -49,6 +50,19 @@ def test_file_type_predicates(name, image, pdf, ocrable):
 def test_ocr_available_false_without_binary(monkeypatch):
     monkeypatch.setattr(ocr, "find_tesseract", lambda: None)
     assert ocr_available() is False
+
+
+def test_ensure_tessdata_prefix_sets_unquoted_path(tmp_path, monkeypatch):
+    # Regression: the tessdata dir must reach Tesseract via TESSDATA_PREFIX with no
+    # surrounding quotes (the old --tessdata-dir config string embedded quotes in
+    # the path, so Tesseract failed to open "<dir>"/eng.traineddata).
+    tessdata = tmp_path / "tesseract" / "tessdata"
+    tessdata.mkdir(parents=True)
+    monkeypatch.setattr(ocr, "bundled_tessdata_dir", lambda: tessdata)
+    monkeypatch.delenv("TESSDATA_PREFIX", raising=False)
+    ocr._ensure_tessdata_prefix()
+    assert os.environ["TESSDATA_PREFIX"] == str(tessdata)
+    assert '"' not in os.environ["TESSDATA_PREFIX"]
 
 
 def test_extract_text_missing_file(tmp_path):

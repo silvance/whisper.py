@@ -23,6 +23,7 @@ source it uses a system Tesseract on PATH.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional, Union
 
@@ -136,18 +137,25 @@ def _configure_pytesseract():
     return pytesseract
 
 
-def _tessdata_config() -> str:
-    """Tesseract CLI config pointing at bundled tessdata, if present."""
+def _ensure_tessdata_prefix() -> None:
+    """Point Tesseract at the bundled tessdata via ``TESSDATA_PREFIX``.
+
+    Passing ``--tessdata-dir`` through pytesseract's ``config`` string is
+    unreliable: the value is not shell-parsed, so quotes/spaces end up embedded in
+    the path (Tesseract then fails with ``Error opening data file "...tessdata"/
+    eng.traineddata``). The env var is the robust mechanism and is exactly what
+    Tesseract 4/5 expect - set to the ``tessdata`` directory itself.
+    """
     data = bundled_tessdata_dir()
-    return f'--tessdata-dir "{data}"' if data is not None else ""
+    if data is not None:
+        os.environ["TESSDATA_PREFIX"] = str(data)
 
 
 def _ocr_image(image, lang: str) -> str:
     """OCR a Pillow image with Tesseract and return stripped text."""
     pytesseract = _configure_pytesseract()
-    return pytesseract.image_to_string(
-        image, lang=lang, config=_tessdata_config()
-    ).strip()
+    _ensure_tessdata_prefix()
+    return pytesseract.image_to_string(image, lang=lang).strip()
 
 
 def _extract_image_file(path: Path, lang: str) -> str:
