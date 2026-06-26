@@ -87,7 +87,28 @@ class TranscriptView:
                     for index, segment in enumerate(result.segments):
                         if index:
                             self.widget.insert("end", line_end)
-                        self.widget.insert("end", segment.text, _lowconf_seg(segment))
+                        line_tag = f"line::{index}"
+                        tags = (line_tag, *_lowconf_seg(segment))
+                        # Ctrl-click (or the menu) plays this line - works the same
+                        # whether or not the transcript is diarized.
+                        if self._on_play is not None:
+                            self.widget.tag_bind(
+                                line_tag,
+                                "<Button-1>",
+                                self._line_menu_handler(index),
+                            )
+                            self.widget.tag_bind(
+                                line_tag,
+                                "<Control-Button-1>",
+                                self._play_line_handler(index),
+                            )
+                            self.widget.tag_bind(
+                                line_tag, "<Enter>", self._cursor_handler("hand2")
+                            )
+                            self.widget.tag_bind(
+                                line_tag, "<Leave>", self._cursor_handler("")
+                            )
+                        self.widget.insert("end", segment.text, tags)
                     self.widget.insert("end", "\n")
                 else:
                     self.widget.insert("end", result.text + "\n")
@@ -228,6 +249,23 @@ class TranscriptView:
         self._changed()
 
     # -- Playback ----------------------------------------------------------
+
+    def _line_menu_handler(self, index: int) -> Callable[[object], None]:
+        """Single-click menu for a non-diarized line (just Play)."""
+
+        def handler(event: object) -> None:
+            if self._on_play is None:
+                return
+            menu = tk.Menu(self.root, tearoff=0)
+            menu.add_command(
+                label="▶ Play this line", command=lambda: self._play_line(index)
+            )
+            try:
+                menu.tk_popup(event.x_root, event.y_root)  # type: ignore[attr-defined]
+            finally:
+                menu.grab_release()
+
+        return handler
 
     def _play_line_handler(self, index: int) -> Callable[[object], str]:
         def handler(_event: object) -> str:
