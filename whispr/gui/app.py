@@ -20,6 +20,7 @@ from ..resources import (
     configure_offline_ocr,
     configure_offline_translation,
 )
+from ..settings import load_settings, save_settings
 from .transcribe_tab import TranscribeTab
 from .translate_tab import TranslateTab
 
@@ -51,7 +52,11 @@ class WhisprApp:
         # job (only one runs at a time).
         self.cancel_event = threading.Event()
         self._tabs: list = []
+        # Remembered preferences from the last session (best-effort).
+        self._settings = load_settings()
         self._build_ui()
+        # Save preferences on close.
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self) -> None:
         self.root.minsize(680, 480)
@@ -99,6 +104,7 @@ class WhisprApp:
             self.cancel,
             dnd_ok=self._dnd_ok,
         )
+        self.transcribe.apply_settings(self._settings.get("transcribe", {}))
         self._tabs.append(self.transcribe)
 
         if show_translate:
@@ -121,6 +127,14 @@ class WhisprApp:
         self.cancel_event.set()
         for tab in self._tabs:
             tab.notify_cancelling()
+
+    def _on_close(self) -> None:
+        """Persist preferences, then close the window."""
+        try:
+            save_settings({"transcribe": self.transcribe.get_settings()})
+        except Exception:  # noqa: BLE001 - never block closing on a save failure
+            pass
+        self.root.destroy()
 
 
 def _enable_drag_and_drop(root: tk.Misc) -> bool:
