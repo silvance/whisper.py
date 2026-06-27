@@ -210,6 +210,11 @@ work, so **Save project…** writes the result, your speaker names and correctio
 and the source path to a `.whispr.json` file; **Open project…** loads it back so
 you can keep editing (and re-listening) in a later session.
 
+**Batch.** Add several recordings under **Batch (optional)** (or drop multiple
+files onto the window) and **Run** transcribes them all in sequence. Each file's
+output is written to the chosen output folder, or beside the source when none is
+set; the last file stays open in the transcript for review.
+
 When **Convert video to WAV first (ffmpeg)** is enabled (the default), choosing a
 video file (`.mp4`, `.mkv`, `.mov`, `.avi`, `.webm`) extracts its audio to a 16 kHz
 mono WAV with [`ffmpeg`](https://ffmpeg.org/) before transcribing. If an output
