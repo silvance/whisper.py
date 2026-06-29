@@ -975,3 +975,41 @@ class TranscribeTab:
             if name:
                 names[sid] = name
         return names
+
+    # -- Persisted preferences ---------------------------------------------
+
+    def _settings_vars(self) -> "Dict[str, tk.Variable]":
+        """The settings persisted across launches (recording-specific fields like
+        the input file, batch queue and custom words are intentionally excluded)."""
+        return {
+            "model": self.model_var,
+            "language": self.language_var,
+            "task": self.task_var,
+            "vad": self.vad_var,
+            "convert_video": self.convert_video_var,
+            "srt": self.srt_var,
+            "blank_lines": self.blank_lines_var,
+            "highlight_conf": self.highlight_conf_var,
+            "diarize": self.diarize_var,
+            "engine": self.engine_var,
+            "num_speakers": self.num_speakers_var,
+            "sensitivity": self.sensitivity_var,
+            "write_output": self.write_output_var,
+            "output_dir": self.output_dir_var,
+        }
+
+    def get_settings(self) -> Dict[str, object]:
+        return {key: var.get() for key, var in self._settings_vars().items()}
+
+    def apply_settings(self, data: Dict[str, object]) -> None:
+        if not data:
+            return
+        for key, var in self._settings_vars().items():
+            if key in data:
+                try:
+                    var.set(data[key])
+                except Exception:  # noqa: BLE001 - ignore a stale/invalid value
+                    pass
+        # Reflect any changes to the enable/disable + speaker-name state.
+        self._update_output_state()
+        self._update_speaker_state()
