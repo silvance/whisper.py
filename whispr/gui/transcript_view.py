@@ -101,9 +101,11 @@ class TranscriptView:
                         # Ctrl-click (or the menu) plays this line - works the same
                         # whether or not the transcript is diarized.
                         if self._on_play is not None:
+                            # ButtonRelease (not press) so a click-drag can select
+                            # words instead of immediately popping the menu.
                             self.widget.tag_bind(
                                 line_tag,
-                                "<Button-1>",
+                                "<ButtonRelease-1>",
                                 self._line_menu_handler(index),
                             )
                             self.widget.tag_bind(
@@ -132,9 +134,10 @@ class TranscriptView:
                         bound.add(sid)
                         self.widget.tag_config(spk_tag, underline=True)
                     # Bind on a per-line tag so a click knows which segment it hit:
-                    # the menu can both fix this one line and rename globally.
+                    # the menu can both fix this one line and rename globally. On
+                    # ButtonRelease so a click-drag selects words instead.
                     self.widget.tag_bind(
-                        line_tag, "<Button-1>", self._speaker_menu_handler(index)
+                        line_tag, "<ButtonRelease-1>", self._speaker_menu_handler(index)
                     )
                     self.widget.tag_bind(
                         line_tag, "<Enter>", self._cursor_handler("hand2")
@@ -157,7 +160,7 @@ class TranscriptView:
                             wtag = f"word::{index}::{w_index}"
                             self.widget.tag_bind(
                                 wtag,
-                                "<Button-1>",
+                                "<ButtonRelease-1>",
                                 self._word_menu_handler(index, w_index),
                             )
                             self.widget.tag_bind(
@@ -211,6 +214,8 @@ class TranscriptView:
 
     def _speaker_menu_handler(self, index: int) -> Callable[[object], None]:
         def handler(event: object) -> None:
+            if self._has_selection():
+                return  # a drag-select; leave it for right-click "Move selection"
             result = self._result
             if result is None or index >= len(result.segments):
                 return
@@ -263,7 +268,7 @@ class TranscriptView:
         """Single-click menu for a non-diarized line (just Play)."""
 
         def handler(event: object) -> None:
-            if self._on_play is None:
+            if self._on_play is None or self._has_selection():
                 return
             menu = tk.Menu(self.root, tearoff=0)
             menu.add_command(
@@ -312,6 +317,8 @@ class TranscriptView:
         self, seg_index: int, word_index: int
     ) -> Callable[[object], None]:
         def handler(event: object) -> None:
+            if self._has_selection():
+                return  # a drag-select; leave it for right-click "Move selection"
             result = self._result
             if result is None or seg_index >= len(result.segments):
                 return
@@ -377,6 +384,18 @@ class TranscriptView:
         self._changed()
 
     # -- Move a highlighted span of words ----------------------------------
+
+    def _has_selection(self) -> bool:
+        """True if a non-empty text selection exists (i.e. the user drag-selected).
+
+        A plain click clears the selection on press, so by ButtonRelease this is
+        only true after a drag - letting us suppress the per-word/line menu and
+        leave the selection for a right-click "Move selection".
+        """
+        try:
+            return self.widget.index("sel.first") != self.widget.index("sel.last")
+        except tk.TclError:
+            return False
 
     def _selected_word_span(self) -> "Optional[tuple[int, int, int]]":
         """Map the current text selection to ``(seg_index, first_word, last_word)``.
