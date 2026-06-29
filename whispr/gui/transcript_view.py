@@ -27,6 +27,9 @@ from ..transcription import (
 
 # Foreground colour for low-confidence text when highlighting is enabled.
 _LOW_CONFIDENCE_COLOR = "#ff7a7a"
+# Background colours for in-transcript search (all matches / the current one).
+_SEARCH_COLOR = "#5b5300"
+_SEARCH_CURRENT_COLOR = "#b58900"
 
 
 class TranscriptView:
@@ -51,6 +54,8 @@ class TranscriptView:
         self._on_play = on_play
         self._result: Optional[TranscriptionResult] = None
         self._speaker_names: Dict[str, str] = {}
+        # Where the next "find" search starts (advances as you step through hits).
+        self._find_pos = "1.0"
         self.widget = ScrolledText(
             parent, wrap="word", state="disabled", height=14, font="TkFixedFont"
         )
@@ -66,10 +71,60 @@ class TranscriptView:
         """Show ``result`` (sharing the ``speaker_names`` dict with the owner)."""
         self._result = result
         self._speaker_names = speaker_names
+        self._find_pos = "1.0"
         self.render()
 
     def get_text(self) -> str:
         return self.widget.get("1.0", "end-1c")
+
+    def find(self, query: str, *, backwards: bool = False) -> int:
+        """Highlight all case-insensitive matches of ``query`` and step to one.
+
+        Returns the total number of matches. Stepping wraps around the end. An
+        empty query just clears the highlights.
+        """
+        w = self.widget
+        w.tag_config("search", background=_SEARCH_COLOR)
+        w.tag_config("search_current", background=_SEARCH_CURRENT_COLOR)
+        w.tag_remove("search", "1.0", "end")
+        w.tag_remove("search_current", "1.0", "end")
+        if not query:
+            self._find_pos = "1.0"
+            return 0
+
+        total = 0
+        idx = "1.0"
+        while True:
+            pos = w.search(query, idx, nocase=True, stopindex="end")
+            if not pos:
+                break
+            end = f"{pos}+{len(query)}c"
+            w.tag_add("search", pos, end)
+            idx = end
+            total += 1
+        if total == 0:
+            return 0
+
+        if backwards:
+            start = self._find_pos or "end"
+            pos = w.search(query, start, nocase=True, backwards=True, stopindex="1.0")
+            if not pos:  # wrap to the end
+                pos = w.search(
+                    query, "end", nocase=True, backwards=True, stopindex="1.0"
+                )
+        else:
+            start = self._find_pos or "1.0"
+            pos = w.search(query, start, nocase=True, stopindex="end")
+            if not pos:  # wrap to the top
+                pos = w.search(query, "1.0", nocase=True, stopindex="end")
+        if pos:
+            end = f"{pos}+{len(query)}c"
+            w.tag_add("search_current", pos, end)
+            w.tag_raise("search_current")
+            w.see(pos)
+            # Advance so the next step moves past (forward) / before (back) this hit.
+            self._find_pos = pos if backwards else end
+        return total
 
     def render(self) -> None:
         """Render the current result, with clickable speaker tags / words."""

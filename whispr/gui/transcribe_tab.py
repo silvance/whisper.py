@@ -391,6 +391,26 @@ class TranscribeTab:
         tabs.add(self.transcript_view.widget, text="Transcript")
         tabs.add(self.status, text="Status")
 
+        # Find within the transcript (Enter = next, Shift+Enter = previous).
+        find_row = ttk.Frame(container)
+        find_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(find_row, text="Find").pack(side="left")
+        self.find_var = tk.StringVar()
+        find_entry = ttk.Entry(find_row, textvariable=self.find_var, width=30)
+        find_entry.pack(side="left", padx=(6, 0))
+        find_entry.bind("<Return>", lambda _e: self._find_next())
+        find_entry.bind("<Shift-Return>", lambda _e: self._find_prev())
+        ttk.Button(find_row, text="Next", command=self._find_next).pack(
+            side="left", padx=(6, 0)
+        )
+        ttk.Button(find_row, text="Prev", command=self._find_prev).pack(
+            side="left", padx=(4, 0)
+        )
+        self.find_status_var = tk.StringVar()
+        ttk.Label(find_row, textvariable=self.find_status_var).pack(
+            side="left", padx=(8, 0)
+        )
+
         # Copy / export the transcript (handy for pasting into Word).
         export_row = ttk.Frame(container)
         export_row.pack(fill="x", pady=(6, 0))
@@ -803,6 +823,21 @@ class TranscribeTab:
 
     def _rerender_transcript(self) -> None:
         self.transcript_view.render()
+
+    def _find_next(self) -> None:
+        self._find(backwards=False)
+
+    def _find_prev(self) -> None:
+        self._find(backwards=True)
+
+    def _find(self, *, backwards: bool) -> None:
+        query = self.find_var.get()
+        if not query.strip():
+            self.transcript_view.find("")
+            self.find_status_var.set("")
+            return
+        count = self.transcript_view.find(query, backwards=backwards)
+        self.find_status_var.set(f"{count} match(es)" if count else "No matches")
 
     def _copy_transcript(self) -> None:
         """Copy the rendered transcript text to the clipboard."""
