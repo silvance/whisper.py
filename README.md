@@ -338,6 +338,12 @@ single-purpose transcriber. (Even on a full bundle, set the `WHISPR_MODE=transcr
 environment variable to force the transcriber-only view — e.g. on a locked-down
 shortcut.)
 
+**Verify a bundle before handing it out.** The **Self-test…** button (top-right of
+the window) opens a report of exactly which engines, models and assets the build
+contains — transcription, both diarizers, translation packs, OCR (Tesseract +
+tessdata languages), ffmpeg, and the export/detect/playback add-ons — so you can
+confirm a bundle is complete before copying it to an air-gapped machine.
+
 Bundling **pyannote** (i.e. `both` or `pyannote`) uses gated Hugging Face models,
 so the build needs a token. Add a repository secret named **`HF_TOKEN`** (Settings
 → Secrets and variables → Actions) holding a Hugging Face token whose account has
