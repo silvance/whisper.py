@@ -220,6 +220,10 @@ folder, diarization and the other options) are saved on exit and restored next
 launch, so you don't re-set them each time. Stored in a small per-user JSON file
 (`%APPDATA%\Whispers\settings.json` on Windows).
 
+**Find.** Use the **Find** box under the transcript to jump through matches
+(Enter = next, Shift+Enter = previous); every hit is highlighted and the current
+one is centred.
+
 When **Convert video to WAV first (ffmpeg)** is enabled (the default), choosing a
 video file (`.mp4`, `.mkv`, `.mov`, `.avi`, `.webm`) extracts its audio to a 16 kHz
 mono WAV with [`ffmpeg`](https://ffmpeg.org/) before transcribing. If an output
