@@ -12,7 +12,9 @@ import os
 import threading
 import tkinter as tk
 from tkinter import ttk
+from tkinter.scrolledtext import ScrolledText
 
+from ..diagnostics import format_report
 from ..ocr import ocr_available
 from ..resources import (
     bundled_argos_data_dir,
@@ -85,6 +87,10 @@ class WhisprApp:
         ttk.Label(header, text=subtitle, font=("", 9)).pack(
             side="left", padx=(10, 0), pady=(7, 0)
         )
+        # Build self-test: confirm which engines/models this bundle contains.
+        ttk.Button(header, text="Self-test…", command=self._show_diagnostics).pack(
+            side="right"
+        )
 
         # With translation, a top-level Transcribe/Translate notebook; without it,
         # the transcribe UI fills the window directly (no redundant tab chrome).
@@ -127,6 +133,28 @@ class WhisprApp:
         self.cancel_event.set()
         for tab in self._tabs:
             tab.notify_cancelling()
+
+    def _show_diagnostics(self) -> None:
+        """Open a window listing which engines/models this build actually has."""
+        report = format_report()
+        win = tk.Toplevel(self.root)
+        win.title("Whispers — build self-test")
+        win.transient(self.root)
+        text = ScrolledText(win, wrap="none", width=72, height=22, font="TkFixedFont")
+        text.pack(fill="both", expand=True, padx=8, pady=8)
+        text.insert("end", report)
+        text.configure(state="disabled")
+
+        def _copy() -> None:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(report)
+
+        buttons = ttk.Frame(win)
+        buttons.pack(fill="x", padx=8, pady=(0, 8))
+        ttk.Button(buttons, text="Copy", command=_copy).pack(side="right")
+        ttk.Button(buttons, text="Close", command=win.destroy).pack(
+            side="right", padx=(0, 8)
+        )
 
     def _on_close(self) -> None:
         """Persist preferences, then close the window."""
