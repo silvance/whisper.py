@@ -328,6 +328,18 @@ splitter are baked in, so translation also runs with no network. The
 binary) for translating images/PDFs (default `ar,ru,zh,fa,uk,he,ko`; empty to
 skip OCR), so OCR also runs air-gapped.
 
+**Publishing a downloadable release.** To put a build on the repo's **Releases**
+page (a permanent, public download — unlike the temporary, login-only Actions
+*artifacts*), give the **`release_tag`** input a version (e.g. `v1.0.0`) when you
+*Run workflow*, or push a `bundle-v*` tag. The per-OS bundle is archived
+(`whispr-windows-x86_64.zip`, `whispr-linux-x86_64.tar.gz`) and attached to a
+GitHub Release at that tag; visitors then download it, unzip, and run
+`whispr` / `whispr.exe` — no install or network. **Mind the size:** a release
+asset is capped at ~2 GB, so a public release should be a lean build (e.g.
+`models=base.en`, `diarizer=sherpa`, empty `translate_langs`/`ocr_langs`) — the
+full multi-GB bundle won't upload as a single asset. (Re-running the same tag
+re-uploads/overwrites that OS's asset.)
+
 **Lean transcriber-only build.** A full bundle (all models + translation packs)
 is large. For users who only transcribe English, build a much smaller bundle by
 setting **`models=base.en`**, **`translate_langs=`** and **`ocr_langs=`** (both

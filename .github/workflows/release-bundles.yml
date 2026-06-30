@@ -5,10 +5,16 @@ name: release-bundles
 # the selected Whisper models, so it can be copied to an air-gapped machine and run
 # with no network access. The build runners use the internet; the targets do not.
 #
-# For fast iteration, "Run workflow" defaults to a single model (small) on both
-# OSes; set platform=windows (or linux) and keep models=small for the quickest
-# test build. Tagged releases (bundle-v*) bundle the full small,medium,large-v3
-# set automatically.
+# For fast iteration, "Run workflow" defaults to a single model (base.en) on both
+# OSes; set platform=windows (or linux) for the quickest test build.
+#
+# To publish a downloadable GitHub Release: "Run workflow" with a release_tag
+# (e.g. v1.0.0). The built bundle for each OS is archived and attached to a public
+# Release at that tag, so anyone can download it from the repo's Releases page.
+# Pushing a bundle-v* tag does the same using that tag. NOTE: a GitHub release
+# asset is capped at ~2 GB, so keep each bundle under that for a public release
+# (e.g. models=base.en, diarizer=sherpa, empty translate_langs/ocr_langs) - the
+# full multi-GB bundle won't upload as a single asset.
 
 on:
   workflow_dispatch:
@@ -32,6 +38,9 @@ on:
       ocr_langs:
         description: "Tesseract OCR language packs to bundle (image/PDF -> text; comma-separated; empty to skip OCR)"
         default: "ar,ru,zh,fa,uk,he,ko"
+      release_tag:
+        description: "Publish a downloadable GitHub Release with this tag (e.g. v1.0.0). Leave empty to only build artifacts. Keep the bundle under ~2 GB per OS (a release asset is capped at 2 GB) - e.g. models=base.en, diarizer=sherpa, empty translate/ocr."
+        default: ""
   push:
     tags:
       - "bundle-v*"
@@ -56,6 +65,9 @@ jobs:
 
   build:
     needs: setup
+    # Allow this job to create/update a GitHub Release and upload assets.
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
@@ -70,6 +82,19 @@ jobs:
       # Tesseract OCR language packs (image/PDF -> text). Empty string skips OCR.
       OCR_LANGS: ${{ github.event.inputs.ocr_langs || 'ar,ru,zh,fa,uk,he,ko' }}
     steps:
+      - name: Resolve release tag
+        id: rel
+        shell: bash
+        # Publish a Release when a release_tag input is given (manual run) or when
+        # a bundle-v* tag was pushed. Empty = build artifacts only, no release.
+        run: |
+          if [ -n "${{ github.event.inputs.release_tag }}" ]; then
+            echo "tag=${{ github.event.inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
@@ -149,3 +174,26 @@ jobs:
           path: dist/whispr
           if-no-files-found: error
           retention-days: 14
+
+      # --- Publish a downloadable GitHub Release (only when a tag is resolved) ---
+      - name: Package bundle (Linux)
+        if: steps.rel.outputs.tag != '' && runner.os == 'Linux'
+        run: tar -czf "${{ matrix.artifact }}.tar.gz" -C dist whispr
+      - name: Package bundle (Windows)
+        if: steps.rel.outputs.tag != '' && runner.os == 'Windows'
+        run: Compress-Archive -Path dist/whispr -DestinationPath "${{ matrix.artifact }}.zip"
+      - name: Publish to GitHub Release
+        if: steps.rel.outputs.tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # The two OS jobs run in parallel: the first creates the release (and
+        # uploads its asset); the second's create fails harmlessly, so it falls
+        # back to uploading its asset to the existing release.
+        run: |
+          TAG="${{ steps.rel.outputs.tag }}"
+          FILE=$(ls ${{ matrix.artifact }}.* | head -n1)
+          NOTES="Offline Whispers desktop bundle. Download the archive for your OS, unzip, and run whispr (whispr.exe on Windows) - no installation or network needed. Verify contents with the in-app **Self-test…** button."
+          gh release create "$TAG" --repo "${{ github.repository }}" \
+            --title "Whispers $TAG" --notes "$NOTES" "$FILE" \
+          || gh release upload "$TAG" "$FILE" --clobber --repo "${{ github.repository }}"
