@@ -245,8 +245,9 @@ effect when a count is set or when using pyannote.
 so the transcript is editable: click any `[speaker]` tag to **rename that speaker
 everywhere** (bulk) or **move just that line to a different speaker** (individual);
 click a single **word** to move just that word (or from it onward); or **highlight
-a run of words and right-click** to move just that span — for when one speaker's
-sentence is lumped into the middle of another's line. The labelling a diarizer
+a run of words and drag them onto another speaker's line** to move just that span —
+for when one speaker's sentence is lumped into the middle of another's line
+(right-click still offers the same move as a menu). The labelling a diarizer
 assigns is arbitrary, so if two names land on the wrong voices it's a one-click
 swap.
 

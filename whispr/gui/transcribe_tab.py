@@ -373,8 +373,8 @@ class TranscribeTab:
                 "above and (optionally) name them. In the Transcript, click a "
                 "[speaker] tag to rename or move the whole line, click a single "
                 "word to move just that word (or from it onward), or highlight a "
-                "run of words and right-click to move just that span to another "
-                "speaker."
+                "run of words and drag it onto another speaker's line to move it "
+                "there (right-click still offers the same as a menu)."
             ),
             wraplength=420,
             justify="left",

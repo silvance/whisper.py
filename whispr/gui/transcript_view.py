@@ -12,7 +12,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import simpledialog
 from tkinter.scrolledtext import ScrolledText
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, cast
 
 from ..editing import (
     coalesce_segments,
@@ -68,6 +68,13 @@ class TranscriptView:
         # Windows/Linux, Button-2 on macOS.
         self.widget.bind("<Button-3>", self._selection_menu)
         self.widget.bind("<Button-2>", self._selection_menu)
+        # Drag-to-move: after selecting a run of words, press within the selection
+        # and drag it onto another speaker's line to reassign it (no menu needed).
+        # In-progress drag state, or None. See _on_drag_press/_motion/_release.
+        self._drag: Optional[Dict[str, object]] = None
+        self.widget.bind("<Button-1>", self._on_drag_press)
+        self.widget.bind("<B1-Motion>", self._on_drag_motion)
+        self.widget.bind("<ButtonRelease-1>", self._on_drag_release)
 
     def set_result(
         self, result: Optional[TranscriptionResult], speaker_names: Dict[str, str]
@@ -556,6 +563,82 @@ class TranscriptView:
         if moved:
             self._enroll(speaker_id, [(moved[0].start, moved[-1].end)])
         self._changed()
+
+    # -- Drag a highlighted span onto another speaker ----------------------
+
+    def _index_in_selection(self, event: object) -> bool:
+        """True if the pointer is over the current text selection."""
+        try:
+            idx = self.widget.index(f"@{event.x},{event.y}")  # type: ignore[attr-defined]
+            return self.widget.compare(
+                idx, ">=", "sel.first"
+            ) and self.widget.compare(idx, "<", "sel.last")
+        except tk.TclError:
+            return False
+
+    def _speaker_at_event(self, event: object) -> Optional[str]:
+        """The speaker id of the line under the pointer, or ``None``."""
+        result = self._result
+        if result is None:
+            return None
+        try:
+            idx = self.widget.index(f"@{event.x},{event.y}")  # type: ignore[attr-defined]
+        except tk.TclError:
+            return None
+        for tag in self.widget.tag_names(idx):
+            if tag.startswith("spk::"):
+                return tag[len("spk::") :]
+            if tag.startswith("line::") or tag.startswith("word::"):
+                try:
+                    seg = int(tag.split("::")[1])
+                except (IndexError, ValueError):
+                    continue
+                if seg < len(result.segments):
+                    return result.segments[seg].speaker or "UNKNOWN"
+        return None
+
+    def _on_drag_press(self, event: object) -> Optional[str]:
+        """Begin dragging the selection if the press lands inside it."""
+        self._drag = None
+        if not self._has_selection() or not self._index_in_selection(event):
+            return None
+        span = self._selected_word_span()
+        if span is None:
+            return None
+        # Keep the selection (suppress the default click that would clear it) so
+        # the following motion drags the span rather than starting a new select.
+        self._drag = {"span": span, "moved": False}
+        return "break"
+
+    def _on_drag_motion(self, event: object) -> Optional[str]:
+        if self._drag is None:
+            return None
+        self._drag["moved"] = True
+        self.widget.config(cursor="fleur")  # the four-arrow "move" cursor
+        return "break"  # dragging the span, not extending the selection
+
+    def _on_drag_release(self, event: object) -> Optional[str]:
+        """Drop: reassign the dragged span to the speaker under the pointer."""
+        drag = self._drag
+        self._drag = None
+        if drag is None:
+            return None
+        self.widget.config(cursor="")
+        if not drag.get("moved"):
+            return None
+        result = self._result
+        target = self._speaker_at_event(event)
+        if result is None or target is None:
+            return None
+        seg_index, first_word, last_word = cast(
+            "Tuple[int, int, int]", drag["span"]
+        )
+        if seg_index >= len(result.segments):
+            return None
+        if (result.segments[seg_index].speaker or "UNKNOWN") == target:
+            return None  # dropped back on the same speaker - nothing to do
+        self._reassign_span(seg_index, first_word, last_word, target)
+        return "break"
 
     def _rename_speaker(self, speaker_id: str) -> None:
         current = self._speaker_names.get(speaker_id, speaker_id)
