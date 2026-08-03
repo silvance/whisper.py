@@ -76,9 +76,7 @@ def test_recognize_reattributes_quiet_turn_to_its_own_voice():
         SpeakerSegment(start=3.0, end=6.0, speaker="SPEAKER_00"),  # actually Quiet
         SpeakerSegment(start=6.0, end=9.0, speaker="SPEAKER_00"),
     ]
-    embedder = _FakeEmbedder(
-        {0.0: [1.0, 0.0], 3.0: [0.0, 1.0], 6.0: [1.0, 0.0]}
-    )
+    embedder = _FakeEmbedder({0.0: [1.0, 0.0], 3.0: [0.0, 1.0], 6.0: [1.0, 0.0]})
     out, name_map = recognize("x.wav", segments, [loud, quiet], embedder)
     speakers = [s.speaker for s in out]
     assert speakers[0] == "voice::Loud"

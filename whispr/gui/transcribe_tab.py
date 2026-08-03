@@ -373,8 +373,8 @@ class TranscribeTab:
                 "above and (optionally) name them. In the Transcript, click a "
                 "[speaker] tag to rename or move the whole line, click a single "
                 "word to move just that word (or from it onward), or highlight a "
-                "run of words and right-click to move just that span to another "
-                "speaker."
+                "run of words and drag it onto another speaker's line to move it "
+                "there (right-click still offers the same as a menu)."
             ),
             wraplength=420,
             justify="left",
@@ -872,9 +872,7 @@ class TranscribeTab:
             # a copy of the audio so post-run corrections can teach new voices.
             self._recognized_names = {}
             if self._profile is not None and self.learn_var.get():
-                speaker_segments = self._recognize_speakers(
-                    speaker_segments, diar_wav
-                )
+                speaker_segments = self._recognize_speakers(speaker_segments, diar_wav)
                 self._set_session_wav(diar_wav)
             result.segments = assign_speakers(result.segments, speaker_segments)
         finally:
