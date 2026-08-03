@@ -570,9 +570,9 @@ class TranscriptView:
         """True if the pointer is over the current text selection."""
         try:
             idx = self.widget.index(f"@{event.x},{event.y}")  # type: ignore[attr-defined]
-            return self.widget.compare(
-                idx, ">=", "sel.first"
-            ) and self.widget.compare(idx, "<", "sel.last")
+            return self.widget.compare(idx, ">=", "sel.first") and self.widget.compare(
+                idx, "<", "sel.last"
+            )
         except tk.TclError:
             return False
 
@@ -630,9 +630,7 @@ class TranscriptView:
         target = self._speaker_at_event(event)
         if result is None or target is None:
             return None
-        seg_index, first_word, last_word = cast(
-            "Tuple[int, int, int]", drag["span"]
-        )
+        seg_index, first_word, last_word = cast("Tuple[int, int, int]", drag["span"])
         if seg_index >= len(result.segments):
             return None
         if (result.segments[seg_index].speaker or "UNKNOWN") == target:

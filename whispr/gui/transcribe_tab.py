@@ -872,9 +872,7 @@ class TranscribeTab:
             # a copy of the audio so post-run corrections can teach new voices.
             self._recognized_names = {}
             if self._profile is not None and self.learn_var.get():
-                speaker_segments = self._recognize_speakers(
-                    speaker_segments, diar_wav
-                )
+                speaker_segments = self._recognize_speakers(speaker_segments, diar_wav)
                 self._set_session_wav(diar_wav)
             result.segments = assign_speakers(result.segments, speaker_segments)
         finally:

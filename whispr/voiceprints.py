@@ -144,9 +144,7 @@ def best_match(
 # -- Audio embedding (sherpa-onnx; lazy) -----------------------------------
 
 
-def _read_wav_span(
-    wav_path: PathLike, start: float, end: float
-) -> "Tuple[Any, int]":
+def _read_wav_span(wav_path: PathLike, start: float, end: float) -> "Tuple[Any, int]":
     """Read ``[start, end]`` seconds of a 16-bit PCM WAV as mono float32 + rate."""
     import numpy as np
 
@@ -280,7 +278,9 @@ def recognize(
             turn_match[i] = name
 
     # Dominant enrolled name per original cluster, weighted by matched duration.
-    cluster_weight: Dict[str, Dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    cluster_weight: Dict[str, Dict[str, float]] = defaultdict(
+        lambda: defaultdict(float)
+    )
     for i, seg in enumerate(speaker_segments):
         name = turn_match.get(i)
         if name is not None:
