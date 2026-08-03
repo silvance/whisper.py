@@ -8,17 +8,27 @@ owns the settings UI and drives the background run.
 
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
 import threading
 import tkinter as tk
 import traceback
 from pathlib import Path
-from tkinter import filedialog, ttk
+from tkinter import filedialog, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from ..diarization import assign_speakers, diarize
 from ..export import transcript_to_docx
 from ..playback import PlaybackError, SegmentPlayer, playback_available
+from ..profiles import (
+    Profile,
+    delete_profile,
+    list_profiles,
+    load_profile,
+    save_profile,
+)
 from ..project import PROJECT_SUFFIX, load_project, save_project
 from ..resources import bundled_models
 from ..transcription import (
@@ -30,6 +40,7 @@ from ..transcription import (
     is_video,
     transcribe_audio,
 )
+from ..voiceprints import SpeakerEmbedder, enroll_spans, recognize
 from .errors import friendly_error
 from .transcript_view import TranscriptView
 from .widgets import (
@@ -134,6 +145,21 @@ class TranscribeTab:
         # instead of the single "Audio / video file" above.
         self._batch_files: List[Path] = []
         self.batch_files_var = tk.StringVar(value="")
+
+        # Active operation profile (saved settings + learned speaker voiceprints),
+        # and whether to recognise/learn voices for it. See whispr.profiles /
+        # whispr.voiceprints.
+        self.profile_var = tk.StringVar(value="")
+        self.learn_var = tk.BooleanVar(value=True)
+        self._profile: Optional[Profile] = None
+        # Names recognised from voiceprints on the last diarized run (voice::Name).
+        self._recognized_names: Dict[str, str] = {}
+        # A 16 kHz mono copy of the last diarized audio, kept so corrections can
+        # enrol voiceprints after the run; removed on the next run and on close.
+        self._session_wav: Optional[Path] = None
+        # Lazily-built speaker-embedding extractor; False once it has failed to
+        # load (e.g. sherpa-onnx/model missing) so we don't retry every edit.
+        self._embedder: "Optional[SpeakerEmbedder] | bool" = None
 
         # Offline segment playback (click a line to re-listen). Disabled cleanly
         # when neither ffmpeg nor an OS player is available.
@@ -354,6 +380,60 @@ class TranscribeTab:
             justify="left",
         ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
+        # --- Profile (learn speakers) -------------------------------------
+        profile_section = CollapsibleSection(container, "Profile (learn speakers)")
+        profile_section.pack(fill="x", pady=(8, 0))
+        self._setting_sections.append(profile_section)
+        prof_frame = profile_section.body
+        prof_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(prof_frame, text="Profile").grid(
+            row=0, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        self.profile_combo = ttk.Combobox(
+            prof_frame,
+            textvariable=self.profile_var,
+            values=[""] + list_profiles(),
+            state="readonly",
+            width=26,
+        )
+        self.profile_combo.grid(row=0, column=1, sticky="w", pady=4)
+        self.profile_combo.bind(
+            "<<ComboboxSelected>>", lambda _e: self._on_profile_selected()
+        )
+        prof_buttons = ttk.Frame(prof_frame)
+        prof_buttons.grid(row=0, column=2, sticky="e", pady=4)
+        ttk.Button(prof_buttons, text="New…", command=self._new_profile).pack(
+            side="left"
+        )
+        ttk.Button(prof_buttons, text="Save", command=self._save_profile_settings).pack(
+            side="left", padx=(6, 0)
+        )
+        ttk.Button(prof_buttons, text="Delete", command=self._delete_profile).pack(
+            side="left", padx=(6, 0)
+        )
+
+        ttk.Checkbutton(
+            prof_frame,
+            text="Recognise & learn speaker voices for this profile",
+            variable=self.learn_var,
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
+
+        ttk.Label(
+            prof_frame,
+            text=(
+                "Pick a profile per operation. With diarization on, the app "
+                "matches each speaker against the voices this profile has learned "
+                "and labels them automatically — and every correction you make "
+                "(rename or move a line to a named speaker) teaches it that voice, "
+                "so the next recording gets better. Voiceprints only sharpen "
+                "labelling; they don't retrain the transcription model."
+            ),
+            wraplength=460,
+            justify="left",
+            font=("", 8),
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
         # --- Run + progress -----------------------------------------------
         run_frame = ttk.Frame(container)
         run_frame.pack(fill="x", pady=(12, 0))
@@ -384,6 +464,7 @@ class TranscribeTab:
             self._save_outputs_if_possible,
             highlight_var=self.highlight_conf_var,
             on_play=self._play_segment if self._playback_ok else None,
+            on_enroll=self._enroll_voice,
         )
         self.status = ScrolledText(
             tabs, wrap="word", state="disabled", height=14, font="TkFixedFont"
@@ -595,6 +676,9 @@ class TranscribeTab:
             True, "Translating..." if task == "translate" else "Transcribing..."
         )
         final_status = "Finished"
+        # Drop any prior run's kept audio so a correction can only ever enrol
+        # against audio from this run's diarized file(s).
+        self._clear_session_wav()
         try:
             self.transcript_view.set_result(None, {})
             jobs = self._collect_jobs()
@@ -782,9 +866,17 @@ class TranscribeTab:
                 on_progress=lambda f: self._set_progress(f, "Identifying speakers"),
                 cancelled=self._cancel_event.is_set,
             )
-            result.segments = assign_speakers(result.segments, speaker_segments)
             count = len({seg.speaker for seg in speaker_segments})
             append_line(self.status, f"Identified {count} speaker(s).")
+            # Recognise enrolled voices (relabel turns to known speakers) and keep
+            # a copy of the audio so post-run corrections can teach new voices.
+            self._recognized_names = {}
+            if self._profile is not None and self.learn_var.get():
+                speaker_segments = self._recognize_speakers(
+                    speaker_segments, diar_wav
+                )
+                self._set_session_wav(diar_wav)
+            result.segments = assign_speakers(result.segments, speaker_segments)
         finally:
             if diar_temp is not None:
                 try:
@@ -925,6 +1017,10 @@ class TranscribeTab:
         # longer auto-saved to a folder until the next run (re-save the project).
         self._result_source = Path(source) if source else None
         self._result_outdir = None
+        # This transcript is not from the current run's audio, so voiceprint
+        # enrolment must not attach its corrections to a stale recording.
+        self._clear_session_wav()
+        self._recognized_names = {}
         self.transcript_view.set_result(result, self._speaker_names)
         self.progress_label_var.set(f"Opened {Path(path).name}")
 
@@ -997,19 +1093,204 @@ class TranscribeTab:
         return f"{seconds // 60}:{seconds % 60:02d}"
 
     def _preset_names_for(self, result: TranscriptionResult) -> Dict[str, str]:
-        """Build a speaker-id -> display-name map from the Speaker N fields.
+        """Build a speaker-id -> display-name map for this result.
 
-        Speakers are matched in label order (SPEAKER_00 -> "Speaker 1", ...).
-        The labelling pyannote assigns is arbitrary, so the operator may still
-        need to swap two names - one click per [speaker] tag in the transcript.
+        Voices recognised from the active profile are applied first (their ids
+        already carry the person's name). Any remaining, unrecognised speakers are
+        matched to the Speaker N fields in label order (SPEAKER_00 -> "Speaker 1",
+        ...); the labelling the diarizer assigns is arbitrary, so the operator may
+        still need to swap two names - one click per [speaker] tag.
         """
-        names: Dict[str, str] = {}
         ids = sorted({seg.speaker for seg in result.segments if seg.speaker})
-        for sid, var in zip(ids, self.speaker_name_vars):
+        # Recognised ids (voice::Name) already map to a display name; keep only
+        # those present in this result.
+        names: Dict[str, str] = {
+            sid: self._recognized_names[sid]
+            for sid in ids
+            if sid in self._recognized_names
+        }
+        unrecognised = [sid for sid in ids if sid not in names]
+        for sid, var in zip(unrecognised, self.speaker_name_vars):
             name = var.get().strip()
             if name:
                 names[sid] = name
         return names
+
+    # -- Voiceprint recognition / enrolment --------------------------------
+
+    def _get_embedder(self) -> Optional[SpeakerEmbedder]:
+        """The speaker-embedding extractor, built once; ``None`` if unavailable."""
+        if self._embedder is None:
+            try:
+                self._embedder = SpeakerEmbedder()
+            except Exception as exc:  # noqa: BLE001 - degrade to no voiceprints
+                self._embedder = False
+                append_line(
+                    self.status,
+                    "Voiceprints unavailable (speaker-embedding model not "
+                    f"loaded): {exc}",
+                )
+        return self._embedder if isinstance(self._embedder, SpeakerEmbedder) else None
+
+    def _recognize_speakers(self, speaker_segments, diar_wav: Path):
+        """Relabel diarizer turns to enrolled voices; fills ``_recognized_names``."""
+        profile = self._profile
+        if profile is None or not profile.voiceprints:
+            return speaker_segments
+        embedder = self._get_embedder()
+        if embedder is None:
+            return speaker_segments
+        try:
+            relabeled, name_map = recognize(
+                diar_wav,
+                speaker_segments,
+                list(profile.voiceprints.values()),
+                embedder,
+            )
+        except Exception as exc:  # noqa: BLE001 - never fail a run on recognition
+            append_line(self.status, f"Voice recognition skipped: {exc}")
+            return speaker_segments
+        self._recognized_names = name_map
+        if name_map:
+            recognised = ", ".join(sorted(set(name_map.values())))
+            append_line(self.status, f"Recognised voice(s): {recognised}.")
+        return relabeled
+
+    def _set_session_wav(self, diar_wav: Path) -> None:
+        """Keep a 16 kHz copy of the current audio for post-run enrolment."""
+        self._clear_session_wav()
+        try:
+            handle, tmp = tempfile.mkstemp(suffix=".wav")
+            os.close(handle)
+            shutil.copyfile(diar_wav, tmp)
+            self._session_wav = Path(tmp)
+        except OSError:
+            self._session_wav = None
+
+    def _clear_session_wav(self) -> None:
+        if self._session_wav is not None:
+            try:
+                self._session_wav.unlink()
+            except OSError:
+                pass
+            self._session_wav = None
+
+    def _enroll_voice(self, name: str, spans: List[Tuple[float, float]]) -> None:
+        """Fold the audio of ``spans`` into ``name``'s voiceprint (off the UI thread).
+
+        Triggered by a correction in the transcript. A no-op unless a profile is
+        active, learning is on, and we kept this run's audio.
+        """
+        profile = self._profile
+        if profile is None or not self.learn_var.get():
+            return
+        wav = self._session_wav
+        if wav is None or not wav.exists():
+            return
+        embedder = self._get_embedder()
+        if embedder is None:
+            return
+
+        def _worker() -> None:
+            try:
+                voiceprint = profile.voiceprint_for(name)
+                added = enroll_spans(voiceprint, wav, spans, embedder)
+                if added:
+                    save_profile(profile)
+                    self.progress_label_var.set(
+                        f"Learned {name}'s voice (+{added} sample(s))."
+                    )
+            except Exception as exc:  # noqa: BLE001 - surfaced, never fatal
+                self.progress_label_var.set(friendly_error(exc))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    # -- Profile management ------------------------------------------------
+
+    def _refresh_profiles(self) -> None:
+        self.profile_combo.configure(values=[""] + list_profiles())
+
+    def _on_profile_selected(self) -> None:
+        self._select_profile(self.profile_var.get())
+
+    def _select_profile(self, name: str, *, apply: bool = True) -> None:
+        """Make ``name`` the active profile, optionally applying its settings."""
+        name = (name or "").strip()
+        if not name:
+            self._profile = None
+            self.profile_var.set("")
+            return
+        profile = load_profile(name)
+        if profile is None:
+            self._profile = None
+            self.profile_var.set("")
+            return
+        self._profile = profile
+        self.profile_var.set(profile.name)
+        if apply and profile.settings:
+            self._apply_profile_settings(profile.settings)
+        vp_count = len(profile.voiceprints)
+        self.progress_label_var.set(
+            f"Profile '{profile.name}' loaded ({vp_count} learned voice(s))."
+        )
+
+    def _new_profile(self) -> None:
+        name = simpledialog.askstring(
+            "New profile", "Name this operation/profile:", parent=self.root
+        )
+        if not name or not name.strip():
+            return
+        profile = Profile(name=name.strip(), settings=self._profile_settings())
+        save_profile(profile)
+        self._profile = profile
+        self._refresh_profiles()
+        self.profile_var.set(profile.name)
+        self.progress_label_var.set(f"Created profile '{profile.name}'.")
+
+    def _save_profile_settings(self) -> None:
+        """Store the current settings into the active profile (voiceprints kept)."""
+        profile = self._profile
+        if profile is None:
+            self.progress_label_var.set("Pick or create a profile first.")
+            return
+        profile.settings = self._profile_settings()
+        save_profile(profile)
+        self.progress_label_var.set(f"Saved profile '{profile.name}'.")
+
+    def _delete_profile(self) -> None:
+        profile = self._profile
+        if profile is None:
+            self.progress_label_var.set("No profile selected.")
+            return
+        delete_profile(profile.name)
+        self._profile = None
+        self.profile_var.set("")
+        self._refresh_profiles()
+        self.progress_label_var.set("Profile deleted.")
+
+    def _profile_settings(self) -> Dict[str, object]:
+        """The settings a profile remembers (the persisted set plus custom words).
+
+        The active-profile name is dropped: a profile does not store which profile
+        it is (and keeping it would re-trigger selection when the profile's own
+        settings are applied).
+        """
+        data = self.get_settings()
+        data.pop("profile", None)
+        data["vocab"] = self.vocab_var.get()
+        return data
+
+    def _apply_profile_settings(self, data: Dict[str, object]) -> None:
+        self.apply_settings(data)
+        if "vocab" in data:
+            try:
+                self.vocab_var.set(str(data["vocab"]))
+            except Exception:  # noqa: BLE001 - ignore a stale value
+                pass
+
+    def close(self) -> None:
+        """Release session resources (called when the app closes)."""
+        self._clear_session_wav()
 
     # -- Persisted preferences ---------------------------------------------
 
@@ -1034,7 +1315,13 @@ class TranscribeTab:
         }
 
     def get_settings(self) -> Dict[str, object]:
-        return {key: var.get() for key, var in self._settings_vars().items()}
+        data: Dict[str, object] = {
+            key: var.get() for key, var in self._settings_vars().items()
+        }
+        # Remember the active profile + learning toggle across launches.
+        data["profile"] = self.profile_var.get()
+        data["learn_voices"] = self.learn_var.get()
+        return data
 
     def apply_settings(self, data: Dict[str, object]) -> None:
         if not data:
@@ -1045,6 +1332,16 @@ class TranscribeTab:
                     var.set(data[key])
                 except Exception:  # noqa: BLE001 - ignore a stale/invalid value
                     pass
+        if "learn_voices" in data:
+            try:
+                self.learn_var.set(bool(data["learn_voices"]))
+            except Exception:  # noqa: BLE001 - ignore a stale value
+                pass
         # Reflect any changes to the enable/disable + speaker-name state.
         self._update_output_state()
         self._update_speaker_state()
+        # Re-select the last-used profile (which applies its own settings on top).
+        # profile.settings carries no "profile" key, so this doesn't recurse.
+        profile_name = data.get("profile")
+        if profile_name:
+            self._select_profile(str(profile_name))

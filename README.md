@@ -272,6 +272,37 @@ that spans a speaker change is split at the boundary, and a smoothing pass absor
 stray sub-second fragments, so rapid back-and-forth is attributed correctly rather
 than lumped onto one speaker.
 
+### Profiles that learn speaker voices
+
+Recurring operations tend to feature the same people. A **profile** (the
+**Profile (learn speakers)** section) saves the settings for one operation —
+model, engine, expected speaker count, custom words — and, more usefully, builds
+a roster of **voiceprints** for the people in it so their voices are recognised
+automatically next time.
+
+- **Pick a profile** per operation, or create one with **New…**. Its saved
+  settings are applied on selection; **Save** updates them from the current
+  fields. The choice is remembered between launches.
+- **It learns from your corrections.** With **Recognise & learn speaker voices**
+  ticked and diarization on, every fix you make that assigns audio to a *named*
+  speaker — renaming a speaker, or moving a line/word/selection to one — embeds
+  that audio and folds it into that person's voiceprint. Nothing extra to click;
+  correcting the transcript *is* the training.
+- **Next run, voices are recognised.** Each diarized turn is matched against the
+  profile's voiceprints and labelled with the person it matches — and when a turn
+  matches a known voice more strongly than the cluster it landed in, it's
+  **re-attributed to that person**, overriding the diarizer. This is the fix for
+  the common failure where a quieter speaker's turns get lumped in with a louder
+  one: the quiet turns still match the quiet voiceprint.
+
+Voiceprints reuse the bundled speaker-embedding model (the same one the sherpa
+diarizer uses), so recognition works offline and adds no new dependency; if that
+model isn't bundled the feature quietly disables itself. Profiles are small JSON
+files stored beside the app settings. One honest limit: voiceprints only sharpen
+*who-said-what* labelling — they do **not** retrain the transcription model, so
+they don't change the words Whisper decodes. For word accuracy, use a larger model
+than `base.en` (try `small.en`/`medium.en`) and the **Custom words** box.
+
 The transcription backend is also usable directly from Python:
 
 ```python

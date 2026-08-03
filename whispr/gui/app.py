@@ -162,6 +162,10 @@ class WhisprApp:
             save_settings({"transcribe": self.transcribe.get_settings()})
         except Exception:  # noqa: BLE001 - never block closing on a save failure
             pass
+        try:
+            self.transcribe.close()
+        except Exception:  # noqa: BLE001 - never block closing on cleanup
+            pass
         self.root.destroy()
 
 
