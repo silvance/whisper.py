@@ -12,7 +12,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import simpledialog
 from tkinter.scrolledtext import ScrolledText
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from ..editing import (
     coalesce_segments,
@@ -43,6 +43,7 @@ class TranscriptView:
         on_change: Callable[[], None],
         highlight_var: Optional[tk.BooleanVar] = None,
         on_play: Optional[Callable[[float, float], None]] = None,
+        on_enroll: Optional[Callable[[str, List[Tuple[float, float]]], None]] = None,
     ) -> None:
         self.root = root
         self.blank_lines_var = blank_lines_var
@@ -52,6 +53,9 @@ class TranscriptView:
         self._on_change = on_change
         # Play a [start, end] span of the source audio; None disables playback.
         self._on_play = on_play
+        # Learn a speaker's voice from a correction: (display name, audio spans).
+        # None disables voiceprint enrolment (no profile / no audio).
+        self._on_enroll = on_enroll
         self._result: Optional[TranscriptionResult] = None
         self._speaker_names: Dict[str, str] = {}
         # Where the next "find" search starts (advances as you step through hits).
@@ -314,8 +318,24 @@ class TranscriptView:
         result = self._result
         if result is None or index >= len(result.segments):
             return
-        result.segments[index].speaker = speaker_id
+        segment = result.segments[index]
+        segment.speaker = speaker_id
+        # This line's audio is now confirmed to be that speaker - learn from it.
+        self._enroll(speaker_id, [(segment.start, segment.end)])
         self._changed()
+
+    def _enroll(self, speaker_id: str, spans: List[Tuple[float, float]]) -> None:
+        """Ask the owner to fold ``spans`` into ``speaker_id``'s voiceprint.
+
+        A no-op unless voiceprint learning is wired up (a profile is active with
+        audio available) and the speaker has a display name to learn under - an
+        anonymous ``SPEAKER_xx`` id is nothing to enrol against.
+        """
+        if self._on_enroll is None or not spans:
+            return
+        name = self._speaker_names.get(speaker_id)
+        if name:
+            self._on_enroll(name, spans)
 
     # -- Playback ----------------------------------------------------------
 
@@ -433,9 +453,13 @@ class TranscriptView:
         segment = result.segments[seg_index]
         if word_index >= len(segment.words):
             return
+        last = len(segment.words) - 1 if to_end else word_index
+        moved = segment.words[word_index : last + 1]
         parts = split_segment_on_word(segment, word_index, speaker_id, to_end=to_end)
         result.segments[seg_index : seg_index + 1] = parts
         result.segments = coalesce_segments(result.segments)
+        if moved:
+            self._enroll(speaker_id, [(moved[0].start, moved[-1].end)])
         self._changed()
 
     # -- Move a highlighted span of words ----------------------------------
@@ -525,9 +549,12 @@ class TranscriptView:
         if result is None or seg_index >= len(result.segments):
             return
         segment = result.segments[seg_index]
+        moved = segment.words[first_word : last_word + 1]
         parts = split_segment_on_span(segment, first_word, last_word, speaker_id)
         result.segments[seg_index : seg_index + 1] = parts
         result.segments = coalesce_segments(result.segments)
+        if moved:
+            self._enroll(speaker_id, [(moved[0].start, moved[-1].end)])
         self._changed()
 
     def _rename_speaker(self, speaker_id: str) -> None:
@@ -541,4 +568,14 @@ class TranscriptView:
         if not new_name or not new_name.strip():
             return
         self._speaker_names[speaker_id] = new_name.strip()
+        # Naming a whole speaker confirms every one of their turns - a strong
+        # enrolment signal, so learn the voice from all of this speaker's audio.
+        result = self._result
+        if result is not None:
+            spans = [
+                (seg.start, seg.end)
+                for seg in result.segments
+                if (seg.speaker or "UNKNOWN") == speaker_id
+            ]
+            self._enroll(speaker_id, spans)
         self._changed()
