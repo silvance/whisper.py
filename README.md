@@ -349,10 +349,26 @@ fetched at runtime.
 (Actions → *release-bundles* → *Run workflow*, or push a `bundle-v*` tag). It
 builds on hosted Windows and Linux runners and uploads `whispr-windows-x86_64` and
 `whispr-linux-x86_64` artifacts. The build runners use the internet; the target
-machines never do. You can choose which models to bundle (default
-`small,medium,large-v3`) and which **diarizer** to include: `both` (default —
-pyannote + sherpa, switchable at runtime via the Engine dropdown), `pyannote`, or
-`sherpa`. The **`translate_langs`** input controls which offline text-translation
+machines never do. You choose which models to bundle via the **`models`** input —
+a comma-separated list such as `base.en,small,medium.en,large-v3`. **Only the
+models you list here are in the build**; the app's Model dropdown still shows every
+size, but a size that wasn't bundled can't be fetched on an air-gapped machine (the
+box shows a "⚠ not in this build" note, and Run reports it clearly). On a manual
+*Run workflow* the field is pre-filled with `base.en` — change it if you want more.
+You also choose which **diarizer** to include: `both` (default — pyannote + sherpa,
+switchable at runtime via the Engine dropdown), `pyannote`, or `sherpa`.
+
+**Getting a large bundle (bypassing the 2 GB release cap).** Every run already
+uploads the full per-OS bundle as an **Actions artifact** (`dist/whispr`), and
+artifacts are **not** subject to the 2 GB per-file limit that Release assets are —
+so to ship `medium.en`/`large-v3` and the full translation/OCR stacks, just *Run
+workflow* with your chosen `models` and **leave `release_tag` empty**. Download the
+`whispr-linux-x86_64` / `whispr-windows-x86_64` artifact from the run's **Summary**
+page, and copy it to the air-gapped machine. The artifact downloads as a single
+`.zip`; unzip it once to get the runnable `whispr` bundle folder. Two caveats vs. a
+Release: only someone signed in with repo access can download an artifact, and it's
+retained for 14 days by default (raise `retention-days` in the workflow if you need
+longer). The **`translate_langs`** input controls which offline text-translation
 packs (each `<code>→en`) are bundled for the Translate tab (default
 `ar,ru,zh,fa,uk,he,ko`; empty to skip translation). Packs and their sentence
 splitter are baked in, so translation also runs with no network. The
