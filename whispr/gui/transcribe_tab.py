@@ -114,6 +114,8 @@ class TranscribeTab:
         self.output_dir_var = tk.StringVar()
         self.write_output_var = tk.BooleanVar(value=True)
         self.model_var = tk.StringVar(value=default_model)
+        # Live note under the Model box: whether the current pick is in this build.
+        self.model_status_var = tk.StringVar(value="")
         self.task_var = tk.StringVar(value="transcribe")
         self.language_var = tk.StringVar(value="Auto")
         self.vad_var = tk.BooleanVar(value=True)
@@ -252,9 +254,17 @@ class TranscribeTab:
         ttk.Button(model_frame, text="Browse…", command=self.choose_model_dir).grid(
             row=0, column=2, padx=(8, 0), pady=4
         )
+        # A live note telling the operator whether the chosen model is actually in
+        # this (offline) build - the dropdown lists every size, but only bundled
+        # ones work air-gapped, so this flags a pick that would fail before Run.
+        ttk.Label(model_frame, textvariable=self.model_status_var, font=("", 8)).grid(
+            row=1, column=1, columnspan=2, sticky="w"
+        )
+        self.model_var.trace_add("write", self._update_model_status)
+        self._update_model_status()
 
         ttk.Label(model_frame, text="Task").grid(
-            row=1, column=0, sticky="w", padx=(0, 8), pady=4
+            row=2, column=0, sticky="w", padx=(0, 8), pady=4
         )
         ttk.Combobox(
             model_frame,
@@ -262,29 +272,29 @@ class TranscribeTab:
             values=["transcribe", "translate"],
             state="readonly",
             width=16,
-        ).grid(row=1, column=1, sticky="w", pady=4)
+        ).grid(row=2, column=1, sticky="w", pady=4)
 
         ttk.Label(model_frame, text="Language").grid(
-            row=2, column=0, sticky="w", padx=(0, 8), pady=4
+            row=3, column=0, sticky="w", padx=(0, 8), pady=4
         )
         ttk.Combobox(
             model_frame,
             textvariable=self.language_var,
             values=COMMON_LANGUAGES,
             width=16,
-        ).grid(row=2, column=1, sticky="w", pady=4)
+        ).grid(row=3, column=1, sticky="w", pady=4)
 
         ttk.Label(model_frame, text="Custom words").grid(
-            row=3, column=0, sticky="w", padx=(0, 8), pady=4
+            row=4, column=0, sticky="w", padx=(0, 8), pady=4
         )
         ttk.Entry(model_frame, textvariable=self.vocab_var).grid(
-            row=3, column=1, columnspan=2, sticky="ew", pady=4
+            row=4, column=1, columnspan=2, sticky="ew", pady=4
         )
         ttk.Label(
             model_frame,
             text="Names, places, jargon or callsigns to expect (improves accuracy).",
             font=("", 8),
-        ).grid(row=4, column=1, columnspan=2, sticky="w")
+        ).grid(row=5, column=1, columnspan=2, sticky="w")
 
         # --- Options -------------------------------------------------------
         opt_section = CollapsibleSection(container, "Options")
@@ -655,6 +665,36 @@ class TranscribeTab:
         if path:
             self.model_var.set(path)
 
+    # -- Model selection ---------------------------------------------------
+
+    def _selected_model(self) -> str:
+        """The chosen model name or path, trimmed of surrounding whitespace."""
+        return self.model_var.get().strip()
+
+    def _model_is_available(self, model: str) -> bool:
+        """True if ``model`` is bundled in this build or is a local model folder."""
+        return model in self._bundled_models or (bool(model) and Path(model).is_dir())
+
+    def _update_model_status(self, *_args: object) -> None:
+        """Reflect whether the chosen model is actually usable in this build."""
+        model = self._selected_model()
+        if not model:
+            self.model_status_var.set("")
+        elif model in self._bundled_models:
+            self.model_status_var.set("✓ in this build (works offline)")
+        elif Path(model).is_dir():
+            self.model_status_var.set("✓ local model folder")
+        elif self._bundled_models:
+            # A real bundle, but this size wasn't included - it can't be fetched
+            # on an air-gapped machine, so say so before Run rather than after.
+            self.model_status_var.set(
+                "⚠ not in this build — rebuild including it, or pick a ✓ model "
+                "(see Self-test…)"
+            )
+        else:
+            # Running from source with nothing bundled: faster-whisper will fetch it.
+            self.model_status_var.set("will be downloaded on first use")
+
     # -- Run ---------------------------------------------------------------
 
     def run_in_thread(self) -> None:
@@ -767,7 +807,17 @@ class TranscribeTab:
 
             # Resolve a bundled model name to its local directory so we never
             # try to download on an air-gapped machine.
-            model_sel = self.model_var.get()
+            model_sel = self._selected_model()
+            # This build has models, but the chosen one isn't among them and isn't
+            # a local folder: it can't be fetched offline, so fail with a clear
+            # message instead of a cryptic download error. (When nothing is bundled
+            # - running from source - fall through and let faster-whisper fetch it.)
+            if self._bundled_models and not self._model_is_available(model_sel):
+                raise RuntimeError(
+                    f"The model '{model_sel}' isn't in this build. Open Self-test… "
+                    f"to see the bundled models and pick one of those, or rebuild "
+                    f"the bundle with '{model_sel}' included."
+                )
             model = str(self._bundled_models.get(model_sel, model_sel))
 
             verb = "Translating" if task == "translate" else "Transcribing"

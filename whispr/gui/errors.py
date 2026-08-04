@@ -25,6 +25,10 @@ def friendly_error(exc: Exception) -> str:
             "The transcription engine isn't installed "
             "(pip install 'silvance-whisper[gui]')."
         )
+    # A model chosen in the GUI that this offline build doesn't contain. The
+    # message is already written for the operator, so surface it as-is.
+    if "isn't in this build" in low:
+        return msg.splitlines()[0]
     if "sherpa-onnx is not installed" in low:
         return (
             "The sherpa speaker engine isn't installed. Switch Engine to "
