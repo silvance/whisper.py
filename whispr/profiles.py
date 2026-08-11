@@ -126,3 +126,36 @@ def delete_profile(name: str) -> None:
         (profiles_dir() / f"{_slug(name)}.json").unlink()
     except OSError:
         pass
+
+
+# Suffix for exported/shared profile files (a single self-contained JSON that
+# carries the settings and the learned voiceprints). Used to filter file dialogs.
+PROFILE_SUFFIX = ".whispr-profile.json"
+
+
+def export_profile(profile: Profile, path: "str | Path") -> None:
+    """Write ``profile`` to ``path`` as a shareable JSON file.
+
+    Unlike :func:`save_profile` this targets a user-chosen location and raises on
+    failure (the caller surfaces it), so a failed export isn't silently lost.
+    """
+    Path(path).write_text(
+        json.dumps(profile.to_dict(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def read_profile_file(path: "str | Path") -> Profile:
+    """Load a :class:`Profile` from an exported file (for import).
+
+    Raises ``ValueError`` if the file isn't a valid profile so the caller can show
+    a clear message. Does not save it - the caller decides where/whether to store
+    it (e.g. after resolving a name clash) with :func:`save_profile`.
+    """
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Couldn't read the profile file: {exc}") from exc
+    if not isinstance(data, dict) or not data.get("name"):
+        raise ValueError("This file isn't a Whispers profile.")
+    return Profile.from_dict(data)
