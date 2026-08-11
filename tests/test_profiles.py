@@ -1,9 +1,13 @@
+import pytest
+
 import whispr.profiles as profiles
 from whispr.profiles import (
     Profile,
     delete_profile,
+    export_profile,
     list_profiles,
     load_profile,
+    read_profile_file,
     save_profile,
 )
 from whispr.voiceprints import Voiceprint
@@ -63,3 +67,40 @@ def test_names_with_odd_characters_persist(tmp_path, monkeypatch):
     # The display name is preserved even though the filename is slugged.
     assert list_profiles() == ["Op: Night/Fall #2"]
     assert load_profile("Op: Night/Fall #2") is not None
+
+
+def test_export_then_read_round_trip(tmp_path):
+    prof = Profile(name="Op Falcon", settings={"model": "medium.en"})
+    prof.voiceprint_for("Alpha").add([1.0, 0.0])
+    out = tmp_path / "falcon.whispr-profile.json"
+    export_profile(prof, out)
+
+    loaded = read_profile_file(out)
+    assert loaded.name == "Op Falcon"
+    assert loaded.settings["model"] == "medium.en"
+    assert loaded.voiceprints["Alpha"].vectors == [[1.0, 0.0]]
+
+
+def test_import_lands_in_profiles_dir(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    src = tmp_path / "shared.whispr-profile.json"
+    export_profile(Profile(name="Shared", settings={"engine": "sherpa"}), src)
+    # Simulate the GUI import: read the file, then save into this machine's dir.
+    imported = read_profile_file(src)
+    save_profile(imported)
+    assert list_profiles() == ["Shared"]
+    assert load_profile("Shared").settings["engine"] == "sherpa"
+
+
+def test_read_profile_file_rejects_non_profile(tmp_path):
+    bad = tmp_path / "notaprofile.json"
+    bad.write_text('{"foo": 1}', encoding="utf-8")
+    with pytest.raises(ValueError, match="isn't a Whispers profile"):
+        read_profile_file(bad)
+
+
+def test_read_profile_file_rejects_garbage(tmp_path):
+    bad = tmp_path / "garbage.json"
+    bad.write_text("not json at all", encoding="utf-8")
+    with pytest.raises(ValueError):
+        read_profile_file(bad)

@@ -15,7 +15,7 @@ import threading
 import tkinter as tk
 import traceback
 from pathlib import Path
-from tkinter import filedialog, simpledialog, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -23,10 +23,13 @@ from ..diarization import assign_speakers, diarize
 from ..export import transcript_to_docx
 from ..playback import PlaybackError, SegmentPlayer, playback_available
 from ..profiles import (
+    PROFILE_SUFFIX,
     Profile,
     delete_profile,
+    export_profile,
     list_profiles,
     load_profile,
+    read_profile_file,
     save_profile,
 )
 from ..project import PROJECT_SUFFIX, load_project, save_project
@@ -423,11 +426,23 @@ class TranscribeTab:
             side="left", padx=(6, 0)
         )
 
+        # Share a profile between machines: export the active one to a file, or
+        # import one someone else exported (settings + learned voiceprints travel
+        # together in the file).
+        share_buttons = ttk.Frame(prof_frame)
+        share_buttons.grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 0))
+        ttk.Button(share_buttons, text="Export…", command=self._export_profile).pack(
+            side="left"
+        )
+        ttk.Button(share_buttons, text="Import…", command=self._import_profile).pack(
+            side="left", padx=(6, 0)
+        )
+
         ttk.Checkbutton(
             prof_frame,
             text="Recognise & learn speaker voices for this profile",
             variable=self.learn_var,
-        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
         ttk.Label(
             prof_frame,
@@ -437,12 +452,13 @@ class TranscribeTab:
                 "and labels them automatically — and every correction you make "
                 "(rename or move a line to a named speaker) teaches it that voice, "
                 "so the next recording gets better. Voiceprints only sharpen "
-                "labelling; they don't retrain the transcription model."
+                "labelling; they don't retrain the transcription model. Export a "
+                "profile to share it (and its learned voices) with another machine."
             ),
             wraplength=460,
             justify="left",
             font=("", 8),
-        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         # --- Run + progress -----------------------------------------------
         run_frame = ttk.Frame(container)
@@ -1315,6 +1331,66 @@ class TranscribeTab:
         self.profile_var.set("")
         self._refresh_profiles()
         self.progress_label_var.set("Profile deleted.")
+
+    def _export_profile(self) -> None:
+        """Write the active profile (settings + voiceprints) to a shareable file."""
+        profile = self._profile
+        if profile is None:
+            self.progress_label_var.set("Pick or create a profile first.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Export profile",
+            defaultextension=PROFILE_SUFFIX,
+            initialfile=f"{profile.name}{PROFILE_SUFFIX}",
+            filetypes=[
+                ("Whispers profile", f"*{PROFILE_SUFFIX}"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        try:
+            export_profile(profile, path)
+            self.progress_label_var.set(
+                f"Exported '{profile.name}' to {Path(path).name}"
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            self.progress_label_var.set(friendly_error(exc))
+
+    def _import_profile(self) -> None:
+        """Load a profile exported from another instance and add it here."""
+        path = filedialog.askopenfilename(
+            title="Import profile",
+            filetypes=[
+                ("Whispers profile", f"*{PROFILE_SUFFIX}"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        try:
+            profile = read_profile_file(path)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            self.progress_label_var.set(friendly_error(exc))
+            return
+        # Don't silently clobber a same-named profile already on this machine.
+        if load_profile(profile.name) is not None and not messagebox.askyesno(
+            "Import profile",
+            f"A profile named '{profile.name}' already exists here. Overwrite it "
+            "with the imported one?",
+            parent=self.root,
+        ):
+            return
+        save_profile(profile)
+        self._profile = profile
+        self._refresh_profiles()
+        self.profile_var.set(profile.name)
+        if profile.settings:
+            self._apply_profile_settings(profile.settings)
+        vp_count = len(profile.voiceprints)
+        self.progress_label_var.set(
+            f"Imported profile '{profile.name}' ({vp_count} learned voice(s))."
+        )
 
     def _profile_settings(self) -> Dict[str, object]:
         """The settings a profile remembers (the persisted set plus custom words).
