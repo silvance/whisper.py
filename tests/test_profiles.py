@@ -5,9 +5,11 @@ from whispr.profiles import (
     Profile,
     delete_profile,
     export_profile,
+    export_voiceprint,
     list_profiles,
     load_profile,
     read_profile_file,
+    read_voiceprints,
     save_profile,
 )
 from whispr.voiceprints import Voiceprint
@@ -104,3 +106,31 @@ def test_read_profile_file_rejects_garbage(tmp_path):
     bad.write_text("not json at all", encoding="utf-8")
     with pytest.raises(ValueError):
         read_profile_file(bad)
+
+
+def test_export_and_read_single_voiceprint(tmp_path):
+    vp = Voiceprint(name="Falcon", vectors=[[1.0, 0.0], [0.9, 0.1]])
+    out = tmp_path / "falcon.whispr-voiceprint.json"
+    export_voiceprint(vp, out, source_profile="Op One")
+
+    loaded = read_voiceprints(out)
+    assert list(loaded) == ["Falcon"]
+    assert loaded["Falcon"].vectors == [[1.0, 0.0], [0.9, 0.1]]
+
+
+def test_read_voiceprints_from_profile_file_returns_all(tmp_path):
+    prof = Profile(name="Op Two")
+    prof.voiceprint_for("Alpha").add([1.0, 0.0])
+    prof.voiceprint_for("Bravo").add([0.0, 1.0])
+    out = tmp_path / "op.whispr-profile.json"
+    export_profile(prof, out)
+
+    loaded = read_voiceprints(out)
+    assert set(loaded) == {"Alpha", "Bravo"}
+
+
+def test_read_voiceprints_rejects_file_without_prints(tmp_path):
+    bad = tmp_path / "empty.json"
+    bad.write_text('{"name": "Op", "voiceprints": []}', encoding="utf-8")
+    with pytest.raises(ValueError, match="no speaker voiceprints"):
+        read_voiceprints(bad)

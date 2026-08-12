@@ -43,6 +43,11 @@ DEFAULT_THRESHOLD = 0.5
 # characterise the voice), so we neither enrol from nor recognise on it.
 MIN_TURN_SECONDS = 1.0
 
+# Cosine similarity at/above which two voiceprints are, cautiously, "could be the
+# same speaker" in the 1:1 comparison tool. Conservative on purpose - this is an
+# investigative aid, not a forensic identification, and quality shifts the score.
+SAME_SPEAKER_THRESHOLD = 0.5
+
 # Cap the enrolment samples kept per speaker: recent corrections matter most and
 # an unbounded list would bloat the profile file. The centroid stays stable.
 _MAX_VECTORS = 32
@@ -139,6 +144,35 @@ def best_match(
             if score >= threshold:
                 best_name = vp.name
     return (best_name if best_score >= threshold else None), best_score
+
+
+# -- 1:1 speaker comparison (verification) ---------------------------------
+
+
+def compare_voiceprints(a: Voiceprint, b: Voiceprint) -> float:
+    """Similarity of two voiceprints: cosine of their centroids (~0..1).
+
+    Higher means the two sets of enrolled speech are more alike. This is an
+    investigative *indicator*, not a calibrated probability and not forensic
+    identification - see :func:`similarity_band`.
+    """
+    return cosine_similarity(a.centroid, b.centroid)
+
+
+def similarity_band(score: float) -> Tuple[str, str]:
+    """Map a comparison ``score`` to a qualitative ``(label, description)``.
+
+    The embeddings are not calibrated probabilities and the score swings with
+    audio quality, so we report a band rather than implying a precise likelihood.
+    Cut points are conservative for the bundled speaker-embedding model.
+    """
+    if score >= 0.75:
+        return ("Strong", "strong indication these are the same speaker")
+    if score >= SAME_SPEAKER_THRESHOLD:
+        return ("Moderate", "some indication these could be the same speaker")
+    if score >= 0.35:
+        return ("Weak", "little similarity; more likely different speakers")
+    return ("Very weak", "these are most likely different speakers")
 
 
 # -- Audio embedding (sherpa-onnx; lazy) -----------------------------------

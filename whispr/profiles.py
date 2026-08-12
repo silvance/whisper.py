@@ -159,3 +159,48 @@ def read_profile_file(path: "str | Path") -> Profile:
     if not isinstance(data, dict) or not data.get("name"):
         raise ValueError("This file isn't a Whispers profile.")
     return Profile.from_dict(data)
+
+
+# Suffix for a single exported speaker voiceprint (for cross-profile comparison).
+VOICEPRINT_SUFFIX = ".whispr-voiceprint.json"
+_VOICEPRINT_KIND = "whispr-voiceprint"
+
+
+def export_voiceprint(
+    voiceprint: Voiceprint, path: "str | Path", *, source_profile: Optional[str] = None
+) -> None:
+    """Write a single speaker's voiceprint to ``path`` for comparison elsewhere.
+
+    Records the originating profile name (informational) alongside the vectors.
+    Raises on failure so the caller can surface it.
+    """
+    data: Dict[str, object] = {"kind": _VOICEPRINT_KIND, **voiceprint.to_dict()}
+    if source_profile:
+        data["source_profile"] = source_profile
+    Path(path).write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def read_voiceprints(path: "str | Path") -> Dict[str, Voiceprint]:
+    """Load speaker voiceprints from a file: a single-speaker export or a profile.
+
+    Returns a ``{name: Voiceprint}`` map (one entry for a voiceprint export, one
+    per speaker for a full profile). Raises ``ValueError`` for anything else so
+    the caller can show a clear message.
+    """
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Couldn't read the file: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError("This file has no speaker voiceprints.")
+    if data.get("kind") == _VOICEPRINT_KIND:
+        vp = Voiceprint.from_dict(data)
+        if vp.name and vp.vectors:
+            return {vp.name: vp}
+    elif data.get("name") is not None:
+        profile = Profile.from_dict(data)
+        if profile.voiceprints:
+            return dict(profile.voiceprints)
+    raise ValueError("This file has no speaker voiceprints.")

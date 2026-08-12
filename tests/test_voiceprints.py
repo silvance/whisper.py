@@ -5,8 +5,10 @@ from whispr.voiceprints import (
     Voiceprint,
     best_match,
     centroid,
+    compare_voiceprints,
     cosine_similarity,
     recognize,
+    similarity_band,
 )
 
 
@@ -52,6 +54,25 @@ def test_best_match_returns_none_below_threshold():
     east = Voiceprint(name="East", vectors=[[1.0, 0.0]])
     name, score = best_match([0.0, 1.0], [east], threshold=0.5)
     assert name is None
+
+
+def test_compare_voiceprints_same_direction_is_high():
+    a = Voiceprint(name="A", vectors=[[1.0, 0.0], [0.9, 0.1]])
+    b = Voiceprint(name="B", vectors=[[1.0, 0.0]])
+    assert compare_voiceprints(a, b) > 0.9
+
+
+def test_compare_voiceprints_orthogonal_is_zero():
+    a = Voiceprint(name="A", vectors=[[1.0, 0.0]])
+    b = Voiceprint(name="B", vectors=[[0.0, 1.0]])
+    assert compare_voiceprints(a, b) == 0.0
+
+
+def test_similarity_band_thresholds():
+    assert similarity_band(0.9)[0] == "Strong"
+    assert similarity_band(0.6)[0] == "Moderate"
+    assert similarity_band(0.4)[0] == "Weak"
+    assert similarity_band(0.1)[0] == "Very weak"
 
 
 class _FakeEmbedder:
