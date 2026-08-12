@@ -304,6 +304,18 @@ files stored beside the app settings. One honest limit: voiceprints only sharpen
 they don't change the words Whisper decodes. For word accuracy, use a larger model
 than `base.en` (try `small.en`/`medium.en`) and the **Custom words** box.
 
+**Sharing and comparing speakers.** A profile can be moved between machines with
+**Export…** / **Import…** (the whole profile — settings and learned voices — as one
+`*.whispr-profile.json`; import warns before overwriting a same-named profile). For
+1:1 checks, **Export speaker…** writes a single person's voiceprint
+(`*.whispr-voiceprint.json`), and **Compare voices…** loads two voiceprints (from
+those files, or from a whole profile) and reports a **similarity score** with a
+qualitative band (Strong / Moderate / Weak / Very weak). This is an **investigative
+aid, not forensic voice identification**: the score is a similarity indicator that
+shifts with recording quality and how much speech each voiceprint was built from, so
+treat a high score as a lead to verify, never as proof of identity. Both voiceprints
+must come from builds using the same (bundled) speaker-embedding model.
+
 The transcription backend is also usable directly from Python:
 
 ```python
