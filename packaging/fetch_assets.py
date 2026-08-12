@@ -41,17 +41,30 @@ MODEL_REPOS = {
 # sherpa-onnx diarization models, downloaded from the official k2-fsa GitHub
 # release assets (stable, non-gated URLs). The segmentation model ships as a
 # .tar.bz2 containing model.onnx; the embedding model is a single .onnx.
-# We use NeMo TitaNet-large (English) for the speaker embeddings - it separates
-# voices much better than the small variant (which merged distinct male/female
-# speakers), and with multi-threaded inference it is fast enough on CPU.
 DIARIZATION_SEGMENTATION_URL = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
     "speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"
 )
-DIARIZATION_EMBEDDING_URL = (
+
+# Speaker-embedding models power both sherpa diarization and the voiceprint /
+# speaker-comparison features, so the choice governs how well voices separate.
+# Selectable at build time (default TitaNet-large, English - it separates voices
+# far better than the small variant, and is fast enough on CPU with threading).
+# For non-English work a multilingual model (CAM++ / ERes2Net) usually compares
+# better. All are single .onnx assets from the sherpa-onnx release below; a direct
+# .onnx URL may also be passed instead of an alias.
+EMBEDDING_RELEASE_BASE = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
-    "speaker-recongition-models/nemo_en_titanet_large.onnx"
+    "speaker-recongition-models/"
 )
+DEFAULT_EMBEDDING = "titanet-large"
+EMBEDDING_MODELS = {
+    "titanet-large": "nemo_en_titanet_large.onnx",  # English, best separation
+    "titanet-small": "nemo_en_titanet_small.onnx",  # English, smaller/faster
+    "wespeaker-en": "wespeaker_en_voxceleb_resnet34.onnx",  # English ResNet34 alt
+    "campplus": "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx",  # multilingual
+    "eres2net": "3dspeaker_speech_eres2net_sv_zh-cn_16k-common.onnx",  # multilingual
+}
 
 
 def fetch_ffmpeg() -> None:
@@ -130,19 +143,41 @@ def fetch_pyannote() -> None:
         print(f"pyannote {repo} -> {path}")
 
 
-def fetch_diarization() -> None:
-    """Download the sherpa-onnx diarization models into whispr_assets/diarization.
+def _resolve_embedding(embedding: str) -> "tuple[str, str]":
+    """Resolve an embedding alias (or a direct .onnx URL) to ``(name, url)``."""
+    embedding = embedding.strip()
+    if embedding.startswith(("http://", "https://")):
+        return Path(embedding).stem, embedding
+    if embedding not in EMBEDDING_MODELS:
+        raise SystemExit(
+            f"unknown embedding model '{embedding}'; choose from "
+            f"{', '.join(EMBEDDING_MODELS)}, or pass a direct .onnx URL"
+        )
+    return embedding, EMBEDDING_RELEASE_BASE + EMBEDDING_MODELS[embedding]
 
-    Saves whispr_assets/diarization/segmentation.onnx and embedding.onnx.
+
+def fetch_embedding(embedding: str = DEFAULT_EMBEDDING) -> None:
+    """Download the speaker-embedding model into whispr_assets/diarization.
+
+    Saves ``embedding.onnx`` plus ``embedding_model.txt`` (the chosen model's name,
+    so the app can show it and operators can confirm two builds match before
+    comparing voices). Needed for voiceprints/comparison on *every* build, so it is
+    fetched independently of the sherpa segmentation model.
     """
     out = ASSETS / "diarization"
     out.mkdir(parents=True, exist_ok=True)
-
+    name, url = _resolve_embedding(embedding)
     embedding_dest = out / "embedding.onnx"
-    print(f"downloading {DIARIZATION_EMBEDDING_URL}")
-    urllib.request.urlretrieve(DIARIZATION_EMBEDDING_URL, embedding_dest)
-    print(f"diarization embedding -> {embedding_dest}")
+    print(f"downloading embedding '{name}' from {url}")
+    urllib.request.urlretrieve(url, embedding_dest)
+    (out / "embedding_model.txt").write_text(name + "\n", encoding="utf-8")
+    print(f"diarization embedding ({name}) -> {embedding_dest}")
 
+
+def fetch_segmentation() -> None:
+    """Download the sherpa-onnx segmentation model into whispr_assets/diarization."""
+    out = ASSETS / "diarization"
+    out.mkdir(parents=True, exist_ok=True)
     segmentation_dest = out / "segmentation.onnx"
     with tempfile.TemporaryDirectory() as tmp:
         archive = Path(tmp) / "segmentation.tar.bz2"
@@ -158,6 +193,12 @@ def fetch_diarization() -> None:
             tar.extract(member, out)
         (out / "model.onnx").replace(segmentation_dest)
     print(f"diarization segmentation -> {segmentation_dest}")
+
+
+def fetch_diarization(embedding: str = DEFAULT_EMBEDDING) -> None:
+    """Download both sherpa-onnx diarization models (segmentation + embedding)."""
+    fetch_embedding(embedding)
+    fetch_segmentation()
 
 
 # Argos Translate source languages to bundle (each translates -> English). The
@@ -337,8 +378,9 @@ def fetch_tesseract(codes: List[str]) -> None:
 def main(argv: List[str]) -> None:
     if not argv:
         raise SystemExit(
-            "usage: fetch_assets.py [ffmpeg | models <names> | diarization | "
-            "pyannote | argos <codes> | tesseract <codes>]"
+            "usage: fetch_assets.py [ffmpeg | models <names> | embedding <model> | "
+            "segmentation | diarization <embedding> | pyannote | argos <codes> | "
+            "tesseract <codes>]"
         )
     command = argv[0]
     if command == "ffmpeg":
@@ -346,8 +388,14 @@ def main(argv: List[str]) -> None:
     elif command == "models":
         names = argv[1].split(",") if len(argv) > 1 else ["small", "medium", "large-v3"]
         fetch_models([n.strip() for n in names if n.strip()])
+    elif command == "embedding":
+        embedding = argv[1].strip() if len(argv) > 1 and argv[1].strip() else None
+        fetch_embedding(embedding or DEFAULT_EMBEDDING)
+    elif command == "segmentation":
+        fetch_segmentation()
     elif command == "diarization":
-        fetch_diarization()
+        embedding = argv[1].strip() if len(argv) > 1 and argv[1].strip() else None
+        fetch_diarization(embedding or DEFAULT_EMBEDDING)
     elif command == "pyannote":
         fetch_pyannote()
     elif command == "argos":

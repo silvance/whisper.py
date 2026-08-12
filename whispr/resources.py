@@ -200,6 +200,36 @@ def bundled_diarization_models() -> Optional[Tuple[Path, Path]]:
     return None
 
 
+def bundled_embedding_model() -> Optional[Path]:
+    """Return the bundled speaker-embedding model (for voiceprints), if present.
+
+    Independent of the segmentation model, so voiceprints and speaker comparison
+    work even on a pyannote-only build that ships just the embedding model.
+    """
+    for base in asset_dirs():
+        embedding = base / "diarization" / "embedding.onnx"
+        if embedding.is_file():
+            return embedding
+    return None
+
+
+def bundled_embedding_model_name() -> Optional[str]:
+    """Name of the bundled speaker-embedding model, if recorded at build time.
+
+    The build writes it to ``diarization/embedding_model.txt`` so the app can show
+    which model a bundle uses - two builds must share it to compare voiceprints.
+    """
+    for base in asset_dirs():
+        note = base / "diarization" / "embedding_model.txt"
+        if note.is_file():
+            try:
+                text = note.read_text(encoding="utf-8").strip()
+            except OSError:
+                return None
+            return text or None
+    return None
+
+
 def pyannote_cache_dir() -> Optional[Path]:
     """Return a bundled offline Hugging Face cache for pyannote, if present.
 

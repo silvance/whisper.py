@@ -32,6 +32,9 @@ on:
         type: choice
         options: [both, pyannote, sherpa]
         default: both
+      embedding:
+        description: "Speaker-embedding model for voiceprints/comparison (titanet-large = English default; campplus/eres2net = multilingual; titanet-small/wespeaker-en = English alts). A direct .onnx URL also works."
+        default: "titanet-large"
       translate_langs:
         description: "Argos text-translation packs to bundle (<code>->en, comma-separated; empty to skip translation)"
         default: "ar,ru,zh,fa,uk,he,ko"
@@ -77,6 +80,10 @@ jobs:
       # have no inputs, so they get both. "!= 'sherpa'" means pyannote-or-both;
       # "!= 'pyannote'" means sherpa-or-both.
       DIARIZER: ${{ github.event.inputs.diarizer || 'both' }}
+      # Speaker-embedding model for voiceprints + speaker comparison (and sherpa
+      # diarization). Bundled on every build. Default TitaNet-large (English); use
+      # a multilingual model (campplus / eres2net) for non-English work.
+      EMBEDDING: ${{ github.event.inputs.embedding || 'titanet-large' }}
       # Argos text-translation packs (<code>->en). Empty string skips translation.
       TRANSLATE_LANGS: ${{ github.event.inputs.translate_langs || 'ar,ru,zh,fa,uk,he,ko' }}
       # Tesseract OCR language packs (image/PDF -> text). Empty string skips OCR.
@@ -151,9 +158,11 @@ jobs:
         run: python packaging/fetch_assets.py ffmpeg
       - name: Fetch models
         run: python packaging/fetch_assets.py models ${{ github.event.inputs.models || 'base.en,small,medium,large-v3' }}
-      - name: Fetch diarization models (sherpa-onnx)
+      - name: Fetch speaker embedding model (voiceprints + comparison)
+        run: python packaging/fetch_assets.py embedding ${{ env.EMBEDDING }}
+      - name: Fetch diarization segmentation model (sherpa-onnx)
         if: env.DIARIZER != 'pyannote'
-        run: python packaging/fetch_assets.py diarization
+        run: python packaging/fetch_assets.py segmentation
       - name: Fetch diarization models (pyannote, gated)
         if: env.DIARIZER != 'sherpa'
         env:

@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from .diarization import SpeakerSegment
-from .resources import bundled_diarization_models
+from .resources import bundled_embedding_model
 
 PathLike = Union[str, Path]
 
@@ -211,14 +211,13 @@ class SpeakerEmbedder:
         import sherpa_onnx
 
         if model_path is None:
-            bundled = bundled_diarization_models()
-            if bundled is None:
+            model_path = bundled_embedding_model()
+            if model_path is None:
                 raise RuntimeError(
-                    "No speaker-embedding model found. Bundle the diarization "
-                    "models under whispr_assets/diarization/ (segmentation.onnx + "
-                    "embedding.onnx) or pass an explicit model path."
+                    "No speaker-embedding model found. Bundle it under "
+                    "whispr_assets/diarization/embedding.onnx (fetch_assets.py "
+                    "embedding) or pass an explicit model path."
                 )
-            model_path = bundled[1]
         config = sherpa_onnx.SpeakerEmbeddingExtractorConfig(
             model=str(model_path), num_threads=max(1, os.cpu_count() or 1)
         )

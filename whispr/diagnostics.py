@@ -96,6 +96,19 @@ def gather() -> List[Check]:
             "bundled" if resources.bundled_diarization_models() else "not bundled",
         )
     )
+    # The speaker-embedding model powers voiceprints + speaker comparison; two
+    # builds must share it to compare voiceprints, so name it here.
+    embedding = resources.bundled_embedding_model()
+    embedding_name = resources.bundled_embedding_model_name()
+    checks.append(
+        Check(
+            "Speaker embedding (voiceprints)",
+            embedding is not None,
+            (embedding_name or "titanet-large")
+            if embedding is not None
+            else "not bundled",
+        )
+    )
 
     # --- Translation ---
     argos = _installed("argostranslate")
