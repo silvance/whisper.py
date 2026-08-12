@@ -71,6 +71,35 @@ def test_bundled_diarization_models_absent(tmp_path, monkeypatch):
     assert resources.bundled_diarization_models() is None
 
 
+def test_bundled_embedding_model_without_segmentation(tmp_path, monkeypatch):
+    # A pyannote-only build ships embedding.onnx but no segmentation: voiceprints
+    # must still find the embedding model on its own.
+    assets = tmp_path / "whispr_assets"
+    diar = assets / "diarization"
+    diar.mkdir(parents=True)
+    (diar / "embedding.onnx").write_bytes(b"\x00")
+    monkeypatch.setenv(resources.ENV_ASSETS, str(assets))
+    assert resources.bundled_embedding_model() == diar / "embedding.onnx"
+    # bundled_diarization_models still needs both, so it stays None here.
+    assert resources.bundled_diarization_models() is None
+
+
+def test_bundled_embedding_model_name(tmp_path, monkeypatch):
+    assets = tmp_path / "whispr_assets"
+    diar = assets / "diarization"
+    diar.mkdir(parents=True)
+    (diar / "embedding.onnx").write_bytes(b"\x00")
+    (diar / "embedding_model.txt").write_text("campplus\n", encoding="utf-8")
+    monkeypatch.setenv(resources.ENV_ASSETS, str(assets))
+    assert resources.bundled_embedding_model_name() == "campplus"
+
+
+def test_bundled_embedding_model_absent(tmp_path, monkeypatch):
+    monkeypatch.setenv(resources.ENV_ASSETS, str(tmp_path / "empty"))
+    assert resources.bundled_embedding_model() is None
+    assert resources.bundled_embedding_model_name() is None
+
+
 def test_configure_offline_hf_cache_present(tmp_path, monkeypatch):
     assets = tmp_path / "whispr_assets"
     (assets / "pyannote" / "hub").mkdir(parents=True)

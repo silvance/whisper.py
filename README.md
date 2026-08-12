@@ -370,6 +370,16 @@ box shows a "⚠ not in this build" note, and Run reports it clearly). On a manu
 You also choose which **diarizer** to include: `both` (default — pyannote + sherpa,
 switchable at runtime via the Engine dropdown), `pyannote`, or `sherpa`.
 
+The **`embedding`** input picks the **speaker-embedding model** used for
+voiceprints and the *Compare voices* tool (and for sherpa diarization). It is
+bundled on **every** build regardless of the diarizer choice, so voiceprints work
+even in a `pyannote`-only bundle. Default `titanet-large` (English, best
+separation); `titanet-small`/`wespeaker-en` are English alternatives, and
+`campplus`/`eres2net` are multilingual — prefer one of those if your speakers
+aren't speaking English. A direct `.onnx` URL (any sherpa-onnx speaker-embedding
+model) also works. **Self-test…** shows which embedding model a build carries;
+voiceprints/comparisons are only valid between builds that share it.
+
 **Getting a large bundle (bypassing the 2 GB release cap).** Every run already
 uploads the full per-OS bundle as an **Actions artifact** (`dist/whispr`), and
 artifacts are **not** subject to the 2 GB per-file limit that Release assets are —
