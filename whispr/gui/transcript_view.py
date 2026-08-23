@@ -44,9 +44,12 @@ class TranscriptView:
         highlight_var: Optional[tk.BooleanVar] = None,
         on_play: Optional[Callable[[float, float], None]] = None,
         on_enroll: Optional[Callable[[str, List[Tuple[float, float]]], None]] = None,
+        placeholder: str = "",
     ) -> None:
         self.root = root
         self.blank_lines_var = blank_lines_var
+        # Shown (greyed) when there's no result yet - a first-run "do this" hint.
+        self._placeholder = placeholder
         # When set/enabled, low-confidence words (or segments) are colored.
         self.highlight_var = highlight_var
         # Called after an edit mutates the result, so the owner can re-save outputs.
@@ -153,6 +156,9 @@ class TranscriptView:
             self.widget.delete("1.0", "end")
             self.widget.tag_config("lowconf", foreground=_LOW_CONFIDENCE_COLOR)
             if result is None:
+                if self._placeholder:
+                    self.widget.tag_config("placeholder", foreground="#8a8a8a")
+                    self.widget.insert("end", self._placeholder, ("placeholder",))
                 self.widget.configure(state="disabled")
                 return
             # Blank line between segments/turns when enabled (easier to read/paste).

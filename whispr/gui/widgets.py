@@ -143,9 +143,9 @@ def register_drop(
     def _on_drop(event: object) -> None:
         data = getattr(event, "data", "")
         try:
-            raw = root.tk.splitlist(data)
+            raw: tuple = tuple(root.tk.splitlist(data))
         except Exception:  # noqa: BLE001 - fall back to a naive split
-            raw = str(data).split()
+            raw = tuple(str(data).split())
         paths = [Path(item) for item in raw if item]
         if paths:
             handler(paths)

@@ -91,6 +91,10 @@ class WhisprApp:
         ttk.Button(header, text="Self-test…", command=self._show_diagnostics).pack(
             side="right"
         )
+        # Plain-language getting-started guide for first-time / non-technical users.
+        ttk.Button(header, text="Help", command=self._show_help).pack(
+            side="right", padx=(0, 8)
+        )
 
         # With translation, a top-level Transcribe/Translate notebook; without it,
         # the transcribe UI fills the window directly (no redundant tab chrome).
@@ -133,6 +137,51 @@ class WhisprApp:
         self.cancel_event.set()
         for tab in self._tabs:
             tab.notify_cancelling()
+
+    def _show_help(self) -> None:
+        """Open a short, plain-language guide for first-time / non-technical users."""
+        guide = (
+            "Whispers — quick start\n"
+            "======================\n"
+            "\n"
+            "Transcribe an audio or video file\n"
+            "---------------------------------\n"
+            "1. Under “Input & output”, click Browse… and choose your file\n"
+            "   (or just drag the file onto the window).\n"
+            "2. To save a copy, tick “Save transcript to a folder” and pick one.\n"
+            "3. Click Run. The text appears in the Transcript tab when it finishes.\n"
+            "\n"
+            "Tips\n"
+            "----\n"
+            "• Bigger model = more accurate words but slower. Start with the\n"
+            "  default; switch under “Model & language” if you need more accuracy.\n"
+            "• “Custom words” (under Model & language): type names, places or\n"
+            "  callsigns you expect, so they’re spelled right.\n"
+            "• Copy transcript / Save as Word… are below the transcript.\n"
+            "\n"
+            "Who said what (speakers)\n"
+            "------------------------\n"
+            "• Open “Speakers”, tick “Identify speakers”, and (if you know it)\n"
+            "  enter how many people are talking.\n"
+            "• In the transcript you can rename a speaker, or drag a run of words\n"
+            "  onto another speaker’s line to reassign it.\n"
+            "\n"
+            "If something goes wrong\n"
+            "-----------------------\n"
+            "• The Status tab shows what happened, in plain language.\n"
+            "• “Self-test…” (top-right) lists exactly what this copy can do —\n"
+            "  which models, speaker engines and languages are built in.\n"
+        )
+        win = tk.Toplevel(self.root)
+        win.title("Whispers — Help")
+        win.transient(self.root)
+        text = ScrolledText(win, wrap="word", width=74, height=26)
+        text.pack(fill="both", expand=True, padx=8, pady=8)
+        text.insert("end", guide)
+        text.configure(state="disabled")
+        ttk.Button(win, text="Close", command=win.destroy).pack(
+            side="right", padx=8, pady=(0, 8)
+        )
 
     def _show_diagnostics(self) -> None:
         """Open a window listing which engines/models this build actually has."""
