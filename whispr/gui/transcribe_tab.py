@@ -254,11 +254,15 @@ class TranscribeTab:
         model_frame = model_section.body
         model_frame.columnconfigure(1, weight=1)
 
-        # A bundled model name, a size name, or a path to a local CTranslate2
-        # model. Bundled (offline) models are listed first.
-        model_values = list(self._bundled_models) + [
-            size for size in MODEL_SIZES if size not in self._bundled_models
-        ]
+        # What to offer in the dropdown. On a real (bundled) build, list only the
+        # models actually present - offering every size just lets an operator pick
+        # one that can't be fetched offline. From source (nothing bundled), list
+        # the known sizes so a dev run can download them. Either way, Browse… still
+        # allows a custom CTranslate2 model folder.
+        if self._bundled_models:
+            model_values = list(self._bundled_models)
+        else:
+            model_values = list(MODEL_SIZES)
         ttk.Label(model_frame, text="Model").grid(
             row=0, column=0, sticky="w", padx=(0, 8), pady=4
         )
@@ -311,7 +315,7 @@ class TranscribeTab:
         ).grid(row=5, column=1, columnspan=2, sticky="w")
 
         # --- Options -------------------------------------------------------
-        opt_section = CollapsibleSection(container, "Options")
+        opt_section = CollapsibleSection(container, "Options", expanded=False)
         opt_section.pack(fill="x", pady=(8, 0))
         self._setting_sections.append(opt_section)
         opt_frame = opt_section.body
@@ -342,7 +346,7 @@ class TranscribeTab:
         ).grid(row=4, column=0, sticky="w", pady=2)
 
         # --- Speakers ------------------------------------------------------
-        spk_section = CollapsibleSection(container, "Speakers")
+        spk_section = CollapsibleSection(container, "Speakers", expanded=False)
         spk_section.pack(fill="x", pady=(8, 0))
         self._setting_sections.append(spk_section)
         spk_frame = spk_section.body
@@ -405,7 +409,9 @@ class TranscribeTab:
         ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         # --- Profile (learn speakers) -------------------------------------
-        profile_section = CollapsibleSection(container, "Profile (learn speakers)")
+        profile_section = CollapsibleSection(
+            container, "Profile (learn speakers)", expanded=False
+        )
         profile_section.pack(fill="x", pady=(8, 0))
         self._setting_sections.append(profile_section)
         prof_frame = profile_section.body
@@ -504,7 +510,8 @@ class TranscribeTab:
         )
 
         # --- Output tabs ---------------------------------------------------
-        tabs = ttk.Notebook(container)
+        self._output_tabs = ttk.Notebook(container)
+        tabs = self._output_tabs
         tabs.pack(fill="both", expand=True, pady=(12, 0))
         self.transcript_view = TranscriptView(
             tabs,
@@ -514,6 +521,16 @@ class TranscribeTab:
             highlight_var=self.highlight_conf_var,
             on_play=self._play_segment if self._playback_ok else None,
             on_enroll=self._enroll_voice,
+            placeholder=(
+                "No transcript yet.\n\n"
+                "1.  Choose an audio or video file (Browse… under Input & output),\n"
+                "     or drag one onto this window.\n"
+                "2.  Click Run.\n\n"
+                "Your transcript appears here. If you ticked “Save transcript to a "
+                "folder”, a .txt is also written there.\n\n"
+                "Stuck? The Status tab shows details, and “Self-test…” (top-right) "
+                "confirms what this build can do."
+            ),
         )
         self.status = ScrolledText(
             tabs, wrap="word", state="disabled", height=14, font="TkFixedFont"
@@ -768,6 +785,7 @@ class TranscribeTab:
                     "or add files to the batch.",
                 )
                 final_status = "No input file"
+                self._show_status_tab()
                 return
 
             outdir = self.output_dir_var.get() if self.write_output_var.get() else None
@@ -802,8 +820,22 @@ class TranscribeTab:
             # Keep the full traceback in the log for troubleshooting.
             append_line(self.status, traceback.format_exc())
             final_status = "Error"
+            # Surface the reason: a non-technical user won't think to open the
+            # Status tab on their own, so bring it to the front.
+            self._show_status_tab()
         finally:
             self._set_busy(False, final_status)
+
+    def _show_status_tab(self) -> None:
+        """Bring the Status tab to the front (so an error/notice is seen)."""
+
+        def _do() -> None:
+            try:
+                self._output_tabs.select(self.status)
+            except tk.TclError:
+                pass
+
+        self.root.after(0, _do)
 
     def _transcribe_one(
         self,
