@@ -316,6 +316,35 @@ shifts with recording quality and how much speech each voiceprint was built from
 treat a high score as a lead to verify, never as proof of identity. Both voiceprints
 must come from builds using the same (bundled) speaker-embedding model.
 
+### Live (stream) transcription
+
+The **Live** tab transcribes an incoming stream in near-real-time — e.g. a GoPro
+pushing **RTMP** to this PC during a training session. It appears whenever ffmpeg
+is available (always, in a bundle).
+
+It is *chunked* near-live, not true streaming: ffmpeg reads the stream and splits
+its audio into short fixed-length segments, and each finished segment is
+transcribed and appended. End-to-end lag is roughly **one chunk length + the
+model's inference time**, so use a **small model** (`base.en` / `small.en`) to
+keep up on CPU — a big model will fall behind.
+
+- **Stream URL** — anything ffmpeg can read: an `rtmp://` / `udp://` / `http://`
+  URL, or a file. For a GoPro, point it at your local RTMP server
+  (e.g. `rtmp://localhost/live/stream`). Tick **Wait for an incoming connection**
+  only if this PC itself should listen for the stream (ffmpeg `-listen`).
+- **Chunk length** — shorter feels more live but is choppier at the boundaries;
+  longer is smoother but lags more. 8 seconds is a good start.
+- **Save to file** — appends the transcript to a `.txt` as it comes in, so a
+  session is captured even if the app is closed.
+- **Test connection** — a quick few-second probe that confirms the stream is
+  reachable (and audio is flowing) before you start a session; handy while
+  setting up.
+- **Start** / **Stop** control capture; the shared **Cancel** also stops it.
+
+Accuracy on a live feed is bounded by the audio: room noise, distance from the
+mic and overlapping speech all hurt more than on a clean recording. For a room,
+a mic close to the speaker beats the camera's on-board mic.
+
 The transcription backend is also usable directly from Python:
 
 ```python

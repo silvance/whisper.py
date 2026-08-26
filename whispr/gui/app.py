@@ -21,8 +21,10 @@ from ..resources import (
     configure_offline_hf_cache,
     configure_offline_ocr,
     configure_offline_translation,
+    find_ffmpeg,
 )
 from ..settings import load_settings, save_settings
+from .live_tab import LiveTab
 from .transcribe_tab import TranscribeTab
 from .translate_tab import TranslateTab
 
@@ -67,13 +69,13 @@ class WhisprApp:
         except tk.TclError:
             pass
 
-        # Translation is shown only when its engine/packs are bundled (so a lean
-        # transcriber-only build is a clean single-purpose app), and can be force-
-        # hidden with WHISPR_MODE=transcribe even on a full bundle.
-        show_translate = (
-            _translation_available()
-            and os.environ.get("WHISPR_MODE", "").lower() != "transcribe"
-        )
+        # Translation and live capture are shown as extra tabs when available.
+        # WHISPR_MODE=transcribe forces the lean single-purpose (file transcriber)
+        # window even on a full bundle.
+        full_mode = os.environ.get("WHISPR_MODE", "").lower() != "transcribe"
+        show_translate = _translation_available() and full_mode
+        # Live (stream) transcription needs ffmpeg to read the stream.
+        show_live = find_ffmpeg() is not None and full_mode
 
         # App header.
         subtitle = (
@@ -96,9 +98,10 @@ class WhisprApp:
             side="right", padx=(0, 8)
         )
 
-        # With translation, a top-level Transcribe/Translate notebook; without it,
-        # the transcribe UI fills the window directly (no redundant tab chrome).
-        if show_translate:
+        # With any extra tab (Translate and/or Live), a top-level notebook; with
+        # only Transcribe, that UI fills the window directly (no redundant chrome).
+        use_notebook = show_translate or show_live
+        if use_notebook:
             notebook = ttk.Notebook(self.root)
             notebook.pack(fill="both", expand=True, padx=8, pady=(0, 8))
             transcribe_root = ttk.Frame(notebook)
@@ -116,6 +119,13 @@ class WhisprApp:
         )
         self.transcribe.apply_settings(self._settings.get("transcribe", {}))
         self._tabs.append(self.transcribe)
+
+        # Live (stream) transcription, next to Transcribe since it's closely related.
+        if show_live:
+            live_root = ttk.Frame(notebook)
+            notebook.add(live_root, text="Live")
+            self.live = LiveTab(live_root, self.root, self.cancel_event, self.cancel)
+            self._tabs.append(self.live)
 
         if show_translate:
             translate_root = ttk.Frame(notebook)
@@ -211,10 +221,14 @@ class WhisprApp:
             save_settings({"transcribe": self.transcribe.get_settings()})
         except Exception:  # noqa: BLE001 - never block closing on a save failure
             pass
-        try:
-            self.transcribe.close()
-        except Exception:  # noqa: BLE001 - never block closing on cleanup
-            pass
+        # Release any tab resources (e.g. a running live ffmpeg session).
+        for tab in self._tabs:
+            close = getattr(tab, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # noqa: BLE001 - never block closing on cleanup
+                    pass
         self.root.destroy()
 
 
