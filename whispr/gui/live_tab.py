@@ -14,7 +14,7 @@ from tkinter import filedialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import IO, Callable, Optional
 
-from ..live import DEFAULT_SEGMENT_SECONDS, LiveTranscriber
+from ..live import DEFAULT_SEGMENT_SECONDS, LiveTranscriber, test_connection
 from ..resources import bundled_models
 from ..transcription import MODEL_SIZES
 from .errors import friendly_error
@@ -158,8 +158,12 @@ class LiveTab:
         # --- Controls ------------------------------------------------------
         controls = ttk.Frame(container)
         controls.pack(fill="x", pady=(12, 0))
+        self.test_button = ttk.Button(
+            controls, text="Test connection", command=self._test_connection
+        )
+        self.test_button.pack(side="left")
         self.start_button = ttk.Button(controls, text="▶ Start", command=self._start)
-        self.start_button.pack(side="left")
+        self.start_button.pack(side="left", padx=(8, 0))
         self.stop_button = ttk.Button(
             controls, text="⏹ Stop", command=self._stop, state="disabled"
         )
@@ -210,6 +214,29 @@ class LiveTab:
         except ValueError:
             return DEFAULT_SEGMENT_SECONDS
 
+    def _test_connection(self) -> None:
+        """Probe the stream for a few seconds and report if it's reachable."""
+        source = self.source_var.get().strip()
+        if not source:
+            self.status_var.set("Enter a stream URL first.")
+            return
+        listen = self.listen_var.get()
+        self.test_button.configure(state="disabled")
+        self.status_var.set("Testing connection…")
+
+        def _worker() -> None:
+            ok, message = test_connection(source, listen=listen)
+
+            def _apply() -> None:
+                self.status_var.set(("✓ " if ok else "✗ ") + message)
+                # Re-enable only if no session started in the meantime.
+                if self._live is None:
+                    self.test_button.configure(state="normal")
+
+            self.root.after(0, _apply)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     def _start(self) -> None:
         source = self.source_var.get().strip()
         if not source:
@@ -251,6 +278,7 @@ class LiveTab:
             self._live = None
             return
         self.start_button.configure(state="disabled")
+        self.test_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self.status_var.set("Listening…")
 
@@ -275,6 +303,7 @@ class LiveTab:
         self._live = None
         self._close_save_fh()
         self.start_button.configure(state="normal")
+        self.test_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         self.status_var.set("Stopped.")
 

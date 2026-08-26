@@ -7,6 +7,12 @@ from whispr import live
 from whispr.live import LiveTranscriber, LiveTranscriptionError
 
 
+class _FakeResult:
+    def __init__(self, returncode, stderr=b""):
+        self.returncode = returncode
+        self.stderr = stderr
+
+
 class _FakePopen:
     """Stands in for a finished ffmpeg process so start()/stop() run without one."""
 
@@ -81,3 +87,52 @@ def test_ffmpeg_args_listen_mode(monkeypatch):
 
     args = captured["args"]
     assert args.index("-listen") < args.index("-i")  # -listen precedes the input
+
+
+def test_test_connection_without_ffmpeg(monkeypatch):
+    monkeypatch.setattr(live, "find_ffmpeg", lambda: None)
+    ok, message = live.test_connection("rtmp://x")
+    assert ok is False
+    assert "ffmpeg" in message
+
+
+def test_test_connection_success(monkeypatch):
+    captured = {}
+
+    def _fake_run(args, **kwargs):
+        captured["args"] = args
+        return _FakeResult(returncode=0)
+
+    monkeypatch.setattr(live, "find_ffmpeg", lambda: Path("ffmpeg"))
+    monkeypatch.setattr(live.subprocess, "run", _fake_run)
+    ok, message = live.test_connection("rtmp://localhost/live/stream")
+    assert ok is True
+    args = captured["args"]
+    # Probe reads a bounded slice and discards output.
+    assert "-t" in args and args[args.index("-f") + 1] == "null"
+    assert "rtmp://localhost/live/stream" in args
+
+
+def test_test_connection_failure_reports_stderr(monkeypatch):
+    monkeypatch.setattr(live, "find_ffmpeg", lambda: Path("ffmpeg"))
+    monkeypatch.setattr(
+        live.subprocess,
+        "run",
+        lambda args, **kw: _FakeResult(returncode=1, stderr=b"Connection refused"),
+    )
+    ok, message = live.test_connection("rtmp://nope")
+    assert ok is False
+    assert "Connection refused" in message
+
+
+def test_test_connection_timeout(monkeypatch):
+    import subprocess
+
+    def _raise_timeout(args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args, timeout=1)
+
+    monkeypatch.setattr(live, "find_ffmpeg", lambda: Path("ffmpeg"))
+    monkeypatch.setattr(live.subprocess, "run", _raise_timeout)
+    ok, message = live.test_connection("rtmp://slow", listen=True)
+    assert ok is False
+    assert "timeout" in message.lower()

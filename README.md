@@ -336,6 +336,9 @@ keep up on CPU — a big model will fall behind.
   longer is smoother but lags more. 8 seconds is a good start.
 - **Save to file** — appends the transcript to a `.txt` as it comes in, so a
   session is captured even if the app is closed.
+- **Test connection** — a quick few-second probe that confirms the stream is
+  reachable (and audio is flowing) before you start a session; handy while
+  setting up.
 - **Start** / **Stop** control capture; the shared **Cancel** also stops it.
 
 Accuracy on a live feed is bounded by the audio: room noise, distance from the

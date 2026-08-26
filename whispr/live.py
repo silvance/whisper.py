@@ -39,6 +39,44 @@ class LiveTranscriptionError(RuntimeError):
     """Raised when the stream can't be opened or ffmpeg fails to run."""
 
 
+def test_connection(
+    source: str,
+    *,
+    listen: bool = False,
+    probe_seconds: int = 3,
+    timeout: float = 12.0,
+) -> "tuple[bool, str]":
+    """Quick reachability check for a stream, before committing to a session.
+
+    Runs ffmpeg for a few seconds against ``source`` (discarding output) and
+    reports ``(ok, message)``. Success means audio actually came through; failure
+    returns a plain-language reason (bad URL, nothing connected in time, etc.).
+    Blocks up to ``timeout`` seconds, so call it off the UI thread.
+    """
+    ffmpeg = find_ffmpeg()
+    if ffmpeg is None:
+        return False, "ffmpeg was not found, so the stream can't be tested."
+    args: List[str] = [str(ffmpeg), "-hide_banner", "-loglevel", "error"]
+    if listen:
+        args += ["-listen", "1"]
+    args += ["-i", source, "-t", str(max(1, probe_seconds)), "-f", "null", "-"]
+    try:
+        result = subprocess.run(args, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False, (
+            "No data within the timeout. If this PC hosts the stream, tick "
+            "'Wait for an incoming connection' and make sure the source is "
+            "pushing; otherwise check the URL."
+        )
+    except OSError as exc:
+        return False, f"Couldn't run ffmpeg: {exc}"
+    if result.returncode == 0:
+        return True, "Stream reached — audio is coming through."
+    lines = result.stderr.decode("utf-8", "replace").strip().splitlines()
+    detail = lines[-1] if lines else f"ffmpeg exited with code {result.returncode}."
+    return False, f"Couldn't read the stream: {detail}"
+
+
 class LiveTranscriber:
     """Transcribes a live stream in near-real-time, one short segment at a time.
 
