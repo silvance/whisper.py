@@ -22,11 +22,11 @@ from whispr.questioned import (
 RATE = 16000
 
 
-def _speechlike(seconds, rate=RATE):
+def _speechlike(seconds, rate=RATE, f0=120.0):
     """A voiced-looking signal: harmonics under a syllable-rate envelope."""
     t = np.arange(int(seconds * rate)) / rate
     envelope = 0.5 * (1 + np.sin(2 * np.pi * 3.0 * t))
-    tone = sum(np.sin(2 * np.pi * 120 * k * t) / k for k in (1, 2, 3))
+    tone = sum(np.sin(2 * np.pi * f0 * k * t) / k for k in (1, 2, 3))
     return (0.3 * envelope * tone).astype(np.float32)
 
 
@@ -94,18 +94,115 @@ def test_all_usable_windows_are_embedded_not_just_the_longest(long_wav):
     assert result.usable
 
 
-def test_reported_speech_is_what_the_embedding_represents(scattered_wav):
-    """The bug this module exists to prevent, stated as a test."""
+def test_short_conversational_turns_are_joined_into_measurable_speech(
+    scattered_wav,
+):
+    """A target speaking in bursts is measurable; each burst alone is not."""
     spans = [(i * 4.0, i * 4.0 + 2.0) for i in range(8)]
     result = measure_from_wav(
         scattered_wav, spans, _CountingEmbedder(), selection_mode=SELECTION_DIARIZED
     )
-    # Eight two-second turns: individually too short to window, so nothing is
-    # measured and the reported duration is zero - not the 16 seconds selected.
-    assert result.speech_seconds == 0.0
+    # Sixteen seconds of speech in eight two-second turns: none of them reaches
+    # the three-second window minimum on its own, so measuring turn by turn
+    # would throw all of it away.
+    assert result.usable
+    assert result.aggregated
+    assert result.speech_seconds > 10.0
+    assert result.window_count >= 1
+
+
+def test_a_single_turn_too_short_to_window_is_still_not_measured(tmp_path):
+    """Joining turns is not a way around the minimum - 2 seconds is 2 seconds."""
+    wav = _write(tmp_path / "brief.wav", [_speechlike(2.0)])
+    result = measure_from_wav(wav, [(0.0, 2.0)], _CountingEmbedder())
     assert not result.usable
-    assert result.selected_seconds > result.speech_seconds
-    assert result.warnings
+    assert not result.aggregated
+    assert result.speech_seconds == 0.0
+    assert result.skipped and "needed to measure a voice" in result.skipped[0]
+
+
+def test_reported_speech_never_exceeds_the_selection_it_came_from(scattered_wav):
+    spans = [(i * 4.0, i * 4.0 + 2.0) for i in range(8)]
+    result = measure_from_wav(scattered_wav, spans, _CountingEmbedder())
+    assert result.speech_seconds <= result.selected_seconds + 0.01
+
+
+def test_joined_windows_are_reported_in_the_source_timeline(scattered_wav):
+    """A window over the joined audio still says where in the recording it was."""
+    spans = [(i * 4.0, i * 4.0 + 2.0) for i in range(8)]
+    result = measure_from_wav(scattered_wav, spans, _CountingEmbedder())
+    assert result.embedded_spans
+    # Every reported interval lies inside one of the selected turns - never in
+    # the silence or another speaker's audio between them.
+    for start, end in result.embedded_spans:
+        assert any(a - 0.05 <= start and end <= b + 0.05 for a, b in spans), (
+            start,
+            end,
+        )
+
+
+def test_only_the_selected_audio_is_joined(tmp_path):
+    """Nothing between the selected turns may enter the measurement."""
+    wav = _write(
+        tmp_path / "two-speakers.wav",
+        [_speechlike(6.0, f0=120), _speechlike(6.0, f0=260), _speechlike(6.0, f0=120)],
+    )
+    target = [(0.0, 6.0), (12.0, 18.0)]
+    result = measure_from_wav(wav, target, _CountingEmbedder())
+    assert result.usable
+    for start, end in result.embedded_spans:
+        assert any(a - 0.05 <= start and end <= b + 0.05 for a, b in target)
+    # The 6-18s middle speaker contributes nothing.
+    assert all(not (6.5 < start < 11.5) for start, _end in result.embedded_spans)
+
+
+# -- Overlapping and repeated ranges -----------------------------------------
+
+
+def test_a_repeated_range_is_measured_once(long_wav):
+    once = measure_from_wav(long_wav, [(0.0, 20.0)], _CountingEmbedder())
+    twice = measure_from_wav(long_wav, [(0.0, 20.0), (0.0, 20.0)], _CountingEmbedder())
+    # The same ten seconds entered twice is one stretch of speech, not two.
+    assert twice.speech_seconds == pytest.approx(once.speech_seconds, abs=0.5)
+    assert twice.window_count == once.window_count
+    assert any("measured once" in w for w in twice.warnings)
+
+
+def test_overlapping_ranges_do_not_double_count_their_overlap(long_wav):
+    overlapping = measure_from_wav(
+        long_wav, [(0.0, 20.0), (10.0, 30.0)], _CountingEmbedder()
+    )
+    union = measure_from_wav(long_wav, [(0.0, 30.0)], _CountingEmbedder())
+    assert overlapping.speech_seconds == pytest.approx(union.speech_seconds, abs=0.5)
+
+
+def test_the_operators_original_ranges_are_still_recorded(long_wav):
+    result = measure_from_wav(
+        long_wav, [(0.0, 20.0), (10.0, 30.0)], _CountingEmbedder()
+    )
+    # What they typed is kept for the record even though it is not what was read.
+    assert result.selected_spans == [(0.0, 20.0), (10.0, 30.0)]
+    assert result.to_dict()["selected_spans"] == [[0.0, 20.0], [10.0, 30.0]]
+
+
+def test_an_empty_selection_measures_nothing(long_wav):
+    result = measure_from_wav(long_wav, [], _CountingEmbedder())
+    assert not result.usable
+    assert any("empty" in w for w in result.warnings)
+
+
+# -- Span arithmetic ---------------------------------------------------------
+
+
+def test_source_intervals_map_a_joined_window_back():
+    from whispr.questioned import source_intervals
+
+    pieces = [(0.0, 5.0, 100.0, 105.0), (5.0, 9.0, 200.0, 204.0)]
+    # A window spanning the join maps to both original stretches.
+    assert source_intervals(pieces, 3.0, 7.0) == [(103.0, 105.0), (200.0, 202.0)]
+    # One wholly inside a piece maps to just that piece.
+    assert source_intervals(pieces, 1.0, 2.0) == [(101.0, 102.0)]
+    assert source_intervals(pieces, 20.0, 25.0) == []
 
 
 def test_speech_seconds_never_exceeds_the_speech_actually_embedded(long_wav):

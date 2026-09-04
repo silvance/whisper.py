@@ -318,6 +318,14 @@ class SpeakerProfilesTab:
             return
         try:
             imported = load_profile_file(path)
+            # import_warnings describe *this* read and are not persisted, so
+            # collect them before saving - after the reload they are gone, and
+            # an operator would never learn that samples were dropped.
+            issues = [
+                (profile.display_name, warning)
+                for profile in imported
+                for warning in profile.import_warnings
+            ]
             for profile in imported:
                 save_speaker_profile(profile)
         except ProfileError as exc:
@@ -331,6 +339,35 @@ class SpeakerProfilesTab:
             else ""
         )
         self._status(f"Imported {len(imported)} subject(s).{note}")
+        if issues:
+            self._report_import_issues(Path(path).name, issues)
+
+    def _report_import_issues(
+        self, filename: str, issues: Sequence[Tuple[str, str]]
+    ) -> None:
+        """Tell the operator exactly what the import dropped or demoted.
+
+        Data being safely quarantined is not the same as the operator knowing
+        it happened: a profile that arrives two samples lighter, or with
+        reference material demoted to pending, changes what any later
+        comparison means.
+        """
+        lines = [
+            f"{filename} was imported, but not everything in it could be "
+            "trusted as it stood:",
+            "",
+        ]
+        for subject, warning in issues:
+            lines.append(f"  {subject}: {warning}")
+        lines += [
+            "",
+            "Dropped samples held vectors that could not be compared. Demoted "
+            "samples are kept as pending and can be approved under "
+            "'Selected subject' after review.",
+        ]
+        messagebox.showwarning(
+            "Imported with changes", "\n".join(lines), parent=self.root
+        )
 
     # -- Sample review ------------------------------------------------------
 

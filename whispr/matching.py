@@ -465,15 +465,19 @@ def search_gallery(
         by_label[label] = profile
     result.searched = len(candidates)
 
-    decision = decide_identity(
-        embedding,
-        candidates,
-        acceptance=thresholds.recognition_acceptance,
-        margin=thresholds.recognition_margin,
-        speech_seconds=questioned_seconds,
-        min_speech_seconds=thresholds.min_questioned_seconds,
-    )
-    result.decision = decision
+    if not result.inadequate_reason:
+        # On audio too poor to assess, the acceptance test is not run at all.
+        # Running it and then withholding the lead would still print its
+        # rationale ("Score 0.95 >= 0.62 with margin ...") underneath the
+        # refusal, which reads as the tool arguing with itself.
+        result.decision = decide_identity(
+            embedding,
+            candidates,
+            acceptance=thresholds.recognition_acceptance,
+            margin=thresholds.recognition_margin,
+            speech_seconds=questioned_seconds,
+            min_speech_seconds=thresholds.min_questioned_seconds,
+        )
     for name, score in _ranked(embedding, candidates):
         profile = by_label[name]
         band, _ = similarity_band(

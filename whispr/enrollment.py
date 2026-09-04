@@ -162,7 +162,16 @@ def enroll_from_wav(
     """
     result = EnrollmentResult(profile=profile)
     reports: List[QualityReport] = []
-    for span_start, span_end in spans:
+    # Overlapping or repeated ranges describe one stretch of speech; enrolling
+    # each independently would weight those seconds twice in the centroid.
+    distinct = normalize_spans(spans)
+    if len(distinct) < len(list(spans)):
+        result.skipped.append(
+            f"{len(list(spans))} given range(s) cover {len(distinct)} distinct "
+            "stretch(es) of audio; ranges that overlap, repeat or run straight "
+            "on are enrolled once."
+        )
+    for span_start, span_end in distinct:
         pieces = windows(span_start, span_end)
         if not pieces:
             result.skipped.append(
@@ -341,6 +350,31 @@ def speaker_totals(speaker_segments: Sequence[Any]) -> List[Tuple[str, float]]:
         key=lambda item: item[1],
         reverse=True,
     )
+
+
+def normalize_spans(
+    spans: Sequence[Tuple[float, float]],
+) -> List[Tuple[float, float]]:
+    """Sort, drop empties and union overlaps, so no audio is counted twice.
+
+    An operator typing ``0:10-0:20, 0:10-0:20`` (or ``0:10-0:20, 0:15-0:25``)
+    means one stretch of speech, not two. Measuring each range independently
+    would embed the same seconds twice, weight them twice in the centroid, and
+    report twice the speech actually behind the result - the same overstatement
+    the windowed measurement exists to prevent, in a narrower form.
+
+    The operator's original ranges are kept separately for the record; this is
+    what the audio is read from.
+    """
+    ordered = sorted((float(start), float(end)) for start, end in spans if end > start)
+    merged: List[Tuple[float, float]] = []
+    for start, end in ordered:
+        if merged and start <= merged[-1][1]:
+            previous_start, previous_end = merged[-1]
+            merged[-1] = (previous_start, max(previous_end, end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def parse_time_ranges(text: str) -> List[Tuple[float, float]]:

@@ -8,6 +8,7 @@ from whispr import enrollment
 from whispr.enrollment import (
     EnrollmentResult,
     enroll_from_wav,
+    normalize_spans,
     spans_for_speaker,
     speaker_totals,
     windows,
@@ -352,3 +353,39 @@ def test_enroll_from_media_honours_explicit_spans(wav):
     )
     assert result.added_count > 0
     assert all(s.source_end <= 16.0 for s in result.added)
+
+
+# -- Overlapping and repeated ranges -----------------------------------------
+
+
+def test_a_repeated_range_is_enrolled_once(wav):
+    profile = SpeakerProfile(display_name="Subject O")
+    result = enroll_from_wav(profile, wav, [(0.0, 16.0), (0.0, 16.0)], _FakeEmbedder())
+    once = SpeakerProfile(display_name="Subject O2")
+    expected = enroll_from_wav(once, wav, [(0.0, 16.0)], _FakeEmbedder())
+    # The same audio entered twice must not be weighted twice in the centroid.
+    assert result.added_count == expected.added_count
+    assert result.added_seconds == pytest.approx(expected.added_seconds, abs=0.1)
+    assert any("enrolled once" in note for note in result.skipped)
+
+
+def test_overlapping_ranges_enrol_their_union(wav):
+    profile = SpeakerProfile(display_name="Subject P")
+    overlapping = enroll_from_wav(
+        profile, wav, [(0.0, 16.0), (8.0, 24.0)], _FakeEmbedder()
+    )
+    union = enroll_from_wav(
+        SpeakerProfile(display_name="Subject P2"), wav, [(0.0, 24.0)], _FakeEmbedder()
+    )
+    assert overlapping.added_count == union.added_count
+    assert overlapping.added_seconds == pytest.approx(union.added_seconds, abs=0.1)
+
+
+def test_normalize_spans_unions_and_sorts():
+    assert normalize_spans([(10, 20), (10, 20)]) == [(10.0, 20.0)]
+    assert normalize_spans([(10, 20), (15, 25)]) == [(10.0, 25.0)]
+    assert normalize_spans([(30, 40), (10, 20)]) == [(10.0, 20.0), (30.0, 40.0)]
+    # Touching ranges are one stretch; empty ones are dropped.
+    assert normalize_spans([(10, 20), (20, 30)]) == [(10.0, 30.0)]
+    assert normalize_spans([(5, 5), (1, 2)]) == [(1.0, 2.0)]
+    assert normalize_spans([]) == []

@@ -512,3 +512,34 @@ def test_a_comparison_without_recorded_provenance_claims_none():
     text = "\n".join(result.format_lines())
     assert "Questioned recording:" not in text
     assert "Source SHA-256" not in text
+
+
+def test_a_refused_gallery_search_does_not_print_an_acceptance_rationale():
+    """The refusal must not be followed by the reasoning for a lead it withheld."""
+    gallery = search_gallery(
+        [1.0, 0.0],
+        [_profile("Actor A", _at_cosine(0.95))],
+        questioned_seconds=30.0,
+        questioned_quality=INSUFFICIENT,
+        questioned_model=MODEL,
+    )
+    text = " ".join(gallery.summary_lines())
+    assert BAND_INSUFFICIENT in text
+    assert gallery.decision is None
+    # No ">= threshold with margin >=" style justification anywhere.
+    assert ">=" not in text
+    assert "margin" not in text.lower()
+
+
+def test_an_adequate_gallery_search_still_explains_its_decision():
+    gallery = search_gallery(
+        [1.0, 0.0],
+        [_profile("Actor A", _at_cosine(0.68)), _profile("Actor B", _at_cosine(0.67))],
+        questioned_seconds=30.0,
+        questioned_quality=GOOD,
+        questioned_model=MODEL,
+    )
+    assert gallery.decision is not None
+    assert gallery.accepted_name is None
+    # Ambiguous, and it says why.
+    assert any("margin" in line.lower() for line in gallery.summary_lines())
