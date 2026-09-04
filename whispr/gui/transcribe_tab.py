@@ -19,7 +19,17 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Callable, Dict, List, Optional, Tuple
 
+from ..acceleration import (
+    DEFAULT_MODE,
+    MODE_LABELS,
+    Device,
+    cuda_available,
+    describe_hardware,
+    fallback_to_cpu,
+)
+from ..acceleration import resolve as resolve_device
 from ..diarization import assign_speakers, diarize
+from ..enrollment import enroll_from_wav
 from ..export import transcript_to_docx
 from ..playback import PlaybackError, SegmentPlayer, playback_available
 from ..profiles import (
@@ -32,8 +42,22 @@ from ..profiles import (
     read_profile_file,
     save_profile,
 )
-from ..project import PROJECT_SUFFIX, load_project, save_project
+from ..project import PROJECT_SUFFIX, load_project_record, save_project
+from ..provenance import (
+    AnalysisProvenance,
+    DiarizationProvenance,
+    SourceRecord,
+    TranscriptionProvenance,
+    transcription_model_sha256,
+)
+from ..reports import write_analysis_report
 from ..resources import bundled_models
+from ..speaker_profiles import (
+    SAMPLE_LEARNED,
+    find_speaker_profile_by_name,
+    save_speaker_profile,
+)
+from ..thresholds import active as active_thresholds
 from ..transcription import (
     AUDIO_EXTENSIONS,
     MODEL_SIZES,
@@ -84,6 +108,17 @@ ENGINE_CHOICES = {
 ENGINE_LABELS = list(ENGINE_CHOICES)
 
 
+# The hardware dropdown shows friendly labels; the run needs the mode behind one.
+_DEVICE_MODES = {label: mode for mode, label in MODE_LABELS}
+
+
+def _device_label(mode: str) -> str:
+    for candidate, label in MODE_LABELS:
+        if candidate == mode:
+            return label
+    return MODE_LABELS[0][1]
+
+
 class TranscribeTab:
     """Builds and drives the Transcribe tab inside ``parent``."""
 
@@ -123,6 +158,9 @@ class TranscribeTab:
         self.task_var = tk.StringVar(value="transcribe")
         self.language_var = tk.StringVar(value="Auto")
         self.vad_var = tk.BooleanVar(value=True)
+        # Compute device for transcription. CPU is the supported
+        # baseline; a GPU only makes the same work finish sooner.
+        self.device_var = tk.StringVar(value=_device_label(DEFAULT_MODE))
         self.convert_video_var = tk.BooleanVar(value=True)
         self.diarize_var = tk.BooleanVar(value=False)
         self.engine_var = tk.StringVar(value=ENGINE_LABELS[0])
@@ -146,6 +184,8 @@ class TranscribeTab:
         self._result_source: Optional[Path] = None
         self._result_outdir: Optional[Path] = None
         self._speaker_names: Dict[str, str] = {}
+        # Traceability for the displayed result: source hash, models, settings.
+        self._result_provenance: Optional[AnalysisProvenance] = None
 
         # Optional batch queue; when non-empty, Run transcribes all of these
         # instead of the single "Audio / video file" above.
@@ -334,6 +374,28 @@ class TranscribeTab:
             variable=self.highlight_conf_var,
             command=self._rerender_transcript,
         ).grid(row=4, column=0, sticky="w", pady=2)
+
+        device_row = ttk.Frame(opt_frame)
+        device_row.grid(row=6, column=0, sticky="w", pady=(6, 2))
+        ttk.Label(device_row, text="Processing hardware").pack(side="left")
+        ttk.Combobox(
+            device_row,
+            textvariable=self.device_var,
+            values=[label for _, label in MODE_LABELS],
+            state="readonly",
+            width=32,
+        ).pack(side="left", padx=(8, 0))
+        ttk.Label(opt_frame, text=describe_hardware(), font=("", 8)).grid(
+            row=7, column=0, sticky="w"
+        )
+        if not cuda_available():
+            ttk.Label(
+                opt_frame,
+                text=(
+                    "CPU runs everything this build does; a GPU only makes it faster."
+                ),
+                font=("", 8),
+            ).grid(row=8, column=0, sticky="w")
 
         # --- Speakers ------------------------------------------------------
         spk_section = CollapsibleSection(container, "Speakers", expanded=False)
@@ -556,6 +618,11 @@ class TranscribeTab:
         ).pack(side="left")
         ttk.Button(
             export_row, text="Save as Word…", command=self._save_transcript_docx
+        ).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            export_row,
+            text="Analysis report…",
+            command=self._save_analysis_report,
         ).pack(side="left", padx=(8, 0))
         ttk.Button(export_row, text="Save project…", command=self._save_project).pack(
             side="left", padx=(8, 0)
@@ -887,17 +954,54 @@ class TranscribeTab:
             # word-level confidence highlighting; skip the extra alignment pass when
             # neither is needed so plain transcription stays fast.
             need_words = self.diarize_var.get() or self.highlight_conf_var.get()
-            result = transcribe_audio(
-                media_path,
-                model_size=model,
-                task=task,
-                language=language_arg,
-                vad_filter=self.vad_var.get(),
-                word_timestamps=need_words,
-                initial_prompt=self.vocab_var.get().strip() or None,
-                progress=lambda msg: append_line(self.status, msg),
-                on_progress=lambda f: self._set_progress(f, transcribe_label),
-                cancelled=self._cancel_event.is_set,
+            device = resolve_device(
+                _DEVICE_MODES.get(self.device_var.get(), DEFAULT_MODE)
+            )
+            if device.note:
+                append_line(self.status, device.note)
+            append_line(self.status, f"Processing on: {device.describe()}")
+
+            def _run(on: Device):
+                return transcribe_audio(
+                    media_path,
+                    model_size=model,
+                    device=on.device,
+                    compute_type=on.compute_type,
+                    task=task,
+                    language=language_arg,
+                    vad_filter=self.vad_var.get(),
+                    word_timestamps=need_words,
+                    initial_prompt=self.vocab_var.get().strip() or None,
+                    progress=lambda msg: append_line(self.status, msg),
+                    on_progress=lambda f: self._set_progress(f, transcribe_label),
+                    cancelled=self._cancel_event.is_set,
+                )
+
+            try:
+                result = _run(device)
+            except Exception as exc:  # noqa: BLE001 - see fallback_to_cpu
+                # A GPU can be visible and still fail (VRAM, driver, a busy
+                # card). Losing the job to that is worse than running it slowly.
+                retry = fallback_to_cpu(device, exc)
+                if retry is None or self._cancel_event.is_set():
+                    raise
+                append_line(self.status, retry.note)
+                device = retry
+                result = _run(device)
+
+            # Record what produced this result while the settings are in hand.
+            provenance = AnalysisProvenance(
+                source=SourceRecord.from_path(src),
+                transcription=TranscriptionProvenance(
+                    model_name=model_sel,
+                    model_sha256=transcription_model_sha256(model),
+                    device=device.device,
+                    compute_type=device.compute_type,
+                    language_setting=language or "auto",
+                    detected_language=result.language,
+                    vad=self.vad_var.get(),
+                    initial_prompt=self.vocab_var.get().strip(),
+                ),
             )
 
             append_line(
@@ -909,6 +1013,11 @@ class TranscribeTab:
 
             if self.diarize_var.get():
                 self._diarize_into(result, src, media_path, media_is_normalized)
+                provenance.diarization = DiarizationProvenance.from_bundle(
+                    engine=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
+                    expected_speaker_count=self._parse_num_speakers(),
+                    clustering_threshold=self._parse_threshold(),
+                )
 
             names = self._preset_names_for(result)
             if set_view:
@@ -917,6 +1026,7 @@ class TranscribeTab:
                 self._result_source = src
                 self._result_outdir = save_dir
                 self._speaker_names = names
+                self._result_provenance = provenance
                 self.transcript_view.set_result(result, names)
 
             if save_dir is not None:
@@ -1080,6 +1190,45 @@ class TranscribeTab:
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             self.progress_label_var.set(friendly_error(exc))
 
+    def current_analysis(
+        self,
+    ) -> "Tuple[Optional[TranscriptionResult], Dict[str, str], Optional[AnalysisProvenance]]":
+        """The displayed result, its speaker names and its provenance.
+
+        Lets the Speaker Compare tab put the transcript and its traceability into
+        an analysis report without reaching into this tab's internals.
+        """
+        return self._result, self._speaker_names, self._result_provenance
+
+    def _save_analysis_report(self) -> None:
+        """Write a report covering the transcript and how it was produced."""
+        result = self._result
+        if result is None:
+            self.progress_label_var.set("Run a transcription first.")
+            return
+        stem = self._result_source.stem if self._result_source else "analysis"
+        path = filedialog.asksaveasfilename(
+            title="Save analysis report",
+            defaultextension=".docx",
+            initialfile=f"{stem}-report.docx",
+            filetypes=[
+                ("Word document", "*.docx"),
+                ("Text file", "*.txt"),
+            ],
+        )
+        if not path:
+            return
+        try:
+            write_analysis_report(
+                path,
+                result=result,
+                speaker_names=self._speaker_names,
+                provenance=self._result_provenance,
+            )
+            self.progress_label_var.set(f"Saved {Path(path).name}")
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            self.progress_label_var.set(friendly_error(exc))
+
     def _save_project(self) -> None:
         """Save the result + speaker edits to a reloadable project file."""
         result = self._result
@@ -1099,7 +1248,13 @@ class TranscribeTab:
         if not path:
             return
         try:
-            save_project(path, result, self._speaker_names, self._result_source)
+            save_project(
+                path,
+                result,
+                self._speaker_names,
+                self._result_source,
+                self._result_provenance,
+            )
             self.progress_label_var.set(f"Saved {Path(path).name}")
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             self.progress_label_var.set(friendly_error(exc))
@@ -1116,7 +1271,11 @@ class TranscribeTab:
         if not path:
             return
         try:
-            result, speaker_names, source = load_project(path)
+            record = load_project_record(path)
+            result = record.result
+            speaker_names = record.speaker_names
+            source = record.source
+            self._result_provenance = record.provenance
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             self.progress_label_var.set(friendly_error(exc))
             return
@@ -1250,11 +1409,17 @@ class TranscribeTab:
         if embedder is None:
             return speaker_segments
         try:
+            active = active_thresholds()
             relabeled, name_map = recognize(
                 diar_wav,
                 speaker_segments,
                 list(profile.voiceprints.values()),
                 embedder,
+                threshold=active.recognition_acceptance,
+                margin=active.recognition_margin,
+                # min_seconds stays voiceprints.MIN_TURN_SECONDS: it is the
+                # shortest turn worth embedding at all, not the comparison
+                # tool's minimum for making an assessment.
             )
         except Exception as exc:  # noqa: BLE001 - never fail a run on recognition
             append_line(self.status, f"Voice recognition skipped: {exc}")
@@ -1311,8 +1476,49 @@ class TranscribeTab:
                     )
             except Exception as exc:  # noqa: BLE001 - surfaced, never fatal
                 self.progress_label_var.set(friendly_error(exc))
+            self._propose_to_speaker_profile(name, wav, spans, embedder)
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _propose_to_speaker_profile(
+        self, name: str, wav: Path, spans: List[Tuple[float, float]], embedder
+    ) -> None:
+        """Offer this correction to a known subject's profile - unapproved.
+
+        A correction can be wrong, so it never joins a known actor's trusted
+        reference material on its own: the sample is stored pending review in
+        *Speaker profiles*, where an analyst approves or removes it. The
+        operation profile's own voiceprints (above) are a separate, disposable
+        who-said-what aid and are updated regardless.
+        """
+        try:
+            subject = find_speaker_profile_by_name(name)
+            if subject is None:
+                return
+            source = self._result_source
+            result = enroll_from_wav(
+                subject,
+                wav,
+                spans,
+                embedder,
+                source_filename=source.name if source else None,
+                source_sha256=(
+                    self._result_provenance.source.sha256
+                    if self._result_provenance and self._result_provenance.source
+                    else None
+                ),
+                sample_type=SAMPLE_LEARNED,
+                notes="Proposed automatically from a transcript correction.",
+            )
+            if not result.added:
+                return
+            save_speaker_profile(subject)
+            self.progress_label_var.set(
+                f"{result.added_count} sample(s) proposed for {subject.display_name} - "
+                "approve them in Speaker profiles before they are used."
+            )
+        except Exception as exc:  # noqa: BLE001 - never fail a correction on this
+            append_line(self.status, f"Could not propose a speaker sample: {exc}")
 
     # -- Profile management ------------------------------------------------
 
@@ -1484,6 +1690,7 @@ class TranscribeTab:
             "language": self.language_var,
             "task": self.task_var,
             "vad": self.vad_var,
+            "device": self.device_var,
             "convert_video": self.convert_video_var,
             "srt": self.srt_var,
             "blank_lines": self.blank_lines_var,
@@ -1514,6 +1721,10 @@ class TranscribeTab:
                     var.set(data[key])
                 except Exception:  # noqa: BLE001 - ignore a stale/invalid value
                     pass
+        # A label from an older build (or a hand-edited settings file) would
+        # otherwise sit in the dropdown and resolve to Auto silently.
+        if self.device_var.get() not in _DEVICE_MODES:
+            self.device_var.set(_device_label(DEFAULT_MODE))
         if "learn_voices" in data:
             try:
                 self.learn_var.set(bool(data["learn_voices"]))

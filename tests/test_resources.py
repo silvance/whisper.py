@@ -1,3 +1,4 @@
+import json
 import os
 
 from whispr import resources
@@ -98,6 +99,54 @@ def test_bundled_embedding_model_absent(tmp_path, monkeypatch):
     monkeypatch.setenv(resources.ENV_ASSETS, str(tmp_path / "empty"))
     assert resources.bundled_embedding_model() is None
     assert resources.bundled_embedding_model_name() is None
+    assert resources.bundled_embedding_model_info() == {}
+    assert resources.describe_bundled_embedding_model() is None
+
+
+def _embedding_assets(tmp_path, monkeypatch, metadata=None):
+    assets = tmp_path / "whispr_assets"
+    diar = assets / "diarization"
+    diar.mkdir(parents=True)
+    (diar / "embedding.onnx").write_bytes(b"\x00")
+    (diar / "embedding_model.txt").write_text("campplus\n", encoding="utf-8")
+    if metadata is not None:
+        (diar / "embedding_model.json").write_text(
+            json.dumps(metadata), encoding="utf-8"
+        )
+    monkeypatch.setenv(resources.ENV_ASSETS, str(assets))
+    return diar
+
+
+def test_embedding_metadata_describes_the_exact_file(tmp_path, monkeypatch):
+    _embedding_assets(
+        tmp_path,
+        monkeypatch,
+        {
+            "name": "campplus",
+            "label": "CAM++ (3D-Speaker, zh-cn 16k common)",
+            "training_data": "Mandarin (zh-cn) 16 kHz common-domain data",
+            "sha256": "a" * 64,
+        },
+    )
+    info = resources.bundled_embedding_model_info()
+    assert info["sha256"] == "a" * 64
+    described = resources.describe_bundled_embedding_model()
+    # The description says what the file is, not a broad capability claim.
+    assert "CAM++" in described and "Mandarin" in described
+    assert "multilingual" not in described.lower()
+
+
+def test_older_bundle_with_only_a_name_is_described_by_that_name(tmp_path, monkeypatch):
+    _embedding_assets(tmp_path, monkeypatch)
+    assert resources.bundled_embedding_model_info() == {"name": "campplus"}
+    # Nothing is invented for a bundle that recorded nothing further.
+    assert resources.describe_bundled_embedding_model() == "campplus"
+
+
+def test_unreadable_embedding_metadata_is_ignored(tmp_path, monkeypatch):
+    diar = _embedding_assets(tmp_path, monkeypatch, {})
+    (diar / "embedding_model.json").write_text("{ not json", encoding="utf-8")
+    assert resources.bundled_embedding_model_info() == {}
 
 
 def test_configure_offline_hf_cache_present(tmp_path, monkeypatch):

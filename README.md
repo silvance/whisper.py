@@ -168,6 +168,15 @@ PyTorch model above it uses [faster-whisper](https://github.com/SYSTRAN/faster-w
 (a CTranslate2 backend) with int8 quantization, which is considerably faster and
 lighter on CPU.
 
+**Processing hardware** (under *Options*) is *Auto* by default: an NVIDIA GPU is
+used when CTranslate2 can see one, and the CPU otherwise. CPU remains fully
+supported — every feature works on it, and the choice affects only how long a
+run takes, never the transcript. Asking for *NVIDIA GPU (CUDA)* on a machine
+without one falls back to the CPU **and says so** rather than failing the run,
+and a GPU that fails mid-load (VRAM, driver, a busy card) is retried on the CPU.
+The detection is a local query to the bundled inference library — no driver
+install, no download, no network. **Self-test…** reports what this machine has.
+
 Install the optional GUI extras and launch it:
 
 ```bash
@@ -289,12 +298,19 @@ automatically next time.
   speaker — renaming a speaker, or moving a line/word/selection to one — embeds
   that audio and folds it into that person's voiceprint. Nothing extra to click;
   correcting the transcript *is* the training.
-- **Next run, voices are recognised.** Each diarized turn is matched against the
-  profile's voiceprints and labelled with the person it matches — and when a turn
-  matches a known voice more strongly than the cluster it landed in, it's
-  **re-attributed to that person**, overriding the diarizer. This is the fix for
-  the common failure where a quieter speaker's turns get lumped in with a louder
-  one: the quiet turns still match the quiet voiceprint.
+- **Next run, voices are recognised — one turn at a time.** Each diarized turn is
+  judged **on its own audio**: it is labelled with a known person only when its
+  own embedding clears the acceptance threshold *and* beats the runner-up by the
+  required margin. A turn that is too short to embed, matches nothing, or is
+  ambiguous keeps its `SPEAKER_xx` label. An identity is deliberately **not**
+  propagated across a diarization cluster — sharing a cluster with a matched turn
+  is evidence about clustering, not about who is speaking — so a name never lands
+  on audio that was never matched to that person.
+- **A correction is a proposal, not a promotion.** If a known-subject profile
+  exists with that name (see *Speaker profiles* below), the corrected audio is
+  added to it as a **pending, unapproved** sample for review. It does not move
+  the subject's reference centroid until an analyst approves it, so a mistaken
+  correction cannot quietly contaminate a known actor's reference material.
 
 Voiceprints reuse the bundled speaker-embedding model (the same one the sherpa
 diarizer uses), so recognition works offline and adds no new dependency; if that
@@ -304,17 +320,92 @@ files stored beside the app settings. One honest limit: voiceprints only sharpen
 they don't change the words Whisper decodes. For word accuracy, use a larger model
 than `base.en` (try `small.en`/`medium.en`) and the **Custom words** box.
 
+### Speaker profiles and Speaker Compare
+
+Two dedicated tabs appear when the build bundles a speaker-embedding model. They
+are separate from the operation profiles above: those are a disposable
+who-said-what aid, while these hold the **reference voices of known subjects**.
+
+**Speaker profiles** builds a subject's reference material from historical
+recordings — no transcript correction required:
+
+- **Add historical recording…** takes a whole file, a chosen speaker from a
+  diarized file, or explicit time ranges (`0:10-0:45, 1:20-2:00`).
+- Audio is enrolled as **multiple embeddings** (8-second windows), not a single
+  averaged vector, and each sample records where it came from: source filename,
+  source SHA-256, start/end, usable speech duration, quality metrics and notes.
+- Samples are either **reference** (trusted, from deliberate enrolment) or
+  **learned** (proposed automatically, pending approval). Only trusted samples
+  form the centroid a comparison runs against; pending samples are listed with
+  **Approve** / **Remove**, and one that sits far from the current reference is
+  flagged as a probable mis-correction.
+- The panel shows sample counts, usable speech duration, source files, and the
+  embedding model with its SHA-256 and vector dimension.
+
+**Speaker Compare** is the 1:1 workflow: pick a reference profile, pick a
+questioned recording (whole file, a diarized speaker, or time ranges), and
+compare. The result gives the raw similarity score out of 1.00, the qualitative
+band, the threshold and margin in force, the speech duration and quality on each
+side, the model-compatibility verdict and the disclaimer — laid out to be
+screenshotted or exported as a report. **Search all subjects** ranks the
+questioned speaker against every stored profile, but ranking is not
+identification: the same acceptance-and-margin rule applies, and when nothing
+clears it the answer is *No known profile produced a sufficiently strong match.*
+
 **Sharing and comparing speakers.** A profile can be moved between machines with
 **Export…** / **Import…** (the whole profile — settings and learned voices — as one
 `*.whispr-profile.json`; import warns before overwriting a same-named profile). For
 1:1 checks, **Export speaker…** writes a single person's voiceprint
 (`*.whispr-voiceprint.json`), and **Compare voices…** loads two voiceprints (from
-those files, or from a whole profile) and reports a **similarity score** with a
-qualitative band (Strong / Moderate / Weak / Very weak). This is an **investigative
-aid, not forensic voice identification**: the score is a similarity indicator that
-shifts with recording quality and how much speech each voiceprint was built from, so
-treat a high score as a lead to verify, never as proof of identity. Both voiceprints
-must come from builds using the same (bundled) speaker-embedding model.
+those files, or from a whole profile) and reports a **similarity score out of 1.00**
+with a qualitative band — **High similarity / Intermediate similarity / Low
+similarity / Insufficient data** — alongside the operational threshold, the speech
+duration on each side and the quality of each.
+
+The score is **not** a percentage and **not** a probability: a cosine similarity of
+0.78 does not mean "78% the same person". Whispers deliberately never reports a
+percentage, a confidence of identity or a likelihood of identity.
+
+> Speaker similarity results produced by Whispers are investigative indicators
+> intended to support lead development and analyst review. They are not forensic
+> speaker identification, are not a biometric probability of identity, and should
+> not be treated as proof that two recordings contain the same person.
+
+A high-similarity result never becomes "this is John Doe" — it means *the questioned
+speaker produced high similarity to the John Doe reference profile, and further
+review is warranted*. Both voiceprints must come from builds using the same
+speaker-embedding model; Whispers refuses the comparison outright when the model
+hash or vector dimension differs, and asks for explicit confirmation when an older
+profile cannot prove which model produced it.
+
+### Validating speaker comparison (developer/analyst tool)
+
+The unit tests exercise software behaviour on synthetic vectors. They say nothing
+about whether the system can tell two people apart — that needs real recordings of
+known speakers. `whispr.validation` is the offline harness for measuring it:
+
+```bash
+python -m whispr.validation /path/to/corpus --out validation-results
+```
+
+The corpus is either a directory of per-speaker folders
+(`corpus/SPEAKER_A/call1.wav`) or a JSON/CSV manifest with `speaker_id`, `path`
+and an optional `condition` (channel, microphone, environment) so results can be
+grouped. It embeds each recording with the bundled model, builds **genuine**
+(same speaker, different recordings) and **impostor** (different speakers)
+comparisons, and writes:
+
+- `validation.json` — score distributions, error rates by threshold, equal error
+  rate, and results grouped by how much speech was available
+- `trials.csv` — every raw trial score, for re-analysis
+- `roc.csv` — ROC data (false-accept vs genuine-accept)
+- `validation.png` — plots, if matplotlib is installed (never a bundle dependency)
+
+**The operational thresholds in `whispr/thresholds.py` are conservative defaults,
+not calibrated values.** They should be replaced with figures measured on
+recordings representative of the intended deployment — language, channel,
+microphone, noise and speech duration all move these numbers substantially. Until
+that has been done, treat similarity results as directional only.
 
 ### Live (stream) transcription
 
@@ -399,15 +490,35 @@ box shows a "⚠ not in this build" note, and Run reports it clearly). On a manu
 You also choose which **diarizer** to include: `both` (default — pyannote + sherpa,
 switchable at runtime via the Engine dropdown), `pyannote`, or `sherpa`.
 
-The **`embedding`** input picks the **speaker-embedding model** used for
-voiceprints and the *Compare voices* tool (and for sherpa diarization). It is
-bundled on **every** build regardless of the diarizer choice, so voiceprints work
-even in a `pyannote`-only bundle. Default `titanet-large` (English, best
-separation); `titanet-small`/`wespeaker-en` are English alternatives, and
-`campplus`/`eres2net` are multilingual — prefer one of those if your speakers
-aren't speaking English. A direct `.onnx` URL (any sherpa-onnx speaker-embedding
-model) also works. **Self-test…** shows which embedding model a build carries;
-voiceprints/comparisons are only valid between builds that share it.
+The **`embedding`** input picks the **speaker-embedding model** used for speaker
+profiles and the *Speaker Compare* tool (and for sherpa diarization). It is
+bundled on **every** build regardless of the diarizer choice, so speaker profiles
+work even in a `pyannote`-only bundle. Each option is described by the file that
+is actually downloaded, not by a broad label:
+
+| Alias | Model | Trained on |
+| --- | --- | --- |
+| `titanet-large` (default) | NeMo TitaNet Large | English speaker-verification corpora |
+| `titanet-small` | NeMo TitaNet Small | English speaker-verification corpora |
+| `wespeaker-en` | WeSpeaker ResNet34 | VoxCeleb (predominantly English interview speech) |
+| `campplus` | CAM++ (3D-Speaker) | Mandarin (zh-cn) 16 kHz common-domain data |
+| `eres2net` | ERes2Net (3D-Speaker) | Mandarin (zh-cn) 16 kHz common-domain data |
+
+The CAM++ and ERes2Net checkpoints published by sherpa-onnx are the 3D-Speaker
+*zh-cn 16k-common* files — Mandarin-trained, not general multilingual models — so
+pick them on that basis rather than as a catch-all for non-English audio. A direct
+`.onnx` URL (any sherpa-onnx speaker-embedding model) also works; nothing is
+recorded about such a file beyond its name, source and SHA-256.
+
+**Verification performance varies substantially** with language, channel,
+microphone, background noise, how much usable speech there is, and any mismatch
+between the reference and questioned recordings. None of these models is
+validated for a particular operational setting — measure yours with the
+validation harness (below) before relying on a threshold.
+
+**Self-test…** shows which embedding model a build carries, what it was trained
+on and its SHA-256; speaker profiles and comparisons are only valid between
+builds that share that exact model.
 
 **Getting a large bundle (bypassing the 2 GB release cap).** Every run already
 uploads the full per-OS bundle as an **Actions artifact** (`dist/whispr`), and

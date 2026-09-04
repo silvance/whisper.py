@@ -9,6 +9,7 @@ from .diarization import SpeakerSegment, assign_speakers, diarize
 from .resources import (
     bundled_diarization_models,
     bundled_embedding_model,
+    bundled_embedding_model_info,
     bundled_embedding_model_name,
     bundled_models,
     find_bundled_ffmpeg,
@@ -38,6 +39,7 @@ __all__ = [
     "assign_speakers",
     "bundled_diarization_models",
     "bundled_embedding_model",
+    "bundled_embedding_model_info",
     "bundled_embedding_model_name",
     "bundled_models",
     "convert_to_wav",

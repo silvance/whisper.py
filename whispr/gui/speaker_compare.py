@@ -21,6 +21,7 @@ from ..profiles import (
     export_voiceprint,
     read_voiceprints,
 )
+from ..thresholds import COMPARISON_HIGH_BAND, DISCLAIMER
 from ..voiceprints import Voiceprint, compare_voiceprints, similarity_band
 from .errors import friendly_error
 
@@ -161,9 +162,13 @@ def open_compare_dialog(root: tk.Misc) -> None:
             return
         score = compare_voiceprints(a, b)
         band, blurb = similarity_band(score)
-        pct = max(0.0, min(1.0, score)) * 100.0
+        # A raw score out of 1.00 - never a percentage, which would read as a
+        # probability that these are the same person.
         result_var.set(
-            f"Voice similarity: {pct:.0f}%  —  {band}\n{blurb.capitalize()}."
+            f"Similarity score: {score:.2f} / 1.00\n"
+            f"Assessment: {band}\n"
+            f"Operational threshold: {COMPARISON_HIGH_BAND:.2f}\n"
+            f"{blurb.capitalize()}."
         )
 
     ttk.Button(frame, text="Compare", command=_do_compare).grid(
@@ -176,11 +181,10 @@ def open_compare_dialog(root: tk.Misc) -> None:
     ttk.Label(
         frame,
         text=(
-            "Investigative aid only — not forensic voice identification. The "
-            "score is a similarity indicator that shifts with recording quality "
-            "and how much speech each voiceprint was built from; treat it as a "
-            "lead to verify, never as proof of identity. Both voiceprints must "
-            "come from builds using the same speaker-embedding model."
+            DISCLAIMER
+            + " The score shifts with recording quality and with how much speech "
+            "each voiceprint was built from. Both voiceprints must come from "
+            "builds using the same speaker-embedding model."
         ),
         wraplength=420,
         justify="left",

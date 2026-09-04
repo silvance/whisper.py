@@ -1,8 +1,12 @@
 """The Whispers application shell: window, header, tabs, and entry point.
 
-Holds the shared cancel signal and assembles the Transcribe and (when available)
-Translate tabs. ``whispr.app`` re-exports :func:`main` so the console script,
-``python -m whispr`` and the PyInstaller bundle entry keep working unchanged.
+Holds the shared cancel signal and assembles the tabs this build can actually
+support: Transcribe always, then Speaker profiles and Speaker Compare when a
+speaker-embedding model is bundled, Live when ffmpeg is present, and Translate
+when the translation packs are. ``WHISPR_MODE=transcribe`` forces the lean
+single-purpose window. ``whispr.app`` re-exports :func:`main` so the console
+script, ``python -m whispr`` and the PyInstaller bundle entry keep working
+unchanged.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from ..diagnostics import format_report
 from ..ocr import ocr_available
 from ..resources import (
     bundled_argos_data_dir,
+    bundled_embedding_model,
     configure_offline_hf_cache,
     configure_offline_ocr,
     configure_offline_translation,
@@ -25,6 +30,8 @@ from ..resources import (
 )
 from ..settings import load_settings, save_settings
 from .live_tab import LiveTab
+from .speaker_compare_tab import SpeakerCompareTab
+from .speaker_profiles_tab import SpeakerProfilesTab
 from .transcribe_tab import TranscribeTab
 from .translate_tab import TranslateTab
 
@@ -76,6 +83,8 @@ class WhisprApp:
         show_translate = _translation_available() and full_mode
         # Live (stream) transcription needs ffmpeg to read the stream.
         show_live = find_ffmpeg() is not None and full_mode
+        # Speaker enrolment/comparison need the bundled speaker-embedding model.
+        show_speakers = bundled_embedding_model() is not None and full_mode
 
         # App header.
         subtitle = (
@@ -100,7 +109,7 @@ class WhisprApp:
 
         # With any extra tab (Translate and/or Live), a top-level notebook; with
         # only Transcribe, that UI fills the window directly (no redundant chrome).
-        use_notebook = show_translate or show_live
+        use_notebook = show_translate or show_live or show_speakers
         if use_notebook:
             notebook = ttk.Notebook(self.root)
             notebook.pack(fill="both", expand=True, padx=8, pady=(0, 8))
@@ -119,6 +128,30 @@ class WhisprApp:
         )
         self.transcribe.apply_settings(self._settings.get("transcribe", {}))
         self._tabs.append(self.transcribe)
+
+        # Known-subject reference voices, and comparing a questioned speaker
+        # against them. Both need the speaker-embedding model, so they appear
+        # only when this build actually bundles one.
+        if show_speakers:
+            profiles_root = ttk.Frame(notebook)
+            notebook.add(profiles_root, text="Speaker profiles")
+            self.speaker_profiles = SpeakerProfilesTab(
+                profiles_root, self.root, self.cancel_event, self.cancel
+            )
+            self._tabs.append(self.speaker_profiles)
+
+            compare_root = ttk.Frame(notebook)
+            notebook.add(compare_root, text="Speaker Compare")
+            self.speaker_compare = SpeakerCompareTab(
+                compare_root,
+                self.root,
+                self.cancel_event,
+                self.cancel,
+                # Lets a comparison report carry the current transcript and the
+                # provenance of the run that produced it.
+                get_analysis=self.transcribe.current_analysis,
+            )
+            self._tabs.append(self.speaker_compare)
 
         # Live (stream) transcription, next to Transcribe since it's closely related.
         if show_live:
@@ -167,6 +200,9 @@ class WhisprApp:
             "  default; switch under “Model & language” if you need more accuracy.\n"
             "• “Custom words” (under Model & language): type names, places or\n"
             "  callsigns you expect, so they’re spelled right.\n"
+            "• “Processing hardware” (under Options): leave it on Auto. It uses\n"
+            "  a graphics card if this machine has one, and the processor if\n"
+            "  not — the result is the same either way, only the speed differs.\n"
             "• Copy transcript / Save as Word… are below the transcript.\n"
             "\n"
             "Who said what (speakers)\n"

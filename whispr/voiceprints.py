@@ -5,32 +5,47 @@ from short spans of one person's speech with the same ONNX embedding model the
 diarizer already uses. Two things build on it:
 
 * **Recognition** - after diarization has split the audio into turns, each turn
-  is embedded and compared against the voiceprints saved in the active profile.
-  A turn that confidently matches an enrolled voice is attributed to that person,
-  *overriding the diarizer's clustering when it disagrees*. This is what fixes the
-  common failure where a quieter speaker's turns get lumped in with a louder one:
-  the quiet turns still match the quiet voiceprint.
+  is embedded and compared against the enrolled voices. Attribution is
+  **open set** and decided per turn: a turn is relabelled only when its own audio
+  clears the acceptance threshold *and* beats the runner-up by a margin.
+  Otherwise it keeps its ``SPEAKER_xx`` cluster label. The speaker in a given
+  recording may simply be someone nobody enrolled, so abstaining is often the
+  correct answer, and an identity is never propagated across a diarization
+  cluster: sharing a cluster with a matched turn is evidence about clustering,
+  not evidence that this audio is that person.
 * **Enrolment** - when an operator corrects who-said-what, the corrected span's
-  audio is embedded and folded into that speaker's voiceprint, so the next
-  recording for the same operation recognises them automatically.
+  audio is embedded and folded into that speaker's voiceprint. For *known
+  subjects* prefer the deliberate workflow in :mod:`whispr.enrollment`, which
+  produces trusted reference samples with full provenance.
 
 The heavy lifting (the ONNX embedding extractor) uses sherpa-onnx and numpy and
 is loaded lazily, so importing this module carries no optional-dependency cost.
-The vector maths (centroid, cosine similarity, matching) is dependency-free and
-unit-tested; only the actual audio embedding needs sherpa-onnx.
+The vector maths (centroid, cosine similarity, ranking, the accept/margin
+decision) is dependency-free and unit-tested; only the audio embedding needs
+sherpa-onnx. Note that unit tests over synthetic vectors validate *software
+behaviour* only - they say nothing about speaker-recognition accuracy, which
+needs the corpus harness in :mod:`whispr.validation`.
 """
 
 from __future__ import annotations
 
 import math
 import wave
-from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from .diarization import SpeakerSegment
 from .resources import bundled_embedding_model
+from .thresholds import (
+    BAND_HIGH,
+    BAND_INTERMEDIATE,
+    BAND_LOW,
+    COMPARISON_HIGH_BAND,
+    COMPARISON_INTERMEDIATE_BAND,
+    RECOGNITION_ACCEPTANCE_THRESHOLD,
+    RECOGNITION_MARGIN_THRESHOLD,
+)
 
 PathLike = Union[str, Path]
 
@@ -159,20 +174,144 @@ def compare_voiceprints(a: Voiceprint, b: Voiceprint) -> float:
     return cosine_similarity(a.centroid, b.centroid)
 
 
-def similarity_band(score: float) -> Tuple[str, str]:
-    """Map a comparison ``score`` to a qualitative ``(label, description)``.
+def similarity_band(
+    score: float,
+    high: float = COMPARISON_HIGH_BAND,
+    intermediate: float = COMPARISON_INTERMEDIATE_BAND,
+) -> Tuple[str, str]:
+    """Map a comparison ``score`` to a qualitative ``(band, explanation)``.
 
-    The embeddings are not calibrated probabilities and the score swings with
-    audio quality, so we report a band rather than implying a precise likelihood.
-    Cut points are conservative for the bundled speaker-embedding model.
+    Deliberately *similarity* language. A cosine similarity is not a probability
+    that two recordings contain the same person, so nothing here claims identity;
+    the caller adds the investigative-only disclaimer.
+
+    The band edges default to the shipped values; callers that hold a configured
+    :class:`~whispr.thresholds.Thresholds` pass theirs, so a retuned build bands
+    by the numbers it actually recorded in its reports.
     """
-    if score >= 0.75:
-        return ("Strong", "strong indication these are the same speaker")
-    if score >= SAME_SPEAKER_THRESHOLD:
-        return ("Moderate", "some indication these could be the same speaker")
-    if score >= 0.35:
-        return ("Weak", "little similarity; more likely different speakers")
-    return ("Very weak", "these are most likely different speakers")
+    if score >= high:
+        return (
+            BAND_HIGH,
+            "the questioned speech is highly similar to the reference voice",
+        )
+    if score >= intermediate:
+        return (
+            BAND_INTERMEDIATE,
+            "the questioned speech is moderately similar to the reference voice",
+        )
+    return (
+        BAND_LOW,
+        "the questioned speech is not notably similar to the reference voice",
+    )
+
+
+@dataclass
+class MatchDecision:
+    """The outcome of an open-set match, with the numbers behind it.
+
+    Retained on every attribution so a result can be explained later: which
+    candidate won, by how much over the runner-up, against which thresholds, and
+    on how much speech.
+    """
+
+    best_name: Optional[str] = None
+    best_score: float = 0.0
+    second_name: Optional[str] = None
+    second_score: float = 0.0
+    acceptance_threshold: float = RECOGNITION_ACCEPTANCE_THRESHOLD
+    margin_threshold: float = RECOGNITION_MARGIN_THRESHOLD
+    speech_seconds: float = 0.0
+    accepted: bool = False
+    reason: str = ""
+
+    @property
+    def margin(self) -> float:
+        """How far the winner beat the runner-up (its own score when alone)."""
+        return round(self.best_score - self.second_score, 4)
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "best_name": self.best_name,
+            "best_score": round(self.best_score, 4),
+            "second_name": self.second_name,
+            "second_score": round(self.second_score, 4),
+            "margin": self.margin,
+            "acceptance_threshold": self.acceptance_threshold,
+            "margin_threshold": self.margin_threshold,
+            "speech_seconds": round(self.speech_seconds, 2),
+            "accepted": self.accepted,
+            "reason": self.reason,
+        }
+
+
+def rank_candidates(
+    embedding: Sequence[float], candidates: Sequence[Tuple[str, Sequence[float]]]
+) -> List[Tuple[str, float]]:
+    """Score ``embedding`` against every ``(name, centroid)``, best first."""
+    scored = [
+        (name, cosine_similarity(embedding, centroid_vector))
+        for name, centroid_vector in candidates
+        if centroid_vector
+    ]
+    scored.sort(key=lambda item: item[1], reverse=True)
+    return scored
+
+
+def decide_identity(
+    embedding: Sequence[float],
+    candidates: Sequence[Tuple[str, Sequence[float]]],
+    *,
+    acceptance: float = RECOGNITION_ACCEPTANCE_THRESHOLD,
+    margin: float = RECOGNITION_MARGIN_THRESHOLD,
+    speech_seconds: float = 0.0,
+    min_speech_seconds: float = 0.0,
+) -> MatchDecision:
+    """Decide whether ``embedding`` belongs to a known candidate - or nobody.
+
+    This is an **open-set** decision: the speaker may well be someone who was
+    never enrolled, so abstaining is a valid and frequently correct answer. An
+    identity is accepted only when the top score clears ``acceptance`` *and*
+    beats the runner-up by ``margin``. Two candidates scoring 0.68 and 0.67 are
+    ambiguous, not a match.
+    """
+    decision = MatchDecision(
+        acceptance_threshold=acceptance,
+        margin_threshold=margin,
+        speech_seconds=speech_seconds,
+    )
+    ranked = rank_candidates(embedding, candidates)
+    if not ranked:
+        decision.reason = "No enrolled voices to compare against."
+        return decision
+    decision.best_name, decision.best_score = ranked[0]
+    if len(ranked) > 1:
+        decision.second_name, decision.second_score = ranked[1]
+
+    if min_speech_seconds and speech_seconds < min_speech_seconds:
+        decision.reason = (
+            f"Only {speech_seconds:.1f}s of speech; at least "
+            f"{min_speech_seconds:.1f}s is required to attribute a known speaker."
+        )
+        return decision
+    if decision.best_score < acceptance:
+        decision.reason = (
+            f"Best score {decision.best_score:.2f} is below the acceptance "
+            f"threshold {acceptance:.2f}."
+        )
+        return decision
+    if decision.second_name is not None and decision.margin < margin:
+        decision.reason = (
+            f"Ambiguous: {decision.best_name} {decision.best_score:.2f} vs "
+            f"{decision.second_name} {decision.second_score:.2f} "
+            f"(margin {decision.margin:.2f} < {margin:.2f})."
+        )
+        return decision
+    decision.accepted = True
+    decision.reason = (
+        f"Score {decision.best_score:.2f} >= {acceptance:.2f} with margin "
+        f"{decision.margin:.2f} >= {margin:.2f}."
+    )
+    return decision
 
 
 # -- Audio embedding (sherpa-onnx; lazy) -----------------------------------
@@ -208,7 +347,16 @@ class SpeakerEmbedder:
     def __init__(self, model_path: Optional[PathLike] = None) -> None:
         import os
 
-        import sherpa_onnx
+        try:
+            import sherpa_onnx
+        except ImportError as exc:
+            # Plain language, and no attempt to fetch anything: on an air-gapped
+            # machine a missing component is a fact to report, not to fix.
+            raise RuntimeError(
+                "Speaker features need sherpa-onnx, which is not installed in "
+                "this build. Use a bundle that includes it (see the Self-test), "
+                "or install it with:  pip install 'silvance-whisper[gui]'"
+            ) from exc
 
         if model_path is None:
             model_path = bundled_embedding_model()
@@ -274,67 +422,46 @@ def recognize(
     voiceprints: Sequence[Voiceprint],
     embedder: SpeakerEmbedder,
     *,
-    threshold: float = DEFAULT_THRESHOLD,
+    threshold: float = RECOGNITION_ACCEPTANCE_THRESHOLD,
+    margin: float = RECOGNITION_MARGIN_THRESHOLD,
     min_seconds: float = MIN_TURN_SECONDS,
 ) -> "Tuple[List[SpeakerSegment], Dict[str, str]]":
-    """Re-attribute diarizer turns to enrolled voices where they match.
+    """Attribute diarizer turns to enrolled voices, conservatively and per turn.
 
-    For every turn long enough to embed, we compare it to the enrolled
-    voiceprints. Each original diarizer cluster is then given a "dominant" name -
-    the enrolled voice most of its (matched) speech points to - and every turn is
-    resolved as:
+    Each turn is judged **on its own audio**: it is relabelled only when its own
+    embedding clears the acceptance threshold and beats the runner-up by the
+    required margin. Turns that are too short to embed, that match nothing, or
+    that are ambiguous keep their original ``SPEAKER_xx`` cluster label.
 
-    * its own confident match, when it disagrees with the cluster's dominant name
-      (this is the re-attribution that rescues a quiet speaker wrongly clustered
-      with a louder one); else
-    * the cluster's dominant name, when it has one (unifies and auto-names); else
-    * its original cluster label, untouched.
+    An identity is deliberately *not* propagated across a diarization cluster.
+    Sharing a cluster with a matched turn is evidence about clustering, not
+    evidence that this audio is the known person - and when the label names a
+    specific individual, guessing is the wrong trade.
 
-    Returns a new ``SpeakerSegment`` list plus a ``{speaker_id: display_name}``
-    map for the ids that were recognised (recognised ids look like ``voice::Name``).
+    Returns the relabelled turns plus a ``{speaker_id: display_name}`` map for
+    the ids that were recognised (recognised ids look like ``voice::Name``).
     """
     if not voiceprints:
         return list(speaker_segments), {}
 
-    # Embed each turn once (skip the too-short ones), caching by index.
-    embeddings: Dict[int, List[float]] = {}
-    turn_match: Dict[int, str] = {}
-    for i, seg in enumerate(speaker_segments):
-        if seg.end - seg.start < min_seconds:
-            continue
-        vector = embedder.embed_span(wav_path, seg.start, seg.end)
-        if not vector:
-            continue
-        embeddings[i] = vector
-        name, _score = best_match(vector, voiceprints, threshold=threshold)
-        if name is not None:
-            turn_match[i] = name
-
-    # Dominant enrolled name per original cluster, weighted by matched duration.
-    cluster_weight: Dict[str, Dict[str, float]] = defaultdict(
-        lambda: defaultdict(float)
-    )
-    for i, seg in enumerate(speaker_segments):
-        name = turn_match.get(i)
-        if name is not None:
-            cluster_weight[seg.speaker][name] += seg.end - seg.start
-    cluster_name: Dict[str, str] = {}
-    for cluster, weights in cluster_weight.items():
-        cluster_name[cluster] = max(weights.items(), key=lambda kv: kv[1])[0]
-
+    candidates = [(vp.name, vp.centroid) for vp in voiceprints]
     out: List[SpeakerSegment] = []
     name_map: Dict[str, str] = {}
-    for i, seg in enumerate(speaker_segments):
-        dominant = cluster_name.get(seg.speaker)
-        turn = turn_match.get(i)
-        if turn is not None and turn != dominant:
-            chosen: Optional[str] = turn  # per-turn override
-        else:
-            chosen = dominant
-        if chosen is not None:
-            speaker_id = f"voice::{chosen}"
-            name_map[speaker_id] = chosen
-        else:
-            speaker_id = seg.speaker
+    for seg in speaker_segments:
+        duration = seg.end - seg.start
+        speaker_id = seg.speaker
+        if duration >= min_seconds:
+            vector = embedder.embed_span(wav_path, seg.start, seg.end)
+            if vector:
+                decision = decide_identity(
+                    vector,
+                    candidates,
+                    acceptance=threshold,
+                    margin=margin,
+                    speech_seconds=duration,
+                )
+                if decision.accepted and decision.best_name:
+                    speaker_id = f"voice::{decision.best_name}"
+                    name_map[speaker_id] = decision.best_name
         out.append(SpeakerSegment(start=seg.start, end=seg.end, speaker=speaker_id))
     return out, name_map
