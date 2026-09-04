@@ -32,7 +32,14 @@ from ..profiles import (
     read_profile_file,
     save_profile,
 )
-from ..project import PROJECT_SUFFIX, load_project, save_project
+from ..project import PROJECT_SUFFIX, load_project_record, save_project
+from ..provenance import (
+    AnalysisProvenance,
+    DiarizationProvenance,
+    SourceRecord,
+    TranscriptionProvenance,
+    transcription_model_sha256,
+)
 from ..resources import bundled_models
 from ..transcription import (
     AUDIO_EXTENSIONS,
@@ -146,6 +153,8 @@ class TranscribeTab:
         self._result_source: Optional[Path] = None
         self._result_outdir: Optional[Path] = None
         self._speaker_names: Dict[str, str] = {}
+        # Traceability for the displayed result: source hash, models, settings.
+        self._result_provenance: Optional[AnalysisProvenance] = None
 
         # Optional batch queue; when non-empty, Run transcribes all of these
         # instead of the single "Audio / video file" above.
@@ -900,6 +909,21 @@ class TranscribeTab:
                 cancelled=self._cancel_event.is_set,
             )
 
+            # Record what produced this result while the settings are in hand.
+            provenance = AnalysisProvenance(
+                source=SourceRecord.from_path(src),
+                transcription=TranscriptionProvenance(
+                    model_name=model_sel,
+                    model_sha256=transcription_model_sha256(model),
+                    device="cpu",
+                    compute_type="int8",
+                    language_setting=language or "auto",
+                    detected_language=result.language,
+                    vad=self.vad_var.get(),
+                    initial_prompt=self.vocab_var.get().strip(),
+                ),
+            )
+
             append_line(
                 self.status,
                 f"Detected language: {result.language} "
@@ -909,6 +933,11 @@ class TranscribeTab:
 
             if self.diarize_var.get():
                 self._diarize_into(result, src, media_path, media_is_normalized)
+                provenance.diarization = DiarizationProvenance.from_bundle(
+                    engine=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
+                    expected_speaker_count=self._parse_num_speakers(),
+                    clustering_threshold=self._parse_threshold(),
+                )
 
             names = self._preset_names_for(result)
             if set_view:
@@ -917,6 +946,7 @@ class TranscribeTab:
                 self._result_source = src
                 self._result_outdir = save_dir
                 self._speaker_names = names
+                self._result_provenance = provenance
                 self.transcript_view.set_result(result, names)
 
             if save_dir is not None:
@@ -1099,7 +1129,13 @@ class TranscribeTab:
         if not path:
             return
         try:
-            save_project(path, result, self._speaker_names, self._result_source)
+            save_project(
+                path,
+                result,
+                self._speaker_names,
+                self._result_source,
+                self._result_provenance,
+            )
             self.progress_label_var.set(f"Saved {Path(path).name}")
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             self.progress_label_var.set(friendly_error(exc))
@@ -1116,7 +1152,11 @@ class TranscribeTab:
         if not path:
             return
         try:
-            result, speaker_names, source = load_project(path)
+            record = load_project_record(path)
+            result = record.result
+            speaker_names = record.speaker_names
+            source = record.source
+            self._result_provenance = record.provenance
         except Exception as exc:  # noqa: BLE001 - surfaced to the user
             self.progress_label_var.set(friendly_error(exc))
             return

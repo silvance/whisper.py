@@ -32,7 +32,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from .settings import settings_path
 from .thresholds import LEARNED_OUTLIER_THRESHOLD
@@ -600,7 +600,7 @@ def profile_path(profile: SpeakerProfile) -> Path:
     return speakers_dir() / f"{stem}{SPEAKER_PROFILE_SUFFIX}"
 
 
-def write_json_atomic(path: PathLike, payload: Dict[str, object]) -> Path:
+def write_json_atomic(path: PathLike, payload: Mapping[str, object]) -> Path:
     """Write ``payload`` to ``path`` atomically (temp file + replace).
 
     A crash mid-write leaves the previous file intact rather than a truncated
