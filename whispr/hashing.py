@@ -49,11 +49,6 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def sha256_text(text: str) -> str:
-    """Hex SHA-256 of UTF-8 encoded ``text``."""
-    return sha256_bytes(text.encode("utf-8"))
-
-
 def short(digest: Optional[str], length: int = 12) -> str:
     """Abbreviate a digest for display (full value stays in the record)."""
     if not digest:

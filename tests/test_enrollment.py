@@ -332,3 +332,23 @@ def test_a_wav_extension_on_a_non_wav_file_is_not_trusted(tmp_path):
     impostor = tmp_path / "actually-mp3.wav"
     impostor.write_bytes(b"ID3\x00\x00")
     assert not enrollment._is_analysis_wav(impostor)
+
+
+def test_enroll_from_media_covers_the_whole_recording_by_default(wav):
+    """The scripted entry point: convert if needed, then enrol every span."""
+    profile = SpeakerProfile(display_name="Subject M")
+    result = enrollment.enroll_from_media(profile, wav, _FakeEmbedder())
+    assert result.added_count > 0
+    assert profile.trusted_samples()
+    # Provenance is recorded from the source the caller passed, not the copy.
+    assert all(s.source_filename == Path(wav).name for s in result.added)
+    assert all(s.source_sha256 for s in result.added)
+
+
+def test_enroll_from_media_honours_explicit_spans(wav):
+    profile = SpeakerProfile(display_name="Subject N")
+    result = enrollment.enroll_from_media(
+        profile, wav, _FakeEmbedder(), spans=[(0.0, 16.0)]
+    )
+    assert result.added_count > 0
+    assert all(s.source_end <= 16.0 for s in result.added)

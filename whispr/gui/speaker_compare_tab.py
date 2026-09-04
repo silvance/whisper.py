@@ -197,9 +197,21 @@ class SpeakerCompareTab:
             justify="left",
             font=("", 8),
         ).pack(anchor="w", pady=(6, 0))
-        ttk.Button(result_frame, text="Copy result", command=self._copy_result).pack(
-            anchor="w", pady=(6, 0)
+        result_actions = ttk.Frame(result_frame)
+        result_actions.pack(fill="x", pady=(6, 0))
+        ttk.Button(result_actions, text="Copy result", command=self._copy_result).pack(
+            side="left"
         )
+        # Every comparison made on this tab is kept, so one report can cover a
+        # questioned recording checked against several subjects.
+        ttk.Button(
+            result_actions, text="Export report…", command=self._export_report
+        ).pack(side="left", padx=(6, 0))
+        ttk.Button(
+            result_actions,
+            text="Clear recorded comparisons",
+            command=self._clear_comparisons,
+        ).pack(side="left", padx=(6, 0))
 
         ttk.Label(container, textvariable=self.status_var, wraplength=620).pack(
             anchor="w", pady=(8, 0)

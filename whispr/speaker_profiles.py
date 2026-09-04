@@ -658,14 +658,6 @@ def list_speaker_profiles() -> List[SpeakerProfile]:
     return out
 
 
-def load_speaker_profile(subject_id: str) -> Optional[SpeakerProfile]:
-    """Fetch one stored subject profile by id."""
-    for profile in list_speaker_profiles():
-        if profile.subject_id == subject_id:
-            return profile
-    return None
-
-
 def find_speaker_profile_by_name(display_name: str) -> Optional[SpeakerProfile]:
     """Fetch one stored subject profile by display name (case-insensitive).
 
