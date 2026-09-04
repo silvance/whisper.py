@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import List
 
 from . import resources, thresholds
+from .acceleration import describe_hardware
 from .buildinfo import build_info
 from .hashing import short
 from .playback import playback_available
@@ -81,6 +82,9 @@ def gather() -> List[Check]:
     checks.append(
         Check("ffmpeg", ffmpeg is not None, str(ffmpeg) if ffmpeg else "not found")
     )
+    # A GPU is optional throughout: CPU is always ok=True here because it is
+    # what the build is supported on.
+    checks.append(Check("Processing hardware", True, describe_hardware()))
 
     # --- Diarization (either backend works) ---
     pyannote = _installed("pyannote.audio")

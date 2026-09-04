@@ -19,6 +19,15 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Callable, Dict, List, Optional, Tuple
 
+from ..acceleration import (
+    DEFAULT_MODE,
+    MODE_LABELS,
+    Device,
+    cuda_available,
+    describe_hardware,
+    fallback_to_cpu,
+)
+from ..acceleration import resolve as resolve_device
 from ..diarization import assign_speakers, diarize
 from ..export import transcript_to_docx
 from ..playback import PlaybackError, SegmentPlayer, playback_available
@@ -93,6 +102,17 @@ ENGINE_CHOICES = {
 ENGINE_LABELS = list(ENGINE_CHOICES)
 
 
+# The hardware dropdown shows friendly labels; the run needs the mode behind one.
+_DEVICE_MODES = {label: mode for mode, label in MODE_LABELS}
+
+
+def _device_label(mode: str) -> str:
+    for candidate, label in MODE_LABELS:
+        if candidate == mode:
+            return label
+    return MODE_LABELS[0][1]
+
+
 class TranscribeTab:
     """Builds and drives the Transcribe tab inside ``parent``."""
 
@@ -132,6 +152,9 @@ class TranscribeTab:
         self.task_var = tk.StringVar(value="transcribe")
         self.language_var = tk.StringVar(value="Auto")
         self.vad_var = tk.BooleanVar(value=True)
+        # Compute device for transcription. CPU is the supported
+        # baseline; a GPU only makes the same work finish sooner.
+        self.device_var = tk.StringVar(value=_device_label(DEFAULT_MODE))
         self.convert_video_var = tk.BooleanVar(value=True)
         self.diarize_var = tk.BooleanVar(value=False)
         self.engine_var = tk.StringVar(value=ENGINE_LABELS[0])
@@ -345,6 +368,28 @@ class TranscribeTab:
             variable=self.highlight_conf_var,
             command=self._rerender_transcript,
         ).grid(row=4, column=0, sticky="w", pady=2)
+
+        device_row = ttk.Frame(opt_frame)
+        device_row.grid(row=6, column=0, sticky="w", pady=(6, 2))
+        ttk.Label(device_row, text="Processing hardware").pack(side="left")
+        ttk.Combobox(
+            device_row,
+            textvariable=self.device_var,
+            values=[label for _, label in MODE_LABELS],
+            state="readonly",
+            width=32,
+        ).pack(side="left", padx=(8, 0))
+        ttk.Label(opt_frame, text=describe_hardware(), font=("", 8)).grid(
+            row=7, column=0, sticky="w"
+        )
+        if not cuda_available():
+            ttk.Label(
+                opt_frame,
+                text=(
+                    "CPU runs everything this build does; a GPU only makes it faster."
+                ),
+                font=("", 8),
+            ).grid(row=8, column=0, sticky="w")
 
         # --- Speakers ------------------------------------------------------
         spk_section = CollapsibleSection(container, "Speakers", expanded=False)
@@ -903,18 +948,40 @@ class TranscribeTab:
             # word-level confidence highlighting; skip the extra alignment pass when
             # neither is needed so plain transcription stays fast.
             need_words = self.diarize_var.get() or self.highlight_conf_var.get()
-            result = transcribe_audio(
-                media_path,
-                model_size=model,
-                task=task,
-                language=language_arg,
-                vad_filter=self.vad_var.get(),
-                word_timestamps=need_words,
-                initial_prompt=self.vocab_var.get().strip() or None,
-                progress=lambda msg: append_line(self.status, msg),
-                on_progress=lambda f: self._set_progress(f, transcribe_label),
-                cancelled=self._cancel_event.is_set,
+            device = resolve_device(
+                _DEVICE_MODES.get(self.device_var.get(), DEFAULT_MODE)
             )
+            if device.note:
+                append_line(self.status, device.note)
+            append_line(self.status, f"Processing on: {device.describe()}")
+
+            def _run(on: Device):
+                return transcribe_audio(
+                    media_path,
+                    model_size=model,
+                    device=on.device,
+                    compute_type=on.compute_type,
+                    task=task,
+                    language=language_arg,
+                    vad_filter=self.vad_var.get(),
+                    word_timestamps=need_words,
+                    initial_prompt=self.vocab_var.get().strip() or None,
+                    progress=lambda msg: append_line(self.status, msg),
+                    on_progress=lambda f: self._set_progress(f, transcribe_label),
+                    cancelled=self._cancel_event.is_set,
+                )
+
+            try:
+                result = _run(device)
+            except Exception as exc:  # noqa: BLE001 - see fallback_to_cpu
+                # A GPU can be visible and still fail (VRAM, driver, a busy
+                # card). Losing the job to that is worse than running it slowly.
+                retry = fallback_to_cpu(device, exc)
+                if retry is None or self._cancel_event.is_set():
+                    raise
+                append_line(self.status, retry.note)
+                device = retry
+                result = _run(device)
 
             # Record what produced this result while the settings are in hand.
             provenance = AnalysisProvenance(
@@ -922,8 +989,8 @@ class TranscribeTab:
                 transcription=TranscriptionProvenance(
                     model_name=model_sel,
                     model_sha256=transcription_model_sha256(model),
-                    device="cpu",
-                    compute_type="int8",
+                    device=device.device,
+                    compute_type=device.compute_type,
                     language_setting=language or "auto",
                     detected_language=result.language,
                     vad=self.vad_var.get(),
@@ -1576,6 +1643,7 @@ class TranscribeTab:
             "language": self.language_var,
             "task": self.task_var,
             "vad": self.vad_var,
+            "device": self.device_var,
             "convert_video": self.convert_video_var,
             "srt": self.srt_var,
             "blank_lines": self.blank_lines_var,
@@ -1606,6 +1674,10 @@ class TranscribeTab:
                     var.set(data[key])
                 except Exception:  # noqa: BLE001 - ignore a stale/invalid value
                     pass
+        # A label from an older build (or a hand-edited settings file) would
+        # otherwise sit in the dropdown and resolve to Auto silently.
+        if self.device_var.get() not in _DEVICE_MODES:
+            self.device_var.set(_device_label(DEFAULT_MODE))
         if "learn_voices" in data:
             try:
                 self.learn_var.set(bool(data["learn_voices"]))

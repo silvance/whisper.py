@@ -168,6 +168,15 @@ PyTorch model above it uses [faster-whisper](https://github.com/SYSTRAN/faster-w
 (a CTranslate2 backend) with int8 quantization, which is considerably faster and
 lighter on CPU.
 
+**Processing hardware** (under *Options*) is *Auto* by default: an NVIDIA GPU is
+used when CTranslate2 can see one, and the CPU otherwise. CPU remains fully
+supported — every feature works on it, and the choice affects only how long a
+run takes, never the transcript. Asking for *NVIDIA GPU (CUDA)* on a machine
+without one falls back to the CPU **and says so** rather than failing the run,
+and a GPU that fails mid-load (VRAM, driver, a busy card) is retried on the CPU.
+The detection is a local query to the bundled inference library — no driver
+install, no download, no network. **Self-test…** reports what this machine has.
+
 Install the optional GUI extras and launch it:
 
 ```bash
