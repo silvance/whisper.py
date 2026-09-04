@@ -294,9 +294,18 @@ class StatusBanner(ttk.Frame):
         "busy": "•",
     }
 
-    def __init__(self, parent: tk.Misc, *, wraplength: int = 640) -> None:
+    def __init__(
+        self,
+        parent: tk.Misc,
+        *,
+        wraplength: int = 640,
+        before: Optional[tk.Misc] = None,
+    ) -> None:
         super().__init__(parent, style=Style.CARD_INNER)
         self._wraplength = wraplength
+        # Where to insert itself when shown. Without this it would append after
+        # whatever is already packed - i.e. below the result it is reporting on.
+        self._before = before
         self._mark = ttk.Label(self, text="", style=Style.MUTED)
         self._mark.pack(side="left", anchor="n", padx=(0, SPACE_SM))
         self._text = ttk.Label(
@@ -304,6 +313,10 @@ class StatusBanner(ttk.Frame):
         )
         self._text.pack(side="left", fill="x", expand=True)
         self._visible = False
+
+    def insert_before(self, widget: tk.Misc) -> None:
+        """Appear immediately above ``widget`` when shown."""
+        self._before = widget
 
     def show(self, kind: str, message: str) -> None:
         """Display ``message`` as a ``success``/``warning``/``error``/``info`` line."""
@@ -317,7 +330,10 @@ class StatusBanner(ttk.Frame):
         self._mark.configure(text=self.MARKS.get(kind, ""), style=style)
         self._text.configure(text=message, style=style)
         if not self._visible:
-            self.pack(fill="x", pady=(SPACE_SM, 0))
+            if self._before is not None and self._before.winfo_manager() == "pack":
+                self.pack(fill="x", pady=(SPACE_SM, 0), before=self._before)
+            else:
+                self.pack(fill="x", pady=(SPACE_SM, 0))
             self._visible = True
 
     def hide(self) -> None:
@@ -476,12 +492,119 @@ def style_text_widget(widget: tk.Text) -> tk.Text:
     """Apply the theme to a raw text widget, which ttk styles cannot reach."""
     from .theme import text_widget_options
 
+    colors = palette()
     try:
         widget.configure(**text_widget_options())
     except tk.TclError:  # pragma: no cover - a widget that rejects an option
         pass
+    # A ScrolledText is a Text inside a Frame with a classic Scrollbar; both
+    # keep the platform default otherwise, which is a pale box around a dark
+    # transcript.
+    master = widget.master
+    if isinstance(master, tk.Frame):
+        try:
+            master.configure(background=colors.surface_alt, highlightthickness=0)
+        except tk.TclError:  # pragma: no cover
+            pass
+    bar = getattr(widget, "vbar", None)
+    if bar is not None:
+        try:
+            bar.configure(
+                background=colors.border,
+                troughcolor=colors.surface_alt,
+                activebackground=colors.text_faint,
+                highlightthickness=0,
+                borderwidth=0,
+                width=12,
+            )
+        except tk.TclError:  # pragma: no cover
+            pass
     return widget
 
 
 def divider(parent: tk.Misc) -> ttk.Separator:
     return ttk.Separator(parent, orient="horizontal", style=Style.SEPARATOR)
+
+
+class FileDropZone(ttk.Frame):
+    """Where a recording comes into the application.
+
+    A path entry beside a Browse button is not wrong, but it puts a filesystem
+    string at the centre of the screen and gives no hint that a file can simply
+    be dropped. This shows the invitation when empty and the chosen file - name
+    and size, the path kept as quiet metadata - once there is one.
+    """
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        variable: tk.StringVar,
+        on_choose: Callable[[], None],
+        *,
+        prompt: str = "Drop an audio or video file here",
+        button_text: str = "Choose file",
+        change_text: str = "Change file",
+    ) -> None:
+        super().__init__(parent, style=Style.CARD_INNER)
+        self._variable = variable
+        self._on_choose = on_choose
+
+        # An outlined region reads as somewhere to drop something; a bare label
+        # in the middle of a card does not. tk.Frame because ttk styles have no
+        # way to draw this border.
+        colors = palette()
+        self.empty = tk.Frame(
+            self,
+            background=colors.surface,
+            highlightthickness=1,
+            highlightbackground=colors.border,
+            highlightcolor=colors.border,
+            padx=SPACE_MD,
+            pady=SPACE_MD,
+        )
+        inner = ttk.Frame(self.empty, style=Style.CARD_INNER)
+        inner.pack()
+        ttk.Label(inner, text=prompt, style=Style.BODY).pack()
+        ttk.Label(inner, text="or", style=Style.META).pack(pady=(SPACE_XS, SPACE_XS))
+        secondary_button(inner, button_text, on_choose).pack()
+
+        self.chosen = ttk.Frame(self, style=Style.CARD_INNER)
+        details = ttk.Frame(self.chosen, style=Style.CARD_INNER)
+        details.pack(side="left", fill="x", expand=True)
+        self._name = ttk.Label(details, text="", style=Style.BODY)
+        self._name.pack(anchor="w")
+        self._meta = ttk.Label(details, text="", style=Style.META)
+        self._meta.pack(anchor="w", pady=(SPACE_XS, 0))
+        secondary_button(self.chosen, change_text, on_choose).pack(side="right")
+
+        variable.trace_add("write", lambda *_a: self.refresh())
+        self.refresh()
+
+    def refresh(self) -> None:
+        raw = self._variable.get().strip()
+        if not raw:
+            self.chosen.pack_forget()
+            self.empty.pack(fill="x")
+            return
+        self.empty.pack_forget()
+        path = Path(raw)
+        self._name.configure(text=path.name or raw)
+        self._meta.configure(text=self._describe(path))
+        self.chosen.pack(fill="x")
+
+    @staticmethod
+    def _describe(path: Path) -> str:
+        """Size and location - useful, but not the headline."""
+        try:
+            size = float(path.stat().st_size)
+        except OSError:
+            # A path that is not there yet is still worth showing; its folder is
+            # the only useful thing left to say about it.
+            return str(path.parent) if path.parent != Path(".") else ""
+        shown = f"{size:.0f} bytes"
+        for unit in ("KB", "MB", "GB"):
+            size /= 1024.0
+            if size < 1024 or unit == "GB":
+                shown = f"{size:.1f} {unit}"
+                break
+        return f"{shown}  ·  {path.parent}"

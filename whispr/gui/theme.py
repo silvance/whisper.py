@@ -36,8 +36,8 @@ SPACE_XL = 24  # between sections
 SPACE_XXL = 32  # between major page regions
 
 # Card internals: enough room that content is not pressed against the edge.
-CARD_PADDING = (SPACE_LG, SPACE_MD, SPACE_LG, SPACE_LG)
-PAGE_PADDING = (SPACE_XL, SPACE_LG, SPACE_XL, SPACE_XL)
+CARD_PADDING = (SPACE_LG, SPACE_MD, SPACE_LG, SPACE_MD)
+PAGE_PADDING = (SPACE_XL, SPACE_MD, SPACE_XL, SPACE_XL)
 
 
 @dataclass(frozen=True)
@@ -211,9 +211,32 @@ def _configure_base(style: ttk.Style, t: Theme) -> None:
     style.configure(".", background=c.background, foreground=c.text, font=t.body)
     style.configure("TFrame", background=c.background)
     style.configure("TLabel", background=c.background, foreground=c.text, font=t.body)
-    style.configure("TCheckbutton", background=c.background, foreground=c.text)
-    style.configure("TRadiobutton", background=c.background, foreground=c.text)
+    for name in ("TCheckbutton", "TRadiobutton"):
+        _safe_configure(
+            style,
+            name,
+            background=c.background,
+            foreground=c.text,
+            indicatorbackground=c.surface_alt,
+            indicatorforeground=c.accent,
+            indicatorcolor=c.surface_alt,
+        )
     style.configure(Style.SEPARATOR, background=c.border)
+
+
+def _safe_configure(style: ttk.Style, name: str, **options: object) -> None:
+    """Apply the options a theme understands and ignore the ones it does not.
+
+    ttk themes disagree about which element options exist - a checkbutton
+    indicator is spelled differently under clam, ttkbootstrap and the native
+    Windows themes - and an unknown option raises rather than being ignored.
+    Applying them one at a time keeps the styling that does apply.
+    """
+    for option, value in options.items():
+        try:
+            style.configure(name, **{option: value})
+        except tk.TclError:  # pragma: no cover - theme-dependent
+            continue
 
 
 def _configure_surfaces(style: ttk.Style, t: Theme) -> None:
@@ -225,10 +248,27 @@ def _configure_surfaces(style: ttk.Style, t: Theme) -> None:
     style.configure(Style.CARD_INNER, background=c.surface)
     style.configure(Style.HEADER, background=c.surface)
     style.configure(Style.SIDEBAR, background=c.surface)
-    style.configure(Style.CHECK, background=c.surface, foreground=c.text)
-    style.map(Style.CHECK, background=[("active", c.surface)])
-    style.configure(Style.RADIO, background=c.surface, foreground=c.text)
-    style.map(Style.RADIO, background=[("active", c.surface)])
+    for name in (Style.CHECK, Style.RADIO):
+        _safe_configure(
+            style,
+            name,
+            background=c.surface,
+            foreground=c.text,
+            indicatorbackground=c.surface_alt,
+            indicatorforeground=c.accent,
+            indicatorcolor=c.surface_alt,
+            focuscolor=c.accent,
+            padding=(0, SPACE_XS),
+        )
+        style.map(
+            name,
+            background=[("active", c.surface)],
+            indicatorbackground=[
+                ("selected", c.accent),
+                ("active", c.border),
+            ],
+            indicatorcolor=[("selected", c.accent), ("active", c.border)],
+        )
 
 
 def _configure_text(style: ttk.Style, t: Theme) -> None:
@@ -403,6 +443,30 @@ def _configure_inputs(style: ttk.Style, t: Theme) -> None:
         padding=(SPACE_SM, SPACE_XS),
     )
     style.map("Treeview.Heading", background=[("active", c.surface_alt)])
+    # Sub-tabs (Transcript / Status): quiet until selected.
+    _safe_configure(
+        style,
+        "TNotebook",
+        background=c.surface,
+        bordercolor=c.surface,
+        borderwidth=0,
+        tabmargins=(0, 0, 0, 0),
+    )
+    _safe_configure(
+        style,
+        "TNotebook.Tab",
+        background=c.surface,
+        foreground=c.text_muted,
+        bordercolor=c.surface,
+        borderwidth=0,
+        padding=(SPACE_MD, SPACE_SM),
+        font=t.body,
+    )
+    style.map(
+        "TNotebook.Tab",
+        background=[("selected", c.surface_alt), ("active", c.surface_alt)],
+        foreground=[("selected", c.text), ("active", c.text)],
+    )
     style.configure(
         "TProgressbar",
         background=c.accent,
