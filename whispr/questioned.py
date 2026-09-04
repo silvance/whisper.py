@@ -23,13 +23,27 @@ Local only: it reads audio, hashes a file and runs the bundled embedder.
 
 from __future__ import annotations
 
+import os
+import tempfile
+import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
 
-from .enrollment import prepare_source, windows
+from .enrollment import (
+    MIN_WINDOW_SECONDS,
+    normalize_spans,
+    prepare_source,
+    windows,
+)
 from .hashing import short
-from .quality import INSUFFICIENT, QualityReport, analyse_span, combine
+from .quality import (
+    INSUFFICIENT,
+    QualityReport,
+    analyse_span,
+    combine,
+    read_wav_span,
+)
 from .voiceprints import centroid
 
 PathLike = Union[str, Path]
@@ -54,6 +68,10 @@ class QuestionedSpeaker:
     # Every span that went into the embedding, and everything the operator
     # selected, kept separately so the difference is visible.
     embedded_spans: List[Tuple[float, float]] = field(default_factory=list)
+    # How many windows went into the average, and whether several turns had to
+    # be joined to make windows at all.
+    window_count: int = 0
+    aggregated: bool = False
     selected_spans: List[Tuple[float, float]] = field(default_factory=list)
     selected_seconds: float = 0.0
     selection_mode: str = SELECTION_WHOLE
@@ -83,7 +101,7 @@ class QuestionedSpeaker:
                 else ""
             ),
             f"Speech measured: {self.speech_seconds:.1f} sec across "
-            f"{len(self.embedded_spans)} window(s) (quality: {self.quality})",
+            f"{self.window_count} window(s) (quality: {self.quality})",
         ]
         if self.skipped:
             lines.append(f"Windows skipped: {len(self.skipped)} ({self.skipped[0]})")
@@ -98,11 +116,90 @@ class QuestionedSpeaker:
             "selected_spans": [list(s) for s in self.selected_spans],
             "selected_seconds": round(self.selected_seconds, 2),
             "embedded_spans": [list(s) for s in self.embedded_spans],
+            "window_count": self.window_count,
+            "turns_joined": self.aggregated,
             "speech_seconds": round(self.speech_seconds, 2),
             "quality": self.quality,
             "warnings": list(self.warnings),
             "skipped": list(self.skipped),
         }
+
+
+# A join between two turns is a discontinuity; a short ramp either side keeps it
+# from becoming a click the embedder has to account for.
+_JOIN_FADE_SECONDS = 0.01
+
+
+def concatenate_spans(
+    wav_path: PathLike, spans: Sequence[Tuple[float, float]]
+) -> Tuple[Path, List[Tuple[float, float, float, float]]]:
+    """Write just ``spans`` to a temporary speaker-only WAV.
+
+    Returns the file and a mapping of ``(start, end, source_start, source_end)``
+    tying every stretch of the new file back to where it came from, so a
+    measurement over the concatenation can still be reported in the source
+    recording's own timeline.
+
+    This is what makes a conversational speaker measurable. Their speech
+    arrives as short turns between other people's; taken one at a time most
+    turns are too brief to characterise a voice, and 20 seconds of a target
+    spread over ten turns would yield nothing. Joined, it is 20 seconds of that
+    speaker. The audio is only ever *their* selected speech - nothing from
+    another speaker is included, and the joins are not presented as continuous
+    speech in the source.
+    """
+    import numpy as np
+
+    pieces: List[Tuple[float, float, float, float]] = []
+    chunks: List[Any] = []
+    position = 0.0
+    rate = 16000
+    for source_start, source_end in spans:
+        samples, rate = read_wav_span(wav_path, source_start, source_end)
+        if samples.size == 0:
+            continue
+        samples = samples.copy()
+        fade = min(int(_JOIN_FADE_SECONDS * rate), samples.size // 2)
+        if fade > 0:
+            ramp = np.linspace(0.0, 1.0, fade, dtype=samples.dtype)
+            samples[:fade] *= ramp
+            samples[-fade:] *= ramp[::-1]
+        duration = samples.size / float(rate)
+        pieces.append((position, position + duration, source_start, source_end))
+        chunks.append(samples)
+        position += duration
+
+    handle, temp_path = tempfile.mkstemp(suffix=".wav", prefix="whispr-questioned-")
+    os.close(handle)
+    out = Path(temp_path)
+    joined = np.concatenate(chunks) if chunks else np.zeros(0, dtype="float32")
+    with wave.open(str(out), "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(2)
+        writer.setframerate(rate)
+        writer.writeframes((joined * 32767.0).astype("<i2").tobytes())
+    return out, pieces
+
+
+def source_intervals(
+    pieces: Sequence[Tuple[float, float, float, float]],
+    start: float,
+    end: float,
+) -> List[Tuple[float, float]]:
+    """Where ``[start, end)`` of a concatenation came from in the source."""
+    out: List[Tuple[float, float]] = []
+    for piece_start, piece_end, source_start, _source_end in pieces:
+        overlap_start = max(start, piece_start)
+        overlap_end = min(end, piece_end)
+        if overlap_end <= overlap_start:
+            continue
+        out.append(
+            (
+                source_start + (overlap_start - piece_start),
+                source_start + (overlap_end - piece_start),
+            )
+        )
+    return out
 
 
 def measure_from_wav(
@@ -119,52 +216,113 @@ def measure_from_wav(
     the speech the operator selected and matches how a reference profile's
     centroid is built - so the two sides of a comparison are the same kind of
     quantity.
+
+    Repeated or overlapping ranges are unioned first, so the same seconds
+    cannot be measured, weighted and counted twice. Where the selection is
+    several turns, they are joined into one speaker-only stretch before being
+    windowed: a conversational target speaks in bursts too short to
+    characterise individually, and measuring turn by turn would throw away
+    speech that is perfectly usable once assembled. Windows are reported in
+    the source recording's own timeline either way.
     """
+    selected = [(float(a), float(b)) for a, b in spans]
     out = QuestionedSpeaker(
-        selection_mode=selection_mode,
-        selected_spans=[(float(a), float(b)) for a, b in spans],
+        selection_mode=selection_mode, selected_spans=list(selected)
     )
-    selected_reports: List[QualityReport] = []
+    measured_spans = normalize_spans(selected)
+    if len(measured_spans) < len(selected):
+        out.warnings.append(
+            f"{len(selected)} selected range(s) cover "
+            f"{len(measured_spans)} distinct stretch(es) of audio; ranges that "
+            "overlap, repeat or run straight on are measured once."
+        )
+    if not measured_spans:
+        out.warnings.append("The questioned selection is empty.")
+        return out
+
+    # One stretch is measured where it lies; several are joined first, so short
+    # turns accumulate into windows long enough to characterise a voice.
+    aggregated = len(measured_spans) > 1
+    working: PathLike = wav_path
+    pieces: List[Tuple[float, float, float, float]] = [
+        (a, b, a, b) for a, b in measured_spans
+    ]
+    if aggregated:
+        if progress is not None:
+            progress(f"Assembling {len(measured_spans)} turn(s) of speech…")
+        working, pieces = concatenate_spans(wav_path, measured_spans)
+    out.aggregated = aggregated
+
+    # Measured on the same audio the windows are drawn from, so "measured X of
+    # the Y selected" compares like with like rather than two different
+    # voiced-speech estimates.
+    first_start = pieces[0][0] if pieces else 0.0
+    last_end = pieces[-1][1] if pieces else 0.0
+    out.selected_seconds = round(
+        analyse_span(working, first_start, last_end).voiced_seconds, 2
+    )
+
+    try:
+        _measure_windows(out, working, pieces, embedder, progress)
+    finally:
+        if aggregated:
+            try:
+                Path(working).unlink()
+            except OSError:
+                pass
+    return out
+
+
+def _measure_windows(
+    out: QuestionedSpeaker,
+    working: PathLike,
+    pieces: Sequence[Tuple[float, float, float, float]],
+    embedder: Any,
+    progress: Optional[ProgressFn],
+) -> None:
+    """Window ``working``, embed what is usable, and record it in source time."""
+    total = pieces[-1][1] if pieces else 0.0
+    first = pieces[0][0] if pieces else 0.0
     used_reports: List[QualityReport] = []
     vectors: List[List[float]] = []
 
-    for span_start, span_end in spans:
-        selected_reports.append(analyse_span(wav_path, span_start, span_end))
-        pieces = windows(span_start, span_end)
-        if not pieces:
+    slots = windows(first, total)
+    if not slots:
+        out.skipped.append(
+            f"{total - first:.1f}s of speech: shorter than the "
+            f"{MIN_WINDOW_SECONDS:.0f}s needed to measure a voice."
+        )
+    for start, end in slots:
+        report = analyse_span(working, start, end)
+        origin = source_intervals(pieces, start, end)
+        where = _describe_intervals(origin)
+        if not report.usable:
             out.skipped.append(
-                f"{span_start:.1f}-{span_end:.1f}s: too short to measure."
+                f"{where}: {report.assessment.lower()} audio "
+                f"({report.voiced_seconds:.1f}s of speech)."
             )
             continue
-        for start, end in pieces:
-            report = analyse_span(wav_path, start, end)
-            if not report.usable:
-                out.skipped.append(
-                    f"{start:.1f}-{end:.1f}s: {report.assessment.lower()} audio "
-                    f"({report.voiced_seconds:.1f}s of speech)."
-                )
-                continue
-            if progress is not None:
-                progress(f"Measuring {start:.0f}-{end:.0f}s…")
-            vector = embedder.embed_span(wav_path, start, end)
-            if not vector:
-                out.skipped.append(f"{start:.1f}-{end:.1f}s: no embedding produced.")
-                continue
-            vectors.append(list(vector))
-            used_reports.append(report)
-            out.embedded_spans.append((start, end))
+        if progress is not None:
+            progress(f"Measuring {where}…")
+        vector = embedder.embed_span(working, start, end)
+        if not vector:
+            out.skipped.append(f"{where}: no embedding produced.")
+            continue
+        vectors.append(list(vector))
+        used_reports.append(report)
+        out.embedded_spans.extend(origin)
 
-    out.selected_seconds = round(sum(r.voiced_seconds for r in selected_reports), 2)
     if not vectors:
         out.warnings.append(
             "No window of the questioned selection held enough usable speech to "
             "measure."
         )
-        return out
+        return
 
     out.embedding = centroid(vectors)
     # The duration behind the embedding, not the duration of the selection.
     out.speech_seconds = round(sum(r.voiced_seconds for r in used_reports), 2)
+    out.window_count = len(vectors)
     merged = combine(used_reports)
     out.quality = merged.assessment
     out.warnings.extend(merged.warnings)
@@ -173,7 +331,13 @@ def measure_from_wav(
             f"Measured {out.speech_seconds:.1f}s of the "
             f"{out.selected_seconds:.1f}s selected; the rest was not usable."
         )
-    return out
+
+
+def _describe_intervals(intervals: Sequence[Tuple[float, float]]) -> str:
+    """Source spans as an operator-readable list, e.g. ``12.0-20.0, 31.5-35.0s``."""
+    if not intervals:
+        return "no source interval"
+    return ", ".join(f"{start:.1f}-{end:.1f}" for start, end in intervals) + "s"
 
 
 def measure(

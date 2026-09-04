@@ -351,6 +351,22 @@ screenshotted or exported as a report. **Search all subjects** ranks the
 questioned speaker against every stored profile, but ranking is not
 identification: the same acceptance-and-margin rule applies, and when nothing
 clears it the answer is *No known profile produced a sufficiently strong match.*
+On audio too poor or too short to assess, the ranking is still shown but the
+search draws no conclusion from it at all.
+
+**How the questioned speaker is measured.** The selection is unioned first, so
+ranges that overlap, repeat or run straight on are read once and cannot be
+counted twice. Where it is several turns — the usual shape of a surreptitious
+recording, where the target speaks in bursts between other people — those turns
+are joined into one speaker-only stretch before being split into windows. Every
+usable window is embedded and the embeddings averaged, exactly as a reference
+profile's centroid is built. This matters operationally: a target with 15
+seconds of speech across seven turns, none longer than three seconds, is
+measurable together and would be measurable in no other way. **Only the
+selected speaker's audio is joined**, the joins are never presented as
+continuous speech, and every window is reported back in the source recording's
+own timeline. The duration on the result is the speech behind the embedding —
+never the duration of a selection that was only partly usable.
 
 **Sharing and comparing speakers.** A profile can be moved between machines with
 **Export…** / **Import…** (the whole profile — settings and learned voices — as one
