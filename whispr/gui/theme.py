@@ -418,7 +418,15 @@ def _configure_inputs(style: ttk.Style, t: Theme) -> None:
             bordercolor=[("focus", c.accent)],
             lightcolor=[("focus", c.accent)],
             darkcolor=[("focus", c.accent)],
-            foreground=[("disabled", c.text_faint)],
+            # A read-only combobox keeps the platform's greyed-out treatment
+            # otherwise, which on stock Tk is unreadable text on this ground.
+            foreground=[("disabled", c.text_faint), ("readonly", c.text)],
+            fieldbackground=[
+                ("readonly", c.surface_alt),
+                ("disabled", c.surface),
+            ],
+            selectbackground=[("readonly", c.surface_alt)],
+            selectforeground=[("readonly", c.text)],
         )
     _safe_configure(
         style,

@@ -28,50 +28,6 @@ from .theme import (
 )
 
 
-class CollapsibleSection(ttk.Frame):
-    """A titled section whose body can be collapsed to a single header row.
-
-    Clicking the header toggles the body. Collapsing the settings frees vertical
-    space for the transcript and lets the window be resized down without clipping
-    controls. Put child widgets in ``.body``.
-    """
-
-    def __init__(
-        self,
-        parent: tk.Misc,
-        title: str,
-        *,
-        expanded: bool = True,
-        body_padding: tuple = (10, 6, 10, 10),
-    ) -> None:
-        super().__init__(parent)
-        self.title = title
-        self.expanded = expanded
-        self.header = ttk.Button(self, command=self.toggle)
-        self.header.pack(fill="x")
-        self.body = ttk.Frame(self, padding=body_padding)
-        if expanded:
-            self.body.pack(fill="both", expand=True)
-        self._refresh_header()
-
-    def _refresh_header(self) -> None:
-        arrow = "▼" if self.expanded else "▶"
-        self.header.configure(text=f"{arrow}  {self.title}")
-
-    def toggle(self) -> None:
-        self.set_expanded(not self.expanded)
-
-    def set_expanded(self, value: bool) -> None:
-        if value == self.expanded:
-            return
-        self.expanded = value
-        if value:
-            self.body.pack(fill="both", expand=True)
-        else:
-            self.body.forget()
-        self._refresh_header()
-
-
 def scrollable_body(parent: tk.Misc) -> "tuple[tk.Canvas, ttk.Frame]":
     """Wrap a scrollable region in ``parent`` and return ``(canvas, inner)``.
 

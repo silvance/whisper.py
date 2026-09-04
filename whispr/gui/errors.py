@@ -29,15 +29,19 @@ def friendly_error(exc: Exception) -> str:
     # message is already written for the operator, so surface it as-is.
     if "isn't in this build" in low:
         return msg.splitlines()[0]
+    # These name the control the operator has to change, which now lives under
+    # Advanced options > Speaker separation > Method.
     if "sherpa-onnx is not installed" in low:
         return (
-            "The sherpa speaker engine isn't installed. Switch Engine to "
-            "pyannote, or install sherpa-onnx."
+            "One of the speaker-separation methods (sherpa) isn't installed in "
+            "this build. Under Advanced options, set Speaker separation > "
+            "Method to the pyannote option."
         )
     if "pyannote.audio is not installed" in low:
         return (
-            "The pyannote speaker engine isn't installed. Switch Engine to "
-            "sherpa, or use a build that includes pyannote."
+            "One of the speaker-separation methods (pyannote) isn't installed "
+            "in this build. Under Advanced options, set Speaker separation > "
+            "Method to the sherpa option."
         )
     if (
         "no diarization models" in low
@@ -45,8 +49,9 @@ def friendly_error(exc: Exception) -> str:
         or "localentrynotfound" in name.lower()
     ):
         return (
-            "Couldn't load the speaker models. Use a build that bundles them, "
-            "switch the Engine, or untick 'Identify speakers' to transcribe only."
+            "Couldn't load the speaker-separation models. Use a build that "
+            "includes them, try the other Method under Advanced options, or "
+            "untick 'Identify who is speaking' to transcribe only."
         )
     if "memoryerror" in name.lower() or "out of memory" in low:
         return (
