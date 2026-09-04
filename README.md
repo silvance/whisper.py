@@ -298,12 +298,19 @@ automatically next time.
   speaker — renaming a speaker, or moving a line/word/selection to one — embeds
   that audio and folds it into that person's voiceprint. Nothing extra to click;
   correcting the transcript *is* the training.
-- **Next run, voices are recognised.** Each diarized turn is matched against the
-  profile's voiceprints and labelled with the person it matches — and when a turn
-  matches a known voice more strongly than the cluster it landed in, it's
-  **re-attributed to that person**, overriding the diarizer. This is the fix for
-  the common failure where a quieter speaker's turns get lumped in with a louder
-  one: the quiet turns still match the quiet voiceprint.
+- **Next run, voices are recognised — one turn at a time.** Each diarized turn is
+  judged **on its own audio**: it is labelled with a known person only when its
+  own embedding clears the acceptance threshold *and* beats the runner-up by the
+  required margin. A turn that is too short to embed, matches nothing, or is
+  ambiguous keeps its `SPEAKER_xx` label. An identity is deliberately **not**
+  propagated across a diarization cluster — sharing a cluster with a matched turn
+  is evidence about clustering, not about who is speaking — so a name never lands
+  on audio that was never matched to that person.
+- **A correction is a proposal, not a promotion.** If a known-subject profile
+  exists with that name (see *Speaker profiles* below), the corrected audio is
+  added to it as a **pending, unapproved** sample for review. It does not move
+  the subject's reference centroid until an analyst approves it, so a mistaken
+  correction cannot quietly contaminate a known actor's reference material.
 
 Voiceprints reuse the bundled speaker-embedding model (the same one the sherpa
 diarizer uses), so recognition works offline and adds no new dependency; if that
@@ -312,6 +319,38 @@ files stored beside the app settings. One honest limit: voiceprints only sharpen
 *who-said-what* labelling — they do **not** retrain the transcription model, so
 they don't change the words Whisper decodes. For word accuracy, use a larger model
 than `base.en` (try `small.en`/`medium.en`) and the **Custom words** box.
+
+### Speaker profiles and Speaker Compare
+
+Two dedicated tabs appear when the build bundles a speaker-embedding model. They
+are separate from the operation profiles above: those are a disposable
+who-said-what aid, while these hold the **reference voices of known subjects**.
+
+**Speaker profiles** builds a subject's reference material from historical
+recordings — no transcript correction required:
+
+- **Add historical recording…** takes a whole file, a chosen speaker from a
+  diarized file, or explicit time ranges (`0:10-0:45, 1:20-2:00`).
+- Audio is enrolled as **multiple embeddings** (8-second windows), not a single
+  averaged vector, and each sample records where it came from: source filename,
+  source SHA-256, start/end, usable speech duration, quality metrics and notes.
+- Samples are either **reference** (trusted, from deliberate enrolment) or
+  **learned** (proposed automatically, pending approval). Only trusted samples
+  form the centroid a comparison runs against; pending samples are listed with
+  **Approve** / **Remove**, and one that sits far from the current reference is
+  flagged as a probable mis-correction.
+- The panel shows sample counts, usable speech duration, source files, and the
+  embedding model with its SHA-256 and vector dimension.
+
+**Speaker Compare** is the 1:1 workflow: pick a reference profile, pick a
+questioned recording (whole file, a diarized speaker, or time ranges), and
+compare. The result gives the raw similarity score out of 1.00, the qualitative
+band, the threshold and margin in force, the speech duration and quality on each
+side, the model-compatibility verdict and the disclaimer — laid out to be
+screenshotted or exported as a report. **Search all subjects** ranks the
+questioned speaker against every stored profile, but ranking is not
+identification: the same acceptance-and-margin rule applies, and when nothing
+clears it the answer is *No known profile produced a sufficiently strong match.*
 
 **Sharing and comparing speakers.** A profile can be moved between machines with
 **Export…** / **Import…** (the whole profile — settings and learned voices — as one

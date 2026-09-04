@@ -282,3 +282,32 @@ def test_sample_missing_metadata_loads_with_defaults():
     assert sample.speech_duration == 0.0
     assert sample.source_filename is None
     assert sample.sample_id
+
+
+# -- Finding a subject by the name a transcript uses -------------------------
+
+
+def _stored(tmp_path, monkeypatch, names):
+    monkeypatch.setattr(sp, "speakers_dir", lambda: tmp_path)
+    for name in names:
+        profile = SpeakerProfile(display_name=name)
+        save_speaker_profile(profile)
+
+
+def test_find_by_name_is_case_insensitive(tmp_path, monkeypatch):
+    _stored(tmp_path, monkeypatch, ["John Doe"])
+    found = sp.find_speaker_profile_by_name("  john doe ")
+    assert found is not None and found.display_name == "John Doe"
+
+
+def test_find_by_name_returns_nothing_for_an_unknown_speaker(tmp_path, monkeypatch):
+    _stored(tmp_path, monkeypatch, ["John Doe"])
+    assert sp.find_speaker_profile_by_name("SPEAKER_01") is None
+    assert sp.find_speaker_profile_by_name("") is None
+
+
+def test_an_ambiguous_name_matches_nothing_rather_than_guessing(tmp_path, monkeypatch):
+    # Two subjects share a display name: picking one would attach a correction
+    # to the wrong person's reference material.
+    _stored(tmp_path, monkeypatch, ["J. Smith", "J. Smith"])
+    assert sp.find_speaker_profile_by_name("J. Smith") is None

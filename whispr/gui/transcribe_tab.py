@@ -29,6 +29,7 @@ from ..acceleration import (
 )
 from ..acceleration import resolve as resolve_device
 from ..diarization import assign_speakers, diarize
+from ..enrollment import enroll_from_wav
 from ..export import transcript_to_docx
 from ..playback import PlaybackError, SegmentPlayer, playback_available
 from ..profiles import (
@@ -51,6 +52,11 @@ from ..provenance import (
 )
 from ..reports import write_analysis_report
 from ..resources import bundled_models
+from ..speaker_profiles import (
+    SAMPLE_LEARNED,
+    find_speaker_profile_by_name,
+    save_speaker_profile,
+)
 from ..thresholds import active as active_thresholds
 from ..transcription import (
     AUDIO_EXTENSIONS,
@@ -1470,8 +1476,49 @@ class TranscribeTab:
                     )
             except Exception as exc:  # noqa: BLE001 - surfaced, never fatal
                 self.progress_label_var.set(friendly_error(exc))
+            self._propose_to_speaker_profile(name, wav, spans, embedder)
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _propose_to_speaker_profile(
+        self, name: str, wav: Path, spans: List[Tuple[float, float]], embedder
+    ) -> None:
+        """Offer this correction to a known subject's profile - unapproved.
+
+        A correction can be wrong, so it never joins a known actor's trusted
+        reference material on its own: the sample is stored pending review in
+        *Speaker profiles*, where an analyst approves or removes it. The
+        operation profile's own voiceprints (above) are a separate, disposable
+        who-said-what aid and are updated regardless.
+        """
+        try:
+            subject = find_speaker_profile_by_name(name)
+            if subject is None:
+                return
+            source = self._result_source
+            result = enroll_from_wav(
+                subject,
+                wav,
+                spans,
+                embedder,
+                source_filename=source.name if source else None,
+                source_sha256=(
+                    self._result_provenance.source.sha256
+                    if self._result_provenance and self._result_provenance.source
+                    else None
+                ),
+                sample_type=SAMPLE_LEARNED,
+                notes="Proposed automatically from a transcript correction.",
+            )
+            if not result.added:
+                return
+            save_speaker_profile(subject)
+            self.progress_label_var.set(
+                f"{result.added_count} sample(s) proposed for {subject.display_name} - "
+                "approve them in Speaker profiles before they are used."
+            )
+        except Exception as exc:  # noqa: BLE001 - never fail a correction on this
+            append_line(self.status, f"Could not propose a speaker sample: {exc}")
 
     # -- Profile management ------------------------------------------------
 

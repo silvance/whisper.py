@@ -204,6 +204,27 @@ def test_learned_sample_type_is_not_auto_trusted(wav):
     assert profile.trusted_samples() == []
 
 
+def test_a_correction_cannot_move_a_trusted_reference_centroid(wav):
+    """The transcript side proposes; it never enrols into the trusted model."""
+    profile = SpeakerProfile(display_name="Subject I2")
+    enroll_from_wav(profile, wav, [(0.0, 16.0)], _FakeEmbedder())
+    before = list(profile.centroid())
+    trusted_before = len(profile.trusted_samples())
+
+    # A correction that was in fact wrong arrives as a learned proposal.
+    enroll_from_wav(
+        profile,
+        wav,
+        [(16.0, 32.0)],
+        _FakeEmbedder(),
+        sample_type=SAMPLE_LEARNED,
+        notes="Proposed automatically from a transcript correction.",
+    )
+    assert profile.centroid() == before
+    assert len(profile.trusted_samples()) == trusted_before
+    assert profile.pending_samples()  # visible for review, not silently applied
+
+
 def test_run_quality_is_reported(wav):
     profile = SpeakerProfile(display_name="Subject J")
     result = enroll_from_wav(profile, wav, [(0.0, 32.0)], _FakeEmbedder())

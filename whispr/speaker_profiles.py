@@ -666,6 +666,26 @@ def load_speaker_profile(subject_id: str) -> Optional[SpeakerProfile]:
     return None
 
 
+def find_speaker_profile_by_name(display_name: str) -> Optional[SpeakerProfile]:
+    """Fetch one stored subject profile by display name (case-insensitive).
+
+    A transcript speaker label is a name, not a subject id, so this is how the
+    transcript side finds the subject a correction might relate to. Ambiguity is
+    resolved as "no match": with two subjects sharing a display name, guessing
+    which one an operator meant is exactly the mistake this module exists to
+    prevent.
+    """
+    wanted = (display_name or "").strip().casefold()
+    if not wanted:
+        return None
+    matches = [
+        p
+        for p in list_speaker_profiles()
+        if p.display_name.strip().casefold() == wanted
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def delete_speaker_profile(profile: SpeakerProfile) -> None:
     """Remove a stored subject profile (best-effort)."""
     try:
