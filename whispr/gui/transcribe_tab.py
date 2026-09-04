@@ -40,6 +40,7 @@ from ..provenance import (
     TranscriptionProvenance,
     transcription_model_sha256,
 )
+from ..reports import write_analysis_report
 from ..resources import bundled_models
 from ..transcription import (
     AUDIO_EXTENSIONS,
@@ -565,6 +566,11 @@ class TranscribeTab:
         ).pack(side="left")
         ttk.Button(
             export_row, text="Save as Word…", command=self._save_transcript_docx
+        ).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            export_row,
+            text="Analysis report…",
+            command=self._save_analysis_report,
         ).pack(side="left", padx=(8, 0))
         ttk.Button(export_row, text="Save project…", command=self._save_project).pack(
             side="left", padx=(8, 0)
@@ -1105,6 +1111,45 @@ class TranscribeTab:
                 path,
                 self._speaker_names,
                 blank_lines=self.blank_lines_var.get(),
+            )
+            self.progress_label_var.set(f"Saved {Path(path).name}")
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user
+            self.progress_label_var.set(friendly_error(exc))
+
+    def current_analysis(
+        self,
+    ) -> "Tuple[Optional[TranscriptionResult], Dict[str, str], Optional[AnalysisProvenance]]":
+        """The displayed result, its speaker names and its provenance.
+
+        Lets the Speaker Compare tab put the transcript and its traceability into
+        an analysis report without reaching into this tab's internals.
+        """
+        return self._result, self._speaker_names, self._result_provenance
+
+    def _save_analysis_report(self) -> None:
+        """Write a report covering the transcript and how it was produced."""
+        result = self._result
+        if result is None:
+            self.progress_label_var.set("Run a transcription first.")
+            return
+        stem = self._result_source.stem if self._result_source else "analysis"
+        path = filedialog.asksaveasfilename(
+            title="Save analysis report",
+            defaultextension=".docx",
+            initialfile=f"{stem}-report.docx",
+            filetypes=[
+                ("Word document", "*.docx"),
+                ("Text file", "*.txt"),
+            ],
+        )
+        if not path:
+            return
+        try:
+            write_analysis_report(
+                path,
+                result=result,
+                speaker_names=self._speaker_names,
+                provenance=self._result_provenance,
             )
             self.progress_label_var.set(f"Saved {Path(path).name}")
         except Exception as exc:  # noqa: BLE001 - surfaced to the user

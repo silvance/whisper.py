@@ -143,7 +143,13 @@ class WhisprApp:
             compare_root = ttk.Frame(notebook)
             notebook.add(compare_root, text="Speaker Compare")
             self.speaker_compare = SpeakerCompareTab(
-                compare_root, self.root, self.cancel_event, self.cancel
+                compare_root,
+                self.root,
+                self.cancel_event,
+                self.cancel,
+                # Lets a comparison report carry the current transcript and the
+                # provenance of the run that produced it.
+                get_analysis=self.transcribe.current_analysis,
             )
             self._tabs.append(self.speaker_compare)
 

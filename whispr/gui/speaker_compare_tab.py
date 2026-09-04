@@ -23,7 +23,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 from ..enrollment import (
     parse_time_ranges,
@@ -33,6 +33,7 @@ from ..enrollment import (
 )
 from ..matching import ComparisonResult, compare_embedding_to_profile, search_gallery
 from ..quality import analyse_span, combine
+from ..reports import write_analysis_report
 from ..speaker_profiles import (
     SpeakerProfile,
     bundled_model_identity,
@@ -58,10 +59,16 @@ class SpeakerCompareTab:
         root: tk.Misc,
         cancel_event: threading.Event,
         on_cancel: Callable[[], None],
+        *,
+        get_analysis: Optional[Callable[[], Any]] = None,
     ) -> None:
         self.parent = parent
         self.root = root
+        # Supplies (result, speaker_names, provenance) from the Transcribe tab so
+        # a report can carry the transcript and its traceability. Optional.
+        self._get_analysis = get_analysis
         self._profiles: List[SpeakerProfile] = []
+        self._comparisons: List[ComparisonResult] = []
         self._embedder: Optional[SpeakerEmbedder] = None
         self._last_result: Optional[ComparisonResult] = None
 
@@ -377,6 +384,7 @@ class SpeakerCompareTab:
                 allow_unverified_model=self.allow_unverified_var.get(),
             )
             self._last_result = result
+            self._comparisons.append(result)
             self._show(result.format_lines())
             self._status("Comparison complete.")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
@@ -428,6 +436,41 @@ class SpeakerCompareTab:
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
         self._status("Result copied to clipboard.")
+
+    def _export_report(self) -> None:
+        """Write a report of the comparisons made, with the transcript if there is one."""
+        if not self._comparisons:
+            self._status("Run a comparison first.")
+            return
+        result = names = provenance = None
+        if self._get_analysis is not None:
+            try:
+                result, names, provenance = self._get_analysis()
+            except Exception:  # noqa: BLE001 - a report without the transcript is fine
+                result = names = provenance = None
+        path = filedialog.asksaveasfilename(
+            title="Export analysis report",
+            defaultextension=".docx",
+            initialfile="speaker-analysis-report.docx",
+            filetypes=[("Word document", "*.docx"), ("Text file", "*.txt")],
+        )
+        if not path:
+            return
+        try:
+            write_analysis_report(
+                path,
+                result=result,
+                speaker_names=names,
+                provenance=provenance,
+                comparisons=self._comparisons,
+            )
+            self._status(f"Saved {Path(path).name}")
+        except Exception as exc:  # noqa: BLE001 - surfaced to the operator
+            self._status(friendly_error(exc))
+
+    def _clear_comparisons(self) -> None:
+        self._comparisons = []
+        self._status("Cleared the recorded comparisons.")
 
     def _status(self, message: str) -> None:
         self.root.after(0, lambda: self.status_var.set(message))
