@@ -420,13 +420,17 @@ def _configure_inputs(style: ttk.Style, t: Theme) -> None:
             darkcolor=[("focus", c.accent)],
             foreground=[("disabled", c.text_faint)],
         )
-    style.configure(
+    _safe_configure(
+        style,
         "Treeview",
         background=c.surface_alt,
         fieldbackground=c.surface_alt,
         foreground=c.text,
-        bordercolor=c.border,
+        bordercolor=c.surface_alt,
+        lightcolor=c.surface_alt,
+        darkcolor=c.surface_alt,
         borderwidth=0,
+        relief="flat",
         rowheight=26,
     )
     style.map(

@@ -461,7 +461,9 @@ class KeyValueRow(ttk.Frame):
         ttk.Label(self, text=label, style=Style.FIELD_LABEL, width=width).pack(
             side="left", anchor="w"
         )
-        self.value = ttk.Label(self, text=value, style=value_style, justify="left")
+        self.value = ttk.Label(
+            self, text=value, style=value_style, justify="left", wraplength=420
+        )
         self.value.pack(side="left", anchor="w")
 
     def set(self, value: str, *, style_name: Optional[str] = None) -> None:
