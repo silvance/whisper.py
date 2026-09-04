@@ -256,7 +256,11 @@ def test_gallery_ranks_and_accepts_clear_winner():
         _profile("Actor B", _at_cosine(0.42)),
     ]
     result = search_gallery(
-        [1.0, 0.0], gallery, questioned_seconds=20.0, questioned_model=MODEL
+        [1.0, 0.0],
+        gallery,
+        questioned_seconds=20.0,
+        questioned_quality=GOOD,
+        questioned_model=MODEL,
     )
     assert [m.display_name for m in result.matches] == ["Actor A", "Actor D", "Actor B"]
     assert result.searched == 3
@@ -272,7 +276,11 @@ def test_gallery_refuses_ambiguous_top_two():
         _profile("Actor B", _at_cosine(0.67)),
     ]
     result = search_gallery(
-        [1.0, 0.0], gallery, questioned_seconds=20.0, questioned_model=MODEL
+        [1.0, 0.0],
+        gallery,
+        questioned_seconds=20.0,
+        questioned_quality=GOOD,
+        questioned_model=MODEL,
     )
     assert result.accepted_name is None
     assert "No known profile produced a sufficiently strong match." in "\n".join(
@@ -283,7 +291,11 @@ def test_gallery_refuses_ambiguous_top_two():
 def test_gallery_reports_nothing_when_all_below_threshold():
     gallery = [_profile("Actor A", _at_cosine(0.4))]
     result = search_gallery(
-        [1.0, 0.0], gallery, questioned_seconds=20.0, questioned_model=MODEL
+        [1.0, 0.0],
+        gallery,
+        questioned_seconds=20.0,
+        questioned_quality=GOOD,
+        questioned_model=MODEL,
     )
     assert result.accepted_name is None
     assert result.matches[0].band == BAND_LOW
@@ -292,7 +304,11 @@ def test_gallery_reports_nothing_when_all_below_threshold():
 def test_gallery_skips_incompatible_profiles():
     gallery = [_profile("Actor A", model=OTHER_MODEL), _profile("Actor B")]
     result = search_gallery(
-        [1.0, 0.0], gallery, questioned_seconds=20.0, questioned_model=MODEL
+        [1.0, 0.0],
+        gallery,
+        questioned_seconds=20.0,
+        questioned_quality=GOOD,
+        questioned_model=MODEL,
     )
     assert result.searched == 1
     assert any("Actor A" in reason for reason in result.skipped)
@@ -312,7 +328,11 @@ def test_gallery_record_round_trip():
         _profile("Actor B", _at_cosine(0.3)),
     ]
     result = search_gallery(
-        [1.0, 0.0], gallery, questioned_seconds=20.0, questioned_model=MODEL
+        [1.0, 0.0],
+        gallery,
+        questioned_seconds=20.0,
+        questioned_quality=GOOD,
+        questioned_model=MODEL,
     )
     data = result.to_dict()
     assert data["searched"] == 2
@@ -342,3 +362,153 @@ def test_a_configured_threshold_override_is_honoured(monkeypatch):
     assert result.score == pytest.approx(0.90, abs=1e-6)
     assert result.band == BAND_INTERMEDIATE
     assert result.operational_threshold == 0.99
+
+
+# -- The gallery and the 1:1 path must agree about the same clip -------------
+
+
+def _both_paths(seconds, quality):
+    """Run the same questioned audio through both comparison paths."""
+    profile = _profile("Actor A", _at_cosine(0.95))
+    one_to_one = compare_embedding_to_profile(
+        [1.0, 0.0],
+        profile,
+        questioned_seconds=seconds,
+        questioned_quality=quality,
+        questioned_model=MODEL,
+    )
+    gallery = search_gallery(
+        [1.0, 0.0],
+        [profile],
+        questioned_seconds=seconds,
+        questioned_quality=quality,
+        questioned_model=MODEL,
+    )
+    return one_to_one, gallery
+
+
+def test_insufficient_quality_blocks_a_gallery_lead_as_well_as_a_comparison():
+    """The same clip must not be 'Insufficient data' one way and a lead the other."""
+    one_to_one, gallery = _both_paths(seconds=30.0, quality=INSUFFICIENT)
+    assert one_to_one.band == BAND_INSUFFICIENT
+    assert gallery.accepted_name is None
+    assert gallery.inadequate_reason
+    summary = " ".join(gallery.summary_lines())
+    assert BAND_INSUFFICIENT in summary
+    assert "supports no conclusion" in summary
+    # The high score is still visible; it is the conclusion that is withheld.
+    assert gallery.matches and gallery.matches[0].score > 0.9
+
+
+def test_too_little_speech_blocks_a_gallery_lead_as_well_as_a_comparison():
+    one_to_one, gallery = _both_paths(seconds=1.0, quality=GOOD)
+    assert one_to_one.band == BAND_INSUFFICIENT
+    assert gallery.accepted_name is None
+    assert "1.0s" in gallery.inadequate_reason
+
+
+def test_adequate_audio_produces_a_lead_on_both_paths():
+    one_to_one, gallery = _both_paths(seconds=30.0, quality=GOOD)
+    assert one_to_one.band == BAND_HIGH
+    assert gallery.accepted_name == "Actor A"
+    assert gallery.inadequate_reason == ""
+
+
+def test_gallery_defaults_to_refusing_rather_than_assuming_good_audio():
+    # A caller that forgets to say gets the conservative answer.
+    gallery = search_gallery(
+        [1.0, 0.0],
+        [_profile("Actor A", _at_cosine(0.95))],
+        questioned_seconds=30.0,
+        questioned_model=MODEL,
+    )
+    assert gallery.accepted_name is None
+
+
+# -- Two subjects with the same display name --------------------------------
+
+
+def test_a_repeated_display_name_is_disambiguated_in_the_ranking():
+    first = _profile("J. Smith", _at_cosine(0.9))
+    second = _profile("J. Smith", _at_cosine(0.3))
+    result = search_gallery(
+        [1.0, 0.0],
+        [first, second],
+        questioned_seconds=30.0,
+        questioned_quality=GOOD,
+        questioned_model=MODEL,
+    )
+    # Both subjects are searched and ranked separately - one cannot stand in
+    # for the other.
+    assert result.searched == 2
+    assert len(result.matches) == 2
+    names = [m.display_name for m in result.matches]
+    assert len(set(names)) == 2
+    assert first.subject_id in names[0]
+    subject_ids = [m.subject_id for m in result.matches]
+    assert subject_ids == [first.subject_id, second.subject_id]
+
+
+def test_a_lead_against_a_repeated_name_says_which_subject():
+    first = _profile("J. Smith", _at_cosine(0.95))
+    second = _profile("J. Smith", _at_cosine(0.2))
+    result = search_gallery(
+        [1.0, 0.0],
+        [first, second],
+        questioned_seconds=30.0,
+        questioned_quality=GOOD,
+        questioned_model=MODEL,
+    )
+    assert result.accepted_name is not None
+    assert first.subject_id in result.accepted_name
+
+
+# -- Comparison provenance ---------------------------------------------------
+
+
+def test_a_comparison_can_name_the_recording_it_measured():
+    result = compare_embedding_to_profile(
+        [1.0, 0.0],
+        _profile(),
+        questioned_seconds=20.0,
+        questioned_quality=GOOD,
+        questioned_model=MODEL,
+    )
+    result.questioned_source_filename = "intercept-042.wav"
+    result.questioned_source_sha256 = "c" * 64
+    result.questioned_selection = "diarized speaker (SPEAKER_01)"
+    result.questioned_window_count = 3
+    text = "\n".join(result.format_lines())
+    assert "intercept-042.wav" in text
+    assert ("c" * 64) in text
+    assert "diarized speaker (SPEAKER_01)" in text
+    assert "measured across 3 window(s)" in text
+    assert result.to_dict()["questioned_source_sha256"] == "c" * 64
+
+
+def test_a_refused_comparison_still_names_the_recording():
+    result = compare_embedding_to_profile(
+        [1.0, 0.0],
+        _profile(model=OTHER_MODEL),
+        questioned_seconds=20.0,
+        questioned_quality=GOOD,
+        questioned_model=MODEL,
+    )
+    result.questioned_source_filename = "intercept-042.wav"
+    result.questioned_source_sha256 = "d" * 64
+    assert result.refused
+    text = "\n".join(result.format_lines())
+    assert "intercept-042.wav" in text and ("d" * 64) in text
+
+
+def test_a_comparison_without_recorded_provenance_claims_none():
+    result = compare_embedding_to_profile(
+        [1.0, 0.0],
+        _profile(),
+        questioned_seconds=20.0,
+        questioned_quality=GOOD,
+        questioned_model=MODEL,
+    )
+    text = "\n".join(result.format_lines())
+    assert "Questioned recording:" not in text
+    assert "Source SHA-256" not in text

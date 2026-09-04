@@ -238,3 +238,63 @@ def test_write_docx_report(tmp_path):
         path, result=_result(), provenance=_provenance(), comparisons=[_comparison()]
     )
     assert path.exists() and path.stat().st_size > 0
+
+
+# -- A report must not describe the wrong recording --------------------------
+
+
+def test_a_comparison_names_the_recording_it_measured():
+    comparison = _comparison(
+        questioned_source_filename="intercept-042.wav",
+        questioned_source_sha256="d" * 64,
+        questioned_selection="diarized speaker (SPEAKER_01, 6 turn(s))",
+        questioned_window_count=4,
+    )
+    text = render_text(build_report_sections(comparisons=[comparison]))
+    assert "intercept-042.wav" in text
+    assert ("d" * 64) in text
+    assert "diarized speaker (SPEAKER_01, 6 turn(s))" in text
+    assert "measured across 4 window(s)" in text
+
+
+def test_a_transcript_of_another_recording_is_flagged_not_implied():
+    """The transcribed file and the compared file are not assumed to be one."""
+    comparison = _comparison(
+        questioned_source_filename="intercept-042.wav",
+        questioned_source_sha256="d" * 64,
+    )
+    text = render_text(
+        build_report_sections(
+            result=_result(), provenance=_provenance(), comparisons=[comparison]
+        )
+    )
+    assert "is not the same as every recording compared below" in text
+    assert "operation.wav" in text and "intercept-042.wav" in text
+
+
+def test_no_note_when_the_transcript_is_of_the_compared_recording():
+    comparison = _comparison(
+        questioned_source_filename="operation.wav",
+        questioned_source_sha256=SOURCE_SHA,
+    )
+    text = render_text(
+        build_report_sections(
+            result=_result(), provenance=_provenance(), comparisons=[comparison]
+        )
+    )
+    assert "is not the same as every recording" not in text
+
+
+def test_comparisons_without_a_transcript_say_the_source_section_is_not_theirs():
+    comparison = _comparison(
+        questioned_source_filename="intercept-042.wav",
+        questioned_source_sha256="d" * 64,
+    )
+    text = render_text(build_report_sections(comparisons=[comparison]))
+    assert "does not describe the questioned recording" in text
+
+
+def test_a_comparison_with_no_recorded_source_makes_no_claim():
+    text = render_text(build_report_sections(comparisons=[_comparison()]))
+    assert "Questioned recording:" not in text
+    assert "does not describe the questioned recording" not in text

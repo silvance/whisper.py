@@ -31,12 +31,23 @@ from ..enrollment import (
     spans_for_speaker,
     speaker_totals,
 )
-from ..matching import ComparisonResult, compare_embedding_to_profile, search_gallery
-from ..quality import analyse_span, combine
+from ..matching import (
+    ComparisonResult,
+    compare_questioned_to_profile,
+    search_gallery_for_questioned,
+)
+from ..questioned import (
+    SELECTION_DIARIZED,
+    SELECTION_RANGES,
+    SELECTION_WHOLE,
+    QuestionedSpeaker,
+    measure_from_wav,
+)
 from ..reports import write_analysis_report
 from ..speaker_profiles import (
     SpeakerProfile,
     bundled_model_identity,
+    display_labels,
     list_speaker_profiles,
 )
 from ..thresholds import DISCLAIMER, active, describe_active
@@ -68,6 +79,13 @@ class SpeakerCompareTab:
         # a report can carry the transcript and its traceability. Optional.
         self._get_analysis = get_analysis
         self._profiles: List[SpeakerProfile] = []
+        # subject_id -> the unique label shown in the picker.
+        self._labels: dict = {}
+        # The diarized cluster the operator chose, for the selection record.
+        self._picked_speaker: Optional[str] = None
+        # Source hashes of every recording compared here, so a report only
+        # attaches a transcript that is actually of the questioned audio.
+        self._questioned_sources: set = set()
         self._comparisons: List[ComparisonResult] = []
         self._embedder: Optional[SpeakerEmbedder] = None
         self._last_result: Optional[ComparisonResult] = None
@@ -222,7 +240,10 @@ class SpeakerCompareTab:
 
     def refresh(self) -> None:
         self._profiles = list_speaker_profiles()
-        labels = [p.display_name for p in self._profiles]
+        # Two subjects can share a display name; picking by name alone would let
+        # an operator compare against one while believing they chose the other.
+        self._labels = display_labels(self._profiles)
+        labels = [self._labels[p.subject_id] for p in self._profiles]
         self.reference_combo.configure(values=labels)
         if labels and self.reference_var.get() not in labels:
             self.reference_var.set(labels[0])
@@ -231,9 +252,10 @@ class SpeakerCompareTab:
         self._render_reference()
 
     def _selected_profile(self) -> Optional[SpeakerProfile]:
-        name = self.reference_var.get()
+        """The subject behind the chosen label - by subject id, never by name."""
+        label = self.reference_var.get()
         for profile in self._profiles:
-            if profile.display_name == name:
+            if self._labels.get(profile.subject_id) == label:
                 return profile
         return None
 
@@ -308,6 +330,7 @@ class SpeakerCompareTab:
             done.wait(timeout=300)
             if not picked["value"]:
                 return None
+            self._picked_speaker = str(picked["value"])
             return spans_for_speaker(segments, picked["value"])
         return [(0.0, _duration(wav))]
 
@@ -359,52 +382,68 @@ class SpeakerCompareTab:
             target=self._compare_worker, args=(profile, Path(source)), daemon=True
         ).start()
 
-    def _questioned_embedding(self, source: Path):
-        """Embed the selected questioned speech; returns (vector, seconds, quality)."""
+    def _measure_questioned(self, source: Path) -> Optional[QuestionedSpeaker]:
+        """Measure the questioned speaker, keeping the audio and the source hash.
+
+        The selection is resolved first (which may need diarization), then every
+        usable window of it is embedded and averaged - so the duration and
+        quality reported are the ones behind the embedding, and the recording
+        identifies itself in the result and any report.
+        """
         embedder = self._get_embedder()
-        wav, _digest, temporary = prepare_source(source, progress=self._status)
+        wav, digest, temporary = prepare_source(source, progress=self._status)
         try:
             spans = self._prepare_spans(wav)
             if not spans:
-                return None, 0.0, None
-            reports = [analyse_span(wav, start, end) for start, end in spans]
-            merged = combine(reports)
-            # Embed the longest usable span: one clean stretch beats an average
-            # over everything the speaker said, including their weakest audio.
-            usable = [
-                (start, end)
-                for (start, end), report in zip(spans, reports)
-                if report.usable
-            ]
-            target = max(usable or spans, key=lambda s: s[1] - s[0])
-            self._status("Measuring the questioned voice…")
-            vector = embedder.embed_span(wav, target[0], target[1])
-            return vector, merged.voiced_seconds, merged
+                return None
+            measured = measure_from_wav(
+                wav,
+                spans,
+                embedder,
+                selection_mode=self._selection_description(spans),
+                progress=self._status,
+            )
         finally:
             if temporary:
                 try:
                     Path(wav).unlink()
                 except OSError:
                     pass
+        measured.source_filename = source.name
+        measured.source_sha256 = digest
+        try:
+            measured.source_size = source.stat().st_size
+        except OSError:
+            measured.source_size = None
+        return measured
+
+    def _selection_description(self, spans) -> str:
+        """How the questioned speech was chosen, in words, for the record."""
+        mode = self.mode_var.get()
+        if mode == MODE_RANGES:
+            return f"{SELECTION_RANGES} ({self.ranges_var.get().strip()})"
+        if mode == MODE_DIARIZE:
+            speaker = self._picked_speaker or "selected speaker"
+            return f"{SELECTION_DIARIZED} ({speaker}, {len(spans)} turn(s))"
+        return SELECTION_WHOLE
 
     def _compare_worker(self, profile: SpeakerProfile, source: Path) -> None:
         try:
-            vector, seconds, merged = self._questioned_embedding(source)
-            if not vector:
+            measured = self._measure_questioned(source)
+            if measured is None or not measured.usable:
                 self._status("No usable speech was found in the questioned selection.")
+                if measured is not None:
+                    self._show(measured.describe() + [""] + measured.warnings)
                 return
-            result = compare_embedding_to_profile(
-                vector,
+            result = compare_questioned_to_profile(
+                measured,
                 profile,
-                questioned_seconds=seconds,
-                questioned_quality=merged.assessment if merged else "Insufficient",
-                questioned_warnings=merged.warnings if merged else None,
-                questioned_label=source.name,
                 questioned_model=bundled_model_identity(),
                 allow_unverified_model=self.allow_unverified_var.get(),
             )
             self._last_result = result
             self._comparisons.append(result)
+            self._questioned_sources.add(measured.source_sha256 or "")
             self._show(result.format_lines())
             self._status("Comparison complete.")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
@@ -421,24 +460,18 @@ class SpeakerCompareTab:
 
     def _gallery_worker(self, source: Path) -> None:
         try:
-            vector, seconds, merged = self._questioned_embedding(source)
-            if not vector:
+            measured = self._measure_questioned(source)
+            if measured is None or not measured.usable:
                 self._status("No usable speech was found in the questioned selection.")
+                if measured is not None:
+                    self._show(measured.describe() + [""] + measured.warnings)
                 return
-            result = search_gallery(
-                vector,
+            result = search_gallery_for_questioned(
+                measured,
                 self._profiles,
-                questioned_seconds=seconds,
-                questioned_label=source.name,
                 questioned_model=bundled_model_identity(),
             )
-            lines = [
-                f"Questioned speaker: {source.name}",
-                f"Questioned speech: {seconds:.1f} sec "
-                f"(quality: {merged.assessment if merged else 'unknown'})",
-                "",
-            ] + result.summary_lines()
-            self._show(lines)
+            self._show(measured.describe() + [""] + result.summary_lines())
             self._status("Gallery search complete.")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
             self._status(friendly_error(exc))
@@ -472,6 +505,19 @@ class SpeakerCompareTab:
         self.root.clipboard_append(text)
         self._status("Result copied to clipboard.")
 
+    def _analysis_matches(self, provenance) -> bool:
+        """True when the open analysis is of a recording these comparisons used.
+
+        Compared by source SHA-256: a matching name proves nothing, and an
+        analysis with no recorded hash cannot be shown to be the right one.
+        """
+        digest = None
+        if provenance is not None and getattr(provenance, "source", None):
+            digest = provenance.source.sha256
+        if not digest:
+            return False
+        return digest in self._questioned_sources
+
     def _export_report(self) -> None:
         """Write a report of the comparisons made, with the transcript if there is one."""
         if not self._comparisons:
@@ -483,6 +529,15 @@ class SpeakerCompareTab:
                 result, names, provenance = self._get_analysis()
             except Exception:  # noqa: BLE001 - a report without the transcript is fine
                 result = names = provenance = None
+        # A transcript from a *different* recording must not be presented as the
+        # source of these comparisons. Attach it only when its source hash is
+        # one of the recordings actually compared here.
+        if result is not None and not self._analysis_matches(provenance):
+            result = names = provenance = None
+            self._status(
+                "The open transcript is of a different recording, so it was left "
+                "out of this report."
+            )
         path = filedialog.asksaveasfilename(
             title="Export analysis report",
             defaultextension=".docx",
