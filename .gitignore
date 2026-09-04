@@ -19,3 +19,7 @@ models/
 build/
 dist/
 
+# Downloaded OS packages. These land here when a build or development tool is
+# fetched from the working directory; they are never part of the project.
+*.deb
+*.rpm

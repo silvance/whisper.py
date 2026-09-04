@@ -179,8 +179,14 @@ def test_report_states_readiness_build_identity_and_offline_status(
     report = diagnostics.format_report()
     assert "READY" in report and "NOT READY" not in report
     assert "run-42" in report and "deadbeef" in report and "1.2.3" in report
-    # The self-test must state the offline posture explicitly.
-    assert "Runtime network access: none" in report
+    # The self-test must state the posture explicitly - and state the one that
+    # is true. The application has a Live page that connects to a stream an
+    # operator supplies, so "makes no network calls" would be a claim this
+    # build contradicts the moment that page is used.
+    assert "Analysis runs entirely on this machine" in report
+    assert "No cloud service" in report and "no telemetry" in report.lower()
+    assert "Live page" in report
+    assert "no network calls" not in report.lower()
     # ...and the hash of the model that speaker comparison depends on.
     assert "Bundled model hashes" in report
     assert ("b" * 12) in report
