@@ -309,12 +309,26 @@ than `base.en` (try `small.en`/`medium.en`) and the **Custom words** box.
 `*.whispr-profile.json`; import warns before overwriting a same-named profile). For
 1:1 checks, **Export speaker…** writes a single person's voiceprint
 (`*.whispr-voiceprint.json`), and **Compare voices…** loads two voiceprints (from
-those files, or from a whole profile) and reports a **similarity score** with a
-qualitative band (Strong / Moderate / Weak / Very weak). This is an **investigative
-aid, not forensic voice identification**: the score is a similarity indicator that
-shifts with recording quality and how much speech each voiceprint was built from, so
-treat a high score as a lead to verify, never as proof of identity. Both voiceprints
-must come from builds using the same (bundled) speaker-embedding model.
+those files, or from a whole profile) and reports a **similarity score out of 1.00**
+with a qualitative band — **High similarity / Intermediate similarity / Low
+similarity / Insufficient data** — alongside the operational threshold, the speech
+duration on each side and the quality of each.
+
+The score is **not** a percentage and **not** a probability: a cosine similarity of
+0.78 does not mean "78% the same person". Whispers deliberately never reports a
+percentage, a confidence of identity or a likelihood of identity.
+
+> Speaker similarity results produced by Whispers are investigative indicators
+> intended to support lead development and analyst review. They are not forensic
+> speaker identification, are not a biometric probability of identity, and should
+> not be treated as proof that two recordings contain the same person.
+
+A high-similarity result never becomes "this is John Doe" — it means *the questioned
+speaker produced high similarity to the John Doe reference profile, and further
+review is warranted*. Both voiceprints must come from builds using the same
+speaker-embedding model; Whispers refuses the comparison outright when the model
+hash or vector dimension differs, and asks for explicit confirmation when an older
+profile cannot prove which model produced it.
 
 ### Live (stream) transcription
 

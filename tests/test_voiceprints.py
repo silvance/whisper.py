@@ -7,6 +7,8 @@ from whispr.voiceprints import (
     centroid,
     compare_voiceprints,
     cosine_similarity,
+    decide_identity,
+    rank_candidates,
     recognize,
     similarity_band,
 )
@@ -68,11 +70,19 @@ def test_compare_voiceprints_orthogonal_is_zero():
     assert compare_voiceprints(a, b) == 0.0
 
 
-def test_similarity_band_thresholds():
-    assert similarity_band(0.9)[0] == "Strong"
-    assert similarity_band(0.6)[0] == "Moderate"
-    assert similarity_band(0.4)[0] == "Weak"
-    assert similarity_band(0.1)[0] == "Very weak"
+def test_similarity_band_uses_similarity_not_identity_language():
+    high, high_text = similarity_band(0.9)
+    mid, _ = similarity_band(0.5)
+    low, low_text = similarity_band(0.1)
+    assert high == "High similarity"
+    assert mid == "Intermediate similarity"
+    assert low == "Low similarity"
+    # Never asserts identity, probability or "same speaker".
+    for text in (high_text, low_text, high, low):
+        lowered = text.lower()
+        assert "same speaker" not in lowered
+        assert "probability" not in lowered
+        assert "%" not in lowered
 
 
 class _FakeEmbedder:
@@ -106,7 +116,8 @@ def test_recognize_reattributes_quiet_turn_to_its_own_voice():
     assert name_map == {"voice::Loud": "Loud", "voice::Quiet": "Quiet"}
 
 
-def test_recognize_names_whole_cluster_and_skips_short_turns():
+def test_identity_does_not_propagate_to_unmatched_short_turns():
+    """A short turn must not inherit a known identity from its cluster."""
     loud = Voiceprint(name="Loud", vectors=[[1.0, 0.0]])
     segments = [
         SpeakerSegment(start=0.0, end=2.0, speaker="SPEAKER_00"),
@@ -114,8 +125,8 @@ def test_recognize_names_whole_cluster_and_skips_short_turns():
     ]
     embedder = _FakeEmbedder({0.0: [1.0, 0.0]})
     out, name_map = recognize("x.wav", segments, [loud], embedder)
-    # The short turn inherits the cluster's dominant name via the fallback.
-    assert [s.speaker for s in out] == ["voice::Loud", "voice::Loud"]
+    # The matched turn is attributed; the unmatched short one stays unknown.
+    assert [s.speaker for s in out] == ["voice::Loud", "SPEAKER_00"]
     assert name_map == {"voice::Loud": "Loud"}
 
 
@@ -133,4 +144,114 @@ def test_recognize_leaves_unmatched_turns_alone():
     embedder = _FakeEmbedder({0.0: [0.0, 1.0]})
     out, name_map = recognize("x.wav", segments, [east], embedder)
     assert [s.speaker for s in out] == ["SPEAKER_00"]
+    assert name_map == {}
+
+
+# -- conservative open-set decisions ---------------------------------------
+
+
+def _candidates(*pairs):
+    return [(name, list(vec)) for name, vec in pairs]
+
+
+def _at_cosine(target):
+    """A unit vector whose cosine similarity to [1, 0] is exactly ``target``."""
+    return [target, math.sqrt(max(0.0, 1.0 - target * target))]
+
+
+def test_decide_accepts_clear_winner():
+    """The brief's example: 0.81 vs 0.54 may be accepted."""
+    decision = decide_identity(
+        [1.0, 0.0],
+        _candidates(("Actor_A", _at_cosine(0.81)), ("Actor_B", _at_cosine(0.54))),
+        acceptance=0.62,
+        margin=0.08,
+    )
+    assert decision.accepted is True
+    assert decision.best_name == "Actor_A"
+    assert math.isclose(decision.best_score, 0.81, abs_tol=1e-6)
+    assert math.isclose(decision.second_score, 0.54, abs_tol=1e-6)
+    assert decision.margin > 0.08
+
+
+def test_decide_rejects_below_acceptance():
+    decision = decide_identity(
+        [1.0, 0.0],
+        _candidates(
+            ("Actor_A", _at_cosine(0.55)),
+        ),
+        acceptance=0.62,
+        margin=0.08,
+    )
+    assert decision.accepted is False
+    assert decision.best_name == "Actor_A"  # reported for diagnostics...
+    assert "below the acceptance threshold" in decision.reason
+
+
+def test_decide_rejects_ambiguous_top_two():
+    """The brief's example: 0.68 vs 0.67 is ambiguous - leave it unknown."""
+    decision = decide_identity(
+        [1.0, 0.0],
+        _candidates(("Actor_A", _at_cosine(0.68)), ("Actor_B", _at_cosine(0.67))),
+        acceptance=0.62,
+        margin=0.08,
+    )
+    assert decision.accepted is False
+    assert "Ambiguous" in decision.reason
+    assert decision.second_name == "Actor_B"
+    assert decision.margin < 0.08
+
+
+def test_decide_rejects_insufficient_speech():
+    decision = decide_identity(
+        [1.0, 0.0],
+        _candidates(
+            ("Actor_A", (1.0, 0.0)),
+        ),
+        acceptance=0.5,
+        margin=0.08,
+        speech_seconds=1.0,
+        min_speech_seconds=3.0,
+    )
+    assert decision.accepted is False
+    assert "at least" in decision.reason
+
+
+def test_decide_with_no_candidates():
+    decision = decide_identity([1.0, 0.0], [])
+    assert decision.accepted is False
+    assert decision.best_name is None
+    assert "No enrolled voices" in decision.reason
+
+
+def test_decision_diagnostics_round_trip():
+    decision = decide_identity(
+        [1.0, 0.0],
+        _candidates(("Actor_A", (1.0, 0.0)), ("Actor_B", (0.0, 1.0))),
+        speech_seconds=12.5,
+    )
+    data = decision.to_dict()
+    assert data["best_name"] == "Actor_A"
+    assert data["second_name"] == "Actor_B"
+    assert data["margin"] == decision.margin
+    assert data["speech_seconds"] == 12.5
+    assert data["acceptance_threshold"] == decision.acceptance_threshold
+
+
+def test_rank_candidates_orders_by_score():
+    ranked = rank_candidates(
+        [1.0, 0.0],
+        _candidates(("Far", (0.0, 1.0)), ("Near", (1.0, 0.0)), ("Mid", (0.7, 0.7))),
+    )
+    assert [name for name, _ in ranked] == ["Near", "Mid", "Far"]
+
+
+def test_recognize_leaves_ambiguous_turn_unknown():
+    """Two known actors scoring 0.68/0.67 must not yield an attribution."""
+    a = Voiceprint(name="Actor_A", vectors=[_at_cosine(0.68)])
+    b = Voiceprint(name="Actor_B", vectors=[_at_cosine(0.67)])
+    segments = [SpeakerSegment(start=0.0, end=5.0, speaker="SPEAKER_00")]
+    embedder = _FakeEmbedder({0.0: [1.0, 0.0]})
+    out, name_map = recognize("x.wav", segments, [a, b], embedder)
+    assert out[0].speaker == "SPEAKER_00"
     assert name_map == {}
