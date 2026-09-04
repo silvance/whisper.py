@@ -532,7 +532,10 @@ def compare_questioned_to_profile(
     result.questioned_source_filename = questioned.source_filename or None
     result.questioned_source_sha256 = questioned.source_sha256
     result.questioned_selection = questioned.selection_mode
-    result.questioned_window_count = len(questioned.embedded_spans)
+    # The number of *embeddings*, not of source intervals: joined turns make one
+    # window map back to several intervals, so counting intervals would report
+    # seven windows for two embeddings.
+    result.questioned_window_count = questioned.window_count
     return result
 
 
