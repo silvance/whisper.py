@@ -112,15 +112,16 @@ def gather() -> List[Check]:
             "bundled" if resources.bundled_diarization_models() else "not bundled",
         )
     )
-    # The speaker-embedding model powers voiceprints + speaker comparison; two
-    # builds must share it to compare voiceprints, so name it here.
+    # The speaker-embedding model powers speaker profiles + comparison; two
+    # builds must share it to compare voiceprints, so name it here - as the file
+    # it actually is, not as a broad capability claim.
     embedding = resources.bundled_embedding_model()
-    embedding_name = resources.bundled_embedding_model_name()
+    described = resources.describe_bundled_embedding_model()
     checks.append(
         Check(
-            "Speaker embedding (voiceprints)",
+            "Speaker embedding (speaker profiles)",
             embedding is not None,
-            (embedding_name or "titanet-large")
+            (described or "bundled (model not recorded by this build)")
             if embedding is not None
             else "not bundled",
         )
@@ -269,8 +270,9 @@ def _speaker_embedding() -> Capability:
         from .hashing import sha256_file_or_none
 
         digest = sha256_file_or_none(model)
+    described = resources.describe_bundled_embedding_model() or name
     return Capability(
-        "Speaker embedding model", True, f"{name} (sha256 {short(digest)})"
+        "Speaker embedding model", True, f"{described} (sha256 {short(digest)})"
     )
 
 
@@ -320,6 +322,13 @@ def readiness(items: "List[Capability] | None" = None) -> "tuple[bool, List[str]
     return (not blockers), blockers
 
 
+def _wrap(text: str, width: int = 76) -> List[str]:
+    """Wrap a paragraph for the fixed-width self-test window."""
+    import textwrap
+
+    return textwrap.wrap(text, width=width) or [""]
+
+
 def format_report(checks: "List[Check] | None" = None) -> str:
     """Render the full self-test: identity, readiness, capabilities and details."""
     if checks is None:
@@ -354,6 +363,12 @@ def format_report(checks: "List[Check] | None" = None) -> str:
     for check in checks:
         mark = "OK " if check.ok else "-- "
         lines.append(f"[{mark}] {check.label.ljust(width)}  {check.detail}")
+
+    caveat = str(resources.bundled_embedding_model_info().get("caveat") or "")
+    if caveat:
+        lines += ["", "Speaker embedding model", "-----------------------"]
+        for chunk in _wrap(caveat):
+            lines.append(chunk)
 
     models = info.models
     if models:

@@ -193,3 +193,24 @@ def test_report_names_the_missing_pieces_when_not_ready(monkeypatch, tmp_path):
     assert "NOT READY" in report
     assert "Missing: " in report
     assert "Can read audio/video (ffmpeg)" in report
+
+
+def test_self_test_names_the_embedding_file_and_carries_its_caveat(
+    monkeypatch, tmp_path
+):
+    _all_present(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        diagnostics.resources,
+        "describe_bundled_embedding_model",
+        lambda: "CAM++ (3D-Speaker, zh-cn 16k common) - trained on Mandarin data",
+    )
+    monkeypatch.setattr(
+        diagnostics.resources,
+        "bundled_embedding_model_info",
+        lambda: {"caveat": "Performance varies with language, channel and noise."},
+    )
+    report = diagnostics.format_report()
+    # The model is named as the file it is, not as a broad capability claim.
+    assert "CAM++" in report and "Mandarin" in report
+    assert "multilingual" not in report.lower()
+    assert "Performance varies with language" in report

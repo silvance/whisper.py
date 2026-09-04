@@ -442,15 +442,35 @@ box shows a "⚠ not in this build" note, and Run reports it clearly). On a manu
 You also choose which **diarizer** to include: `both` (default — pyannote + sherpa,
 switchable at runtime via the Engine dropdown), `pyannote`, or `sherpa`.
 
-The **`embedding`** input picks the **speaker-embedding model** used for
-voiceprints and the *Compare voices* tool (and for sherpa diarization). It is
-bundled on **every** build regardless of the diarizer choice, so voiceprints work
-even in a `pyannote`-only bundle. Default `titanet-large` (English, best
-separation); `titanet-small`/`wespeaker-en` are English alternatives, and
-`campplus`/`eres2net` are multilingual — prefer one of those if your speakers
-aren't speaking English. A direct `.onnx` URL (any sherpa-onnx speaker-embedding
-model) also works. **Self-test…** shows which embedding model a build carries;
-voiceprints/comparisons are only valid between builds that share it.
+The **`embedding`** input picks the **speaker-embedding model** used for speaker
+profiles and the *Speaker Compare* tool (and for sherpa diarization). It is
+bundled on **every** build regardless of the diarizer choice, so speaker profiles
+work even in a `pyannote`-only bundle. Each option is described by the file that
+is actually downloaded, not by a broad label:
+
+| Alias | Model | Trained on |
+| --- | --- | --- |
+| `titanet-large` (default) | NeMo TitaNet Large | English speaker-verification corpora |
+| `titanet-small` | NeMo TitaNet Small | English speaker-verification corpora |
+| `wespeaker-en` | WeSpeaker ResNet34 | VoxCeleb (predominantly English interview speech) |
+| `campplus` | CAM++ (3D-Speaker) | Mandarin (zh-cn) 16 kHz common-domain data |
+| `eres2net` | ERes2Net (3D-Speaker) | Mandarin (zh-cn) 16 kHz common-domain data |
+
+The CAM++ and ERes2Net checkpoints published by sherpa-onnx are the 3D-Speaker
+*zh-cn 16k-common* files — Mandarin-trained, not general multilingual models — so
+pick them on that basis rather than as a catch-all for non-English audio. A direct
+`.onnx` URL (any sherpa-onnx speaker-embedding model) also works; nothing is
+recorded about such a file beyond its name, source and SHA-256.
+
+**Verification performance varies substantially** with language, channel,
+microphone, background noise, how much usable speech there is, and any mismatch
+between the reference and questioned recordings. None of these models is
+validated for a particular operational setting — measure yours with the
+validation harness (below) before relying on a threshold.
+
+**Self-test…** shows which embedding model a build carries, what it was trained
+on and its SHA-256; speaker profiles and comparisons are only valid between
+builds that share that exact model.
 
 **Getting a large bundle (bypassing the 2 GB release cap).** Every run already
 uploads the full per-OS bundle as an **Actions artifact** (`dist/whispr`), and

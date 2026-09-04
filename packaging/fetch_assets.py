@@ -14,6 +14,7 @@ Requires the build extras: ``pip install "silvance-whisper[bundle]"``.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
@@ -21,7 +22,11 @@ import tarfile
 import tempfile
 import urllib.request
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from whispr.hashing import sha256_file_or_none  # noqa: E402
 
 ASSETS = Path("whispr_assets")
 
@@ -46,25 +51,69 @@ DIARIZATION_SEGMENTATION_URL = (
     "speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2"
 )
 
-# Speaker-embedding models power both sherpa diarization and the voiceprint /
-# speaker-comparison features, so the choice governs how well voices separate.
-# Selectable at build time (default TitaNet-large, English - it separates voices
-# far better than the small variant, and is fast enough on CPU with threading).
-# For non-English work a multilingual model (CAM++ / ERes2Net) usually compares
-# better. All are single .onnx assets from the sherpa-onnx release below; a direct
-# .onnx URL may also be passed instead of an alias.
+# Speaker-embedding models power both sherpa diarization and the speaker profile
+# / comparison features, so the choice governs how well voices separate and how
+# comparable two recordings are. Selectable at build time; all are single .onnx
+# assets from the sherpa-onnx release below, and a direct .onnx URL may be passed
+# instead of an alias.
+#
+# Each entry is described by the file that is actually downloaded rather than by
+# a marketing label. In particular the CAM++ and ERes2Net assets published there
+# are the 3D-Speaker *zh-cn 16k-common* checkpoints: they are trained on Mandarin
+# data, not on a broad multilingual corpus, and are recorded as such. The same
+# architecture trained elsewhere would behave differently, so the architecture
+# name alone says little.
+#
+# Verification performance varies substantially with language, channel,
+# microphone, background noise, the amount of usable speech, and any mismatch
+# between the enrolment and questioned recordings. No entry here is validated for
+# a particular operational setting; see whispr/validation.py for measuring one.
 EMBEDDING_RELEASE_BASE = (
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
     "speaker-recongition-models/"
 )
 DEFAULT_EMBEDDING = "titanet-large"
-EMBEDDING_MODELS = {
-    "titanet-large": "nemo_en_titanet_large.onnx",  # English, best separation
-    "titanet-small": "nemo_en_titanet_small.onnx",  # English, smaller/faster
-    "wespeaker-en": "wespeaker_en_voxceleb_resnet34.onnx",  # English ResNet34 alt
-    "campplus": "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx",  # multilingual
-    "eres2net": "3dspeaker_speech_eres2net_sv_zh-cn_16k-common.onnx",  # multilingual
+EMBEDDING_MODELS: Dict[str, Dict[str, str]] = {
+    "titanet-large": {
+        "filename": "nemo_en_titanet_large.onnx",
+        "label": "NeMo TitaNet Large",
+        "architecture": "TitaNet (ECAPA-style, NVIDIA NeMo)",
+        "training_data": "English speaker-verification corpora (NeMo release)",
+    },
+    "titanet-small": {
+        "filename": "nemo_en_titanet_small.onnx",
+        "label": "NeMo TitaNet Small",
+        "architecture": "TitaNet (NVIDIA NeMo)",
+        "training_data": "English speaker-verification corpora (NeMo release)",
+    },
+    "wespeaker-en": {
+        "filename": "wespeaker_en_voxceleb_resnet34.onnx",
+        "label": "WeSpeaker ResNet34 (VoxCeleb)",
+        "architecture": "ResNet34 (WeSpeaker)",
+        "training_data": "VoxCeleb (predominantly English interview speech)",
+    },
+    "campplus": {
+        "filename": "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx",
+        "label": "CAM++ (3D-Speaker, zh-cn 16k common)",
+        "architecture": "CAM++ (3D-Speaker)",
+        "training_data": "Mandarin (zh-cn) 16 kHz common-domain data",
+    },
+    "eres2net": {
+        "filename": "3dspeaker_speech_eres2net_sv_zh-cn_16k-common.onnx",
+        "label": "ERes2Net (3D-Speaker, zh-cn 16k common)",
+        "architecture": "ERes2Net (3D-Speaker)",
+        "training_data": "Mandarin (zh-cn) 16 kHz common-domain data",
+    },
 }
+
+# Recorded with every bundle so the caveat travels with the model, not just with
+# this build script.
+EMBEDDING_CAVEAT = (
+    "Speaker-embedding performance varies with language, channel, microphone, "
+    "background noise, the amount of usable speech, and any mismatch between "
+    "the enrolment and questioned recordings. This model has not been validated "
+    "for any particular operational setting."
+)
 
 
 def fetch_ffmpeg() -> None:
@@ -153,16 +202,43 @@ def _resolve_embedding(embedding: str) -> "tuple[str, str]":
             f"unknown embedding model '{embedding}'; choose from "
             f"{', '.join(EMBEDDING_MODELS)}, or pass a direct .onnx URL"
         )
-    return embedding, EMBEDDING_RELEASE_BASE + EMBEDDING_MODELS[embedding]
+    return embedding, EMBEDDING_RELEASE_BASE + EMBEDDING_MODELS[embedding]["filename"]
+
+
+def embedding_metadata(name: str, url: str, path: Optional[Path] = None) -> Dict:
+    """Describe the embedding model that was actually downloaded.
+
+    Only what is known is recorded. For a direct URL nothing is known beyond the
+    file itself, so the descriptive fields stay empty rather than being guessed
+    from the file name.
+    """
+    known = EMBEDDING_MODELS.get(name, {})
+    meta: Dict[str, object] = {
+        "name": name,
+        "label": known.get("label") or name,
+        "architecture": known.get("architecture", ""),
+        "training_data": known.get("training_data", ""),
+        "filename": known.get("filename") or Path(url).name,
+        "source_url": url,
+        "backend": "sherpa-onnx",
+        "caveat": EMBEDDING_CAVEAT,
+    }
+    if path is not None and path.is_file():
+        meta["size"] = path.stat().st_size
+        meta["sha256"] = sha256_file_or_none(path)
+    return meta
 
 
 def fetch_embedding(embedding: str = DEFAULT_EMBEDDING) -> None:
     """Download the speaker-embedding model into whispr_assets/diarization.
 
-    Saves ``embedding.onnx`` plus ``embedding_model.txt`` (the chosen model's name,
-    so the app can show it and operators can confirm two builds match before
-    comparing voices). Needed for voiceprints/comparison on *every* build, so it is
-    fetched independently of the sherpa segmentation model.
+    Saves ``embedding.onnx`` plus two sidecars: ``embedding_model.txt`` (the
+    alias, read by older builds) and ``embedding_model.json``, which describes
+    the exact file - architecture, what it was trained on, source URL, size and
+    SHA-256 - so the app can say what it is using rather than a broad label, and
+    an operator can confirm two builds share a model before comparing voices.
+    Needed for speaker profiles/comparison on *every* build, so it is fetched
+    independently of the sherpa segmentation model.
     """
     out = ASSETS / "diarization"
     out.mkdir(parents=True, exist_ok=True)
@@ -171,7 +247,13 @@ def fetch_embedding(embedding: str = DEFAULT_EMBEDDING) -> None:
     print(f"downloading embedding '{name}' from {url}")
     urllib.request.urlretrieve(url, embedding_dest)
     (out / "embedding_model.txt").write_text(name + "\n", encoding="utf-8")
-    print(f"diarization embedding ({name}) -> {embedding_dest}")
+    meta = embedding_metadata(name, url, embedding_dest)
+    (out / "embedding_model.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"diarization embedding ({meta['label']}) -> {embedding_dest}")
+    if meta.get("training_data"):
+        print(f"  trained on: {meta['training_data']}")
 
 
 def fetch_segmentation() -> None:

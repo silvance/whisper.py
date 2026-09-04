@@ -17,6 +17,7 @@ Expected layout of an assets directory::
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -228,6 +229,45 @@ def bundled_embedding_model_name() -> Optional[str]:
                 return None
             return text or None
     return None
+
+
+def bundled_embedding_model_info() -> Dict[str, object]:
+    """What is known about the bundled speaker-embedding model.
+
+    The build writes ``diarization/embedding_model.json`` describing the exact
+    file that was downloaded - architecture, the data it was trained on, source
+    URL and SHA-256 - so the app can name the model precisely instead of applying
+    a broad label to it. Older bundles have only the name sidecar, and bundles
+    built from a direct URL know only the file name; whatever is missing is left
+    out rather than guessed. Returns ``{}`` when nothing is recorded.
+    """
+    for base in asset_dirs():
+        note = base / "diarization" / "embedding_model.json"
+        if note.is_file():
+            try:
+                data = json.loads(note.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return {}
+            return data if isinstance(data, dict) else {}
+    name = bundled_embedding_model_name()
+    return {"name": name} if name else {}
+
+
+def describe_bundled_embedding_model() -> Optional[str]:
+    """A one-line description of the embedding model, for the UI and reports.
+
+    Names the architecture and what the file was trained on when the build
+    recorded them, e.g. ``CAM++ (3D-Speaker, zh-cn 16k common) - trained on
+    Mandarin (zh-cn) 16 kHz common-domain data``. Falls back to the bare alias.
+    """
+    info = bundled_embedding_model_info()
+    if not info:
+        return None
+    label = str(info.get("label") or info.get("name") or "").strip()
+    if not label:
+        return None
+    trained = str(info.get("training_data") or "").strip()
+    return f"{label} - trained on {trained}" if trained else label
 
 
 def pyannote_cache_dir() -> Optional[Path]:
