@@ -117,8 +117,11 @@ jobs:
           # Version bounds mirror pyproject's [gui]/[bundle] extras so a rebuild
           # cannot silently pick up a breaking major release. The exact resolved
           # versions are recorded in the build manifest below.
-          pip install "faster-whisper>=1.2,<2" "ctranslate2>=4.8,<5" \
-            "onnxruntime>=1.17,<2" "sherpa-onnx>=1.13,<2" "ttkbootstrap>=1.10,<2"
+          # Keep each pip install on ONE line: this step has no `shell:`, so it
+          # runs under PowerShell on the Windows runner, where a trailing "\" is
+          # not a line continuation and the next line is parsed as a new
+          # statement beginning with a string.
+          pip install "faster-whisper>=1.2,<2" "ctranslate2>=4.8,<5" "onnxruntime>=1.17,<2" "sherpa-onnx>=1.13,<2" "ttkbootstrap>=1.10,<2"
           # huggingface_hub <1.0: pyannote 3.1.1 forwards the (removed-in-1.0)
           # use_auth_token kwarg into hf_hub_download; 0.x still accepts it.
           pip install "pyinstaller>=6.22,<7" "imageio-ffmpeg>=0.5,<1" "huggingface_hub<1.0"
