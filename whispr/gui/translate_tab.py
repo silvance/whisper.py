@@ -19,7 +19,18 @@ from ..ocr import OCR_EXTENSIONS, extract_text, is_ocr_file, tesseract_lang
 from ..transcription import CancelledError
 from ..translation import detect_language
 from .errors import friendly_error
-from .widgets import bind_wheel, register_drop, scrollable_body
+from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, Style
+from .widgets import (
+    Card,
+    PageHeader,
+    bind_wheel,
+    primary_button,
+    register_drop,
+    scrollable_body,
+    secondary_button,
+    style_text_widget,
+    subtle_button,
+)
 
 # Sentinel shown in the "From" dropdown for automatic language detection.
 AUTO_DETECT_LABEL = "Auto-detect language"
@@ -62,11 +73,17 @@ class TranslateTab:
     def _build(self) -> None:
         translate_canvas, container = scrollable_body(self.parent)
 
-        # --- Languages -----------------------------------------------------
-        lang_frame = ttk.LabelFrame(container, text="Languages", padding=10)
-        lang_frame.pack(fill="x")
+        PageHeader(
+            container,
+            "Translate",
+            "Turn text, images or documents in another language into English.",
+        ).pack(fill="x", pady=(0, SPACE_LG))
+
+        languages = Card(container, "Languages")
+        languages.pack(fill="x")
+        lang_frame = languages.body
         lang_frame.columnconfigure(1, weight=1)
-        ttk.Label(lang_frame, text="From").grid(
+        ttk.Label(lang_frame, text="From", style=Style.FIELD_LABEL).grid(
             row=0, column=0, sticky="w", padx=(0, 8), pady=4
         )
         self.translate_from_var = tk.StringVar()
@@ -74,84 +91,88 @@ class TranslateTab:
             lang_frame, textvariable=self.translate_from_var, state="readonly", width=28
         )
         self.translate_from_combo.grid(row=0, column=1, sticky="w", pady=4)
-        ttk.Button(lang_frame, text="Refresh", command=self._refresh_languages).grid(
-            row=0, column=2, padx=(8, 0), pady=4
+        subtle_button(lang_frame, "Refresh", self._refresh_languages).grid(
+            row=0, column=2, padx=(SPACE_SM, 0), pady=SPACE_XS
         )
-        ttk.Label(lang_frame, text="To").grid(
-            row=1, column=0, sticky="w", padx=(0, 8), pady=4
+        ttk.Label(lang_frame, text="To", style=Style.FIELD_LABEL).grid(
+            row=1, column=0, sticky="w", padx=(0, SPACE_SM), pady=SPACE_XS
         )
-        ttk.Label(lang_frame, text="English").grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Label(lang_frame, text="English", style=Style.BODY).grid(
+            row=1, column=1, sticky="w", pady=SPACE_XS
+        )
         self.translate_hint_var = tk.StringVar()
         ttk.Label(
             lang_frame,
             textvariable=self.translate_hint_var,
-            wraplength=460,
+            wraplength=620,
             justify="left",
-        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+            style=Style.MUTED,
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(SPACE_SM, 0))
 
         # --- Paste box -----------------------------------------------------
-        paste_frame = ttk.LabelFrame(container, text="Translate text", padding=10)
-        paste_frame.pack(fill="both", expand=True, pady=(10, 0))
-        ttk.Label(paste_frame, text="Paste text to translate:").pack(anchor="w")
-        self.translate_input = ScrolledText(
-            paste_frame, wrap="word", height=6, font="TkFixedFont"
-        )
-        self.translate_input.pack(fill="both", expand=True, pady=(2, 6))
-        paste_buttons = ttk.Frame(paste_frame)
+        paste_card = Card(container, "Text")
+        paste_card.pack(fill="both", expand=True, pady=(SPACE_MD, 0))
+        paste_frame = paste_card.body
+        ttk.Label(
+            paste_frame, text="Paste the text to translate", style=Style.FIELD_LABEL
+        ).pack(anchor="w")
+        self.translate_input = ScrolledText(paste_frame, wrap="word", height=6)
+        style_text_widget(self.translate_input)
+        self.translate_input.pack(fill="both", expand=True, pady=(SPACE_XS, SPACE_SM))
+        paste_buttons = ttk.Frame(paste_frame, style=Style.CARD_INNER)
         paste_buttons.pack(fill="x")
-        ttk.Button(
-            paste_buttons, text="Translate", command=self._translate_paste_in_thread
+        primary_button(
+            paste_buttons, "Translate", self._translate_paste_in_thread
         ).pack(side="left")
         if self._ocr_available:
             # OCR a single image/PDF into the box so its text can be reviewed and
             # corrected before translating (OCR is rarely perfect).
-            ttk.Button(
-                paste_buttons,
-                text="Extract from image/PDF…",
-                command=self._extract_to_paste,
-            ).pack(side="left", padx=(8, 0))
-        result_header = ttk.Frame(paste_frame)
-        result_header.pack(fill="x", pady=(6, 0))
-        ttk.Label(result_header, text="Result:").pack(side="left")
-        ttk.Button(result_header, text="Copy", command=self._copy_translation).pack(
+            secondary_button(
+                paste_buttons, "Extract from image/PDF…", self._extract_to_paste
+            ).pack(side="left", padx=(SPACE_SM, 0))
+        result_header = ttk.Frame(paste_frame, style=Style.CARD_INNER)
+        result_header.pack(fill="x", pady=(SPACE_MD, 0))
+        ttk.Label(result_header, text="Result", style=Style.FIELD_LABEL).pack(
+            side="left"
+        )
+        secondary_button(result_header, "Copy", self._copy_translation).pack(
             side="right"
         )
-        ttk.Button(
-            result_header, text="Save as Word…", command=self._save_translation_docx
-        ).pack(side="right", padx=(0, 8))
+        secondary_button(
+            result_header, "Save as Word…", self._save_translation_docx
+        ).pack(side="right", padx=(0, SPACE_SM))
         self.translate_output = ScrolledText(
-            paste_frame, wrap="word", height=6, state="disabled", font="TkFixedFont"
+            paste_frame, wrap="word", height=6, state="disabled"
         )
-        self.translate_output.pack(fill="both", expand=True, pady=(2, 0))
+        style_text_widget(self.translate_output)
+        self.translate_output.pack(fill="both", expand=True, pady=(SPACE_XS, 0))
         # Drop an image/PDF (or text file) onto the paste box to extract its text.
         register_drop(
             self.root, self._dnd_ok, self.translate_input, self._on_drop_source
         )
 
         # --- Batch files ---------------------------------------------------
-        batch_frame = ttk.LabelFrame(
-            container, text="Translate files (batch)", padding=10
-        )
-        batch_frame.pack(fill="x", pady=(10, 0))
+        batch_card = Card(container, "Files")
+        batch_card.pack(fill="x", pady=(SPACE_MD, 0))
+        batch_frame = batch_card.body
         self._translate_files: List[Path] = []
         self.translate_files_var = tk.StringVar(value="No files selected.")
-        row = ttk.Frame(batch_frame)
+        row = ttk.Frame(batch_frame, style=Style.CARD_INNER)
         row.pack(fill="x")
-        ttk.Button(row, text="Add files…", command=self._add_translate_files).pack(
+        primary_button(row, "Translate files", self._translate_files_in_thread).pack(
             side="left"
         )
-        ttk.Button(row, text="Clear", command=self._clear_translate_files).pack(
-            side="left", padx=(8, 0)
+        secondary_button(row, "Add files…", self._add_translate_files).pack(
+            side="left", padx=(SPACE_SM, 0)
         )
-        ttk.Button(
-            row, text="Translate files", command=self._translate_files_in_thread
-        ).pack(side="left", padx=(8, 0))
+        subtle_button(row, "Clear", self._clear_translate_files).pack(side="left")
         ttk.Label(
             batch_frame,
             textvariable=self.translate_files_var,
-            wraplength=460,
+            wraplength=620,
             justify="left",
-        ).pack(anchor="w", pady=(6, 0))
+            style=Style.MUTED,
+        ).pack(anchor="w", pady=(SPACE_SM, 0))
         batch_help = "Each file is translated to <name>.en.<ext> next to the original."
         if self._ocr_available:
             batch_help += (
@@ -161,26 +182,30 @@ class TranslateTab:
         ttk.Label(
             batch_frame,
             text=batch_help,
-            wraplength=460,
+            wraplength=620,
             justify="left",
+            style=Style.META,
         ).pack(anchor="w")
         # Drop files onto the batch box to add them to the queue.
         register_drop(self.root, self._dnd_ok, batch_frame, self._on_drop_files)
 
         # --- Run controls + progress --------------------------------------
-        run_frame = ttk.Frame(container)
-        run_frame.pack(fill="x", pady=(12, 0))
+        run_frame = ttk.Frame(container, style=Style.PAGE)
+        run_frame.pack(fill="x", pady=(SPACE_LG, 0))
         run_frame.columnconfigure(1, weight=1)
-        self.translate_cancel_button = ttk.Button(
-            run_frame, text="Cancel", command=self._on_cancel, state="disabled"
+        self.translate_cancel_button = secondary_button(
+            run_frame, "Cancel", self._on_cancel
         )
+        self.translate_cancel_button.configure(state="disabled")
         self.translate_cancel_button.grid(row=0, column=0, sticky="w")
         self.translate_progress = ttk.Progressbar(run_frame, mode="determinate")
-        self.translate_progress.grid(row=0, column=1, sticky="ew", padx=(10, 0))
-        self.translate_status_var = tk.StringVar(value="Idle")
-        ttk.Label(run_frame, textvariable=self.translate_status_var).grid(
-            row=1, column=0, columnspan=2, sticky="w", pady=(4, 0)
-        )
+        self.translate_progress.grid(row=0, column=1, sticky="ew", padx=(SPACE_MD, 0))
+        self.translate_status_var = tk.StringVar(value="Ready")
+        ttk.Label(
+            run_frame,
+            textvariable=self.translate_status_var,
+            style=Style.PAGE_SUBTITLE,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(SPACE_XS, 0))
 
         self._refresh_languages()
         bind_wheel(translate_canvas, container)
