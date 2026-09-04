@@ -26,6 +26,7 @@ are operational records, not conveniences.
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 import uuid
@@ -245,17 +246,55 @@ class EnrollmentSample:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "EnrollmentSample":
-        raw = data.get("embedding") or []
-        embedding = [float(x) for x in raw] if isinstance(raw, list) else []
-        sample_type = str(data.get("sample_type") or SAMPLE_REFERENCE)
-        if sample_type not in (SAMPLE_REFERENCE, SAMPLE_LEARNED):
-            sample_type = SAMPLE_LEARNED
+    def from_dict(
+        cls, data: Dict[str, Any], *, issues: Optional[List[str]] = None
+    ) -> Optional["EnrollmentSample"]:
+        """Parse one stored sample, **failing closed** on anything doubtful.
+
+        Trust is the whole point of the reference/learned split, so a v2 sample
+        only loads as trusted reference material when the file says so
+        explicitly. A sample that omits ``sample_type`` or ``approved``, or
+        carries values that are not the ones this schema defines, is loaded as
+        an unapproved *learned* sample: it is kept for review rather than
+        discarded, but it stays out of the trusted centroid.
+
+        Returns ``None`` when the embedding itself is unusable - there is
+        nothing for an operator to review in a vector of NaNs. Every such
+        decision is appended to ``issues`` rather than made silently.
+        """
+        notice = issues if issues is not None else []
+        embedding = _clean_vector(data.get("embedding"))
+        if embedding is None:
+            notice.append(
+                f"Dropped sample {data.get('sample_id') or '(no id)'}: its "
+                "embedding is missing, empty or not a list of finite numbers."
+            )
+            return None
+
+        raw_type = data.get("sample_type")
+        raw_approved = data.get("approved")
+        sample_type = (
+            raw_type if raw_type in (SAMPLE_REFERENCE, SAMPLE_LEARNED) else None
+        )
+        approved = raw_approved if isinstance(raw_approved, bool) else None
+        notes = str(data.get("notes") or "")
+        if sample_type is None or approved is None:
+            # Fail closed: unstated trust is not trust.
+            missing = "sample type" if sample_type is None else "approval state"
+            notice.append(
+                f"Sample {data.get('sample_id') or '(no id)'} did not state its "
+                f"{missing}; imported as an unapproved learned sample."
+            )
+            notes = (notes + " " if notes else "") + (
+                "Imported without complete trust metadata; review before approving."
+            )
+            sample_type, approved = SAMPLE_LEARNED, False
+
         quality = data.get("quality")
         return cls(
             embedding=embedding,
             sample_type=sample_type,
-            approved=bool(data.get("approved", True)),
+            approved=approved,
             sample_id=str(data.get("sample_id") or _new_id("smp")),
             source_filename=(
                 str(data["source_filename"]) if data.get("source_filename") else None
@@ -268,8 +307,27 @@ class EnrollmentSample:
             speech_duration=float(data.get("speech_duration") or 0.0),
             created_utc=str(data.get("created_utc") or _utc_now()),
             quality=quality if isinstance(quality, dict) else {},
-            notes=str(data.get("notes") or ""),
+            notes=notes,
         )
+
+
+def _clean_vector(raw: Any) -> Optional[List[float]]:
+    """A stored embedding, or ``None`` when it is not usable as one.
+
+    Rejects anything that would poison a centroid or a cosine: a non-list, an
+    empty list, non-numeric entries, booleans, and NaN/infinity.
+    """
+    if not isinstance(raw, list) or not raw:
+        return None
+    out: List[float] = []
+    for value in raw:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        number = float(value)
+        if not math.isfinite(number):
+            return None
+        out.append(number)
+    return out
 
 
 def _opt_float(value: Any) -> Optional[float]:
@@ -296,6 +354,10 @@ class SpeakerProfile:
     # not lost on migration.
     settings: Dict[str, Any] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
+    # What was rejected or demoted when this profile was read, so a malformed
+    # or hand-edited file is visibly degraded rather than quietly trusted. Not
+    # persisted: it describes this load, not the subject.
+    import_warnings: List[str] = field(default_factory=list, compare=False)
 
     # -- Views over the samples -------------------------------------------
 
@@ -448,22 +510,25 @@ class SpeakerProfile:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SpeakerProfile":
         model = data.get("embedding_model")
+        identity = (
+            EmbeddingModelIdentity.from_dict(model) if isinstance(model, dict) else None
+        )
         samples_raw = data.get("samples")
-        samples = [
-            EnrollmentSample.from_dict(item)
+        issues: List[str] = []
+        parsed = [
+            EnrollmentSample.from_dict(item, issues=issues)
             for item in (samples_raw if isinstance(samples_raw, list) else [])
             if isinstance(item, dict)
         ]
+        samples = _consistent_samples(
+            [s for s in parsed if s is not None], identity, issues
+        )
         name = str(data.get("display_name") or data.get("name") or "Unnamed subject")
         settings = data.get("settings")
-        return cls(
+        profile = cls(
             display_name=name,
             subject_id=str(data.get("subject_id") or _new_id("subj")),
-            embedding_model=(
-                EmbeddingModelIdentity.from_dict(model)
-                if isinstance(model, dict)
-                else None
-            ),
+            embedding_model=identity,
             samples=samples,
             created_utc=str(data.get("created_utc") or _utc_now()),
             updated_utc=str(data.get("updated_utc") or _utc_now()),
@@ -471,6 +536,8 @@ class SpeakerProfile:
             settings=settings if isinstance(settings, dict) else {},
             schema_version=int(data.get("schema_version") or SCHEMA_VERSION),
         )
+        profile.import_warnings = issues
+        return profile
 
 
 # -- Migration from the v1 formats ----------------------------------------
@@ -656,6 +723,59 @@ def list_speaker_profiles() -> List[SpeakerProfile]:
             continue
     out.sort(key=lambda p: p.updated_utc, reverse=True)
     return out
+
+
+def _consistent_samples(
+    samples: List[EnrollmentSample],
+    identity: Optional[EmbeddingModelIdentity],
+    issues: List[str],
+) -> List[EnrollmentSample]:
+    """Keep only samples whose vectors can meaningfully be compared together.
+
+    A centroid over vectors of different lengths, or of a length the recorded
+    model cannot have produced, is not a voice - it is arithmetic on unrelated
+    numbers. The expected dimension is the model's when it states one, otherwise
+    the one most of the samples agree on.
+    """
+    if not samples:
+        return samples
+    expected = identity.vector_dimension if identity else None
+    if not expected:
+        counts: Dict[int, int] = {}
+        for sample in samples:
+            counts[len(sample.embedding)] = counts.get(len(sample.embedding), 0) + 1
+        expected = max(counts, key=lambda dim: (counts[dim], dim))
+    kept = []
+    for sample in samples:
+        if len(sample.embedding) == expected:
+            kept.append(sample)
+            continue
+        issues.append(
+            f"Dropped sample {sample.sample_id}: its embedding has "
+            f"{len(sample.embedding)} values, but this profile's model produces "
+            f"{expected}."
+        )
+    return kept
+
+
+def display_labels(profiles: Sequence[SpeakerProfile]) -> Dict[str, str]:
+    """``{subject_id: label}`` where every label is unique.
+
+    Two subjects can legitimately share a display name. Presenting both as
+    "J. Smith" would let an operator compare against one while believing they
+    chose the other, so a repeated name carries its subject id.
+    """
+    counts: Dict[str, int] = {}
+    for profile in profiles:
+        counts[profile.display_name] = counts.get(profile.display_name, 0) + 1
+    return {
+        p.subject_id: (
+            p.display_name
+            if counts[p.display_name] == 1
+            else f"{p.display_name} [{p.subject_id}]"
+        )
+        for p in profiles
+    }
 
 
 def find_speaker_profile_by_name(display_name: str) -> Optional[SpeakerProfile]:

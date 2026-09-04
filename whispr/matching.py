@@ -24,10 +24,15 @@ Three rules run through all of it:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 from .quality import INSUFFICIENT
-from .speaker_profiles import Compatibility, SpeakerProfile, check_compatibility
+from .speaker_profiles import (
+    Compatibility,
+    SpeakerProfile,
+    check_compatibility,
+    display_labels,
+)
 from .thresholds import (
     BAND_INSUFFICIENT,
     DISCLAIMER,
@@ -40,6 +45,9 @@ from .voiceprints import (
     decide_identity,
     similarity_band,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .questioned import QuestionedSpeaker
 
 
 @dataclass
@@ -56,6 +64,12 @@ class ComparisonResult:
     reference_quality: str = INSUFFICIENT
     questioned_quality: str = INSUFFICIENT
     embedding_model: str = "unknown"
+    # The questioned recording, so a report describes what was compared rather
+    # than whatever analysis happened to be open elsewhere in the application.
+    questioned_source_filename: Optional[str] = None
+    questioned_source_sha256: Optional[str] = None
+    questioned_selection: str = ""
+    questioned_window_count: int = 0
     thresholds: Thresholds = field(default_factory=active)
     compatibility: Optional[Compatibility] = None
     refused: bool = False
@@ -76,12 +90,25 @@ class ComparisonResult:
         """False when the audio could not support any assessment."""
         return not self.refused and self.band != BAND_INSUFFICIENT
 
+    def source_lines(self) -> List[str]:
+        """The questioned recording's identity, when it was recorded."""
+        if not self.questioned_source_filename:
+            return []
+        lines = [f"Questioned recording: {self.questioned_source_filename}"]
+        lines.append(
+            f"Source SHA-256: {self.questioned_source_sha256 or 'not recorded'}"
+        )
+        if self.questioned_selection:
+            lines.append(f"Selection: {self.questioned_selection}")
+        return lines
+
     def format_lines(self) -> List[str]:
         """The operator-facing result block - never a percentage or probability."""
         if self.refused:
             return [
                 f"Reference subject: {self.reference_name}",
                 f"Questioned speaker: {self.questioned_label}",
+                *self.source_lines(),
                 "",
                 "Comparison refused.",
                 self.refusal_reason,
@@ -89,6 +116,7 @@ class ComparisonResult:
         lines = [
             f"Reference subject: {self.reference_name}",
             f"Questioned speaker: {self.questioned_label}",
+            *self.source_lines(),
             "",
             f"Similarity score: {self.score:.2f} / 1.00",
             f"Assessment: {self.band}",
@@ -100,10 +128,15 @@ class ComparisonResult:
                 f"Margin over {runner}: {self.margin:.2f} "
                 f"(minimum {self.thresholds.recognition_margin:.2f})"
             )
+        measured = (
+            f" (measured across {self.questioned_window_count} window(s))"
+            if self.questioned_window_count
+            else ""
+        )
         lines += [
             "",
             f"Reference speech: {self.reference_seconds:.1f} sec",
-            f"Questioned speech: {self.questioned_seconds:.1f} sec",
+            f"Questioned speech: {self.questioned_seconds:.1f} sec{measured}",
             "",
             f"Reference quality: {self.reference_quality}",
             f"Questioned quality: {self.questioned_quality}",
@@ -130,6 +163,10 @@ class ComparisonResult:
             "reference_quality": self.reference_quality,
             "questioned_quality": self.questioned_quality,
             "embedding_model": self.embedding_model,
+            "questioned_source_filename": self.questioned_source_filename,
+            "questioned_source_sha256": self.questioned_source_sha256,
+            "questioned_selection": self.questioned_selection,
+            "questioned_window_count": self.questioned_window_count,
             "thresholds": self.thresholds.to_dict(),
             "refused": self.refused,
             "refusal_reason": self.refusal_reason,
@@ -163,6 +200,32 @@ def _reference_view(profile: SpeakerProfile) -> Tuple[float, str, List[str]]:
         return 0.0, INSUFFICIENT, ["This profile has no trusted reference samples."]
     merged = combine(reports)
     return merged.voiced_seconds, merged.assessment, list(merged.warnings)
+
+
+def questioned_adequacy(
+    *,
+    speech_seconds: float,
+    quality: str,
+    thresholds: Thresholds,
+) -> Optional[str]:
+    """Why the questioned audio cannot support an assessment, or ``None``.
+
+    The *single* place this is decided. 1:1 comparison and gallery search used
+    to gate differently - the gallery checked only duration - so the same clip
+    could be "Insufficient data" against one subject and a lead against a
+    gallery containing that subject. Both now ask this function.
+    """
+    if speech_seconds < thresholds.min_questioned_seconds:
+        return (
+            f"Questioned speech is only {speech_seconds:.1f}s; at least "
+            f"{thresholds.min_questioned_seconds:.1f}s is needed for an assessment."
+        )
+    if quality == INSUFFICIENT:
+        return (
+            "The questioned audio holds too little usable speech for an "
+            "assessment, whatever the score."
+        )
+    return None
 
 
 def compare_embedding_to_profile(
@@ -224,12 +287,14 @@ def compare_embedding_to_profile(
         result.band = BAND_INSUFFICIENT
         result.warnings.append("The reference profile has no trusted samples.")
         return result
-    if questioned_seconds < thresholds.min_questioned_seconds:
+    inadequate = questioned_adequacy(
+        speech_seconds=questioned_seconds,
+        quality=questioned_quality,
+        thresholds=thresholds,
+    )
+    if inadequate:
         result.band = BAND_INSUFFICIENT
-        result.warnings.append(
-            f"Questioned speech is only {questioned_seconds:.1f}s; at least "
-            f"{thresholds.min_questioned_seconds:.1f}s is needed for an assessment."
-        )
+        result.warnings.append(inadequate)
         return result
     if reference_seconds < thresholds.min_reference_seconds:
         result.band = BAND_INSUFFICIENT
@@ -238,10 +303,10 @@ def compare_embedding_to_profile(
             f"at least {thresholds.min_reference_seconds:.1f}s is recommended."
         )
         return result
-    if INSUFFICIENT in (questioned_quality, reference_quality):
+    if reference_quality == INSUFFICIENT:
         result.band = BAND_INSUFFICIENT
         result.warnings.append(
-            "Audio quality on one side is insufficient for an assessment."
+            "The reference profile's audio quality is insufficient for an assessment."
         )
         return result
 
@@ -273,15 +338,33 @@ class GalleryResult:
     searched: int = 0
     skipped: List[str] = field(default_factory=list)
     thresholds: Thresholds = field(default_factory=active)
+    # Set when the questioned audio cannot support any assessment; the ranking
+    # is still shown, but no lead may be drawn from it.
+    inadequate_reason: str = ""
+    questioned_source_filename: Optional[str] = None
+    questioned_source_sha256: Optional[str] = None
+    questioned_selection: str = ""
 
     @property
     def accepted_name(self) -> Optional[str]:
+        """The subject the search would call a lead - never on inadequate audio."""
+        if self.inadequate_reason:
+            return None
         if self.decision is not None and self.decision.accepted:
             return self.decision.best_name
         return None
 
     def summary_lines(self) -> List[str]:
-        lines = [f"Searched {self.searched} known profile(s)."]
+        lines: List[str] = []
+        if self.questioned_source_filename:
+            lines += [
+                f"Questioned recording: {self.questioned_source_filename}",
+                f"Source SHA-256: {self.questioned_source_sha256 or 'not recorded'}",
+            ]
+            if self.questioned_selection:
+                lines.append(f"Selection: {self.questioned_selection}")
+            lines.append("")
+        lines.append(f"Searched {self.searched} known profile(s).")
         for index, match in enumerate(self.matches[:10], 1):
             lines.append(
                 f"{index}. {match.display_name}   {match.score:.2f}   {match.band}"
@@ -289,7 +372,15 @@ class GalleryResult:
         if not self.matches:
             lines.append("No comparable profiles.")
         lines.append("")
-        if self.accepted_name:
+        if self.inadequate_reason:
+            # Ranking a gallery on audio too poor to assess would turn an
+            # arithmetic ordering into an accusation.
+            lines.append(f"{BAND_INSUFFICIENT}: {self.inadequate_reason}")
+            lines.append(
+                "The ranking above is shown for context only and supports no "
+                "conclusion about any subject."
+            )
+        elif self.accepted_name:
             lines.append(
                 f"Lead: the questioned speaker produced high similarity to the "
                 f"{self.accepted_name} reference profile. Further review is warranted."
@@ -317,6 +408,10 @@ class GalleryResult:
             ],
             "decision": self.decision.to_dict() if self.decision else None,
             "accepted_name": self.accepted_name,
+            "inadequate_reason": self.inadequate_reason,
+            "questioned_source_filename": self.questioned_source_filename,
+            "questioned_source_sha256": self.questioned_source_sha256,
+            "questioned_selection": self.questioned_selection,
             "skipped": list(self.skipped),
             "thresholds": self.thresholds.to_dict(),
             "disclaimer": DISCLAIMER,
@@ -328,6 +423,7 @@ def search_gallery(
     profiles: Sequence[SpeakerProfile],
     *,
     questioned_seconds: float,
+    questioned_quality: str = INSUFFICIENT,
     questioned_label: str = "Questioned speaker",
     questioned_model: Optional[Any] = None,
     thresholds: Optional[Thresholds] = None,
@@ -336,25 +432,37 @@ def search_gallery(
 
     Ranking is not identification: the same acceptance-and-margin rule as
     per-turn recognition decides whether the top hit is even a lead, so a gallery
-    whose best score is 0.63 against a 0.62 runner-up yields nothing.
+    whose best score is 0.63 against a 0.62 runner-up yields nothing. The
+    questioned audio must also be adequate - the same test the 1:1 comparison
+    applies, so the two paths cannot disagree about the same clip.
     """
     thresholds = thresholds or active()
     result = GalleryResult(questioned_label=questioned_label, thresholds=thresholds)
+    result.inadequate_reason = (
+        questioned_adequacy(
+            speech_seconds=questioned_seconds,
+            quality=questioned_quality,
+            thresholds=thresholds,
+        )
+        or ""
+    )
+    # Two subjects may share a display name; keying on it would let one stand in
+    # for the other in the ranking and the decision.
+    labels = display_labels(profiles)
     candidates: List[Tuple[str, List[float]]] = []
-    by_name: Dict[str, SpeakerProfile] = {}
+    by_label: Dict[str, SpeakerProfile] = {}
     for profile in profiles:
+        label = labels.get(profile.subject_id, profile.display_name)
         verdict = check_compatibility(profile.embedding_model, questioned_model)
         if not verdict.ok:
-            result.skipped.append(f"{profile.display_name}: {verdict.reason}")
+            result.skipped.append(f"{label}: {verdict.reason}")
             continue
         centroid_vector = profile.centroid()
         if not centroid_vector:
-            result.skipped.append(
-                f"{profile.display_name}: no trusted reference samples."
-            )
+            result.skipped.append(f"{label}: no trusted reference samples.")
             continue
-        candidates.append((profile.display_name, centroid_vector))
-        by_name[profile.display_name] = profile
+        candidates.append((label, centroid_vector))
+        by_label[label] = profile
     result.searched = len(candidates)
 
     decision = decide_identity(
@@ -367,7 +475,7 @@ def search_gallery(
     )
     result.decision = decision
     for name, score in _ranked(embedding, candidates):
-        profile = by_name[name]
+        profile = by_label[name]
         band, _ = similarity_band(
             score, thresholds.comparison_high, thresholds.comparison_intermediate
         )
@@ -388,3 +496,60 @@ def _ranked(
     from .voiceprints import rank_candidates
 
     return rank_candidates(embedding, candidates)
+
+
+def compare_questioned_to_profile(
+    questioned: "QuestionedSpeaker",
+    profile: SpeakerProfile,
+    *,
+    questioned_model: Optional[Any] = None,
+    thresholds: Optional[Thresholds] = None,
+    allow_unverified_model: bool = False,
+) -> ComparisonResult:
+    """Compare a measured questioned speaker, carrying its provenance across.
+
+    Preferred over :func:`compare_embedding_to_profile` wherever a
+    :class:`~whispr.questioned.QuestionedSpeaker` is in hand: the duration,
+    quality and warnings come from the audio that produced the embedding, and
+    the result names the recording it measured, so a report cannot end up
+    describing a different file.
+    """
+    result = compare_embedding_to_profile(
+        questioned.embedding,
+        profile,
+        questioned_seconds=questioned.speech_seconds,
+        questioned_quality=questioned.quality,
+        questioned_warnings=questioned.warnings,
+        questioned_label=questioned.label,
+        questioned_model=questioned_model,
+        thresholds=thresholds,
+        allow_unverified_model=allow_unverified_model,
+    )
+    result.questioned_source_filename = questioned.source_filename or None
+    result.questioned_source_sha256 = questioned.source_sha256
+    result.questioned_selection = questioned.selection_mode
+    result.questioned_window_count = len(questioned.embedded_spans)
+    return result
+
+
+def search_gallery_for_questioned(
+    questioned: "QuestionedSpeaker",
+    profiles: Sequence[SpeakerProfile],
+    *,
+    questioned_model: Optional[Any] = None,
+    thresholds: Optional[Thresholds] = None,
+) -> GalleryResult:
+    """Gallery search for a measured questioned speaker, provenance included."""
+    result = search_gallery(
+        questioned.embedding,
+        profiles,
+        questioned_seconds=questioned.speech_seconds,
+        questioned_quality=questioned.quality,
+        questioned_label=questioned.label,
+        questioned_model=questioned_model,
+        thresholds=thresholds,
+    )
+    result.questioned_source_filename = questioned.source_filename or None
+    result.questioned_source_sha256 = questioned.source_sha256
+    result.questioned_selection = questioned.selection_mode
+    return result

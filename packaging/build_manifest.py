@@ -7,6 +7,14 @@ which dependency versions went in, and the SHA-256 of every bundled model.
 Without this file the application reports its build identity as "unknown" rather
 than guessing - see :mod:`whispr.buildinfo`.
 
+This makes a build **auditable**, not reproducible. It records what was actually
+assembled, so a result traces back to a specific bundle and two bundles can be
+compared; it does not guarantee that rebuilding the same commit later produces
+the same bundle, because dependencies are capped at a major version rather than
+pinned exactly and the model downloads do not name a revision. Freeze the bundle
+you tested and keep its hash; bit-for-bit rebuilds would need a lock file, pinned
+model revisions and committed expected asset hashes.
+
 Usage::
 
     python packaging/build_manifest.py [--build-id ID] [--commit SHA]

@@ -561,10 +561,24 @@ environment variable to force the transcriber-only view — e.g. on a locked-dow
 shortcut.)
 
 **Verify a bundle before handing it out.** The **Self-test…** button (top-right of
-the window) opens a report of exactly which engines, models and assets the build
-contains — transcription, both diarizers, translation packs, OCR (Tesseract +
-tessdata languages), ffmpeg, and the export/detect/playback add-ons — so you can
-confirm a bundle is complete before copying it to an air-gapped machine.
+the window) leads with **READY** or **NOT READY** (naming anything missing), then
+reports the build identity, the offline posture, exactly which engines, models and
+assets the build contains — transcription, both diarizers, translation packs, OCR
+(Tesseract + tessdata languages), ffmpeg, and the export/detect/playback add-ons —
+the speaker-embedding model and its SHA-256, the decision thresholds in force, and
+the processing hardware. Run it before copying a bundle to an air-gapped machine.
+
+**Auditable, not yet reproducible.** `packaging/build_manifest.py` writes
+`whispr_assets/build_manifest.json` with the build id, git commit, timestamp,
+platform, resolved dependency versions and a SHA-256 for every bundled model, so
+a result can always be traced back to the exact bundle that produced it — and two
+bundles can be compared file by file. That is *auditing*, not reproducibility:
+dependencies are capped at a major version rather than pinned exactly, and the
+Hugging Face downloads do not name a revision, so rebuilding the same commit in
+six months may legitimately produce a different bundle. **For an operation, freeze
+the bundle you tested and record its SHA-256** rather than rebuilding. Making
+rebuilds bit-for-bit repeatable needs a lock/constraints file, pinned model
+revisions, and expected asset hashes committed to the repository.
 
 Bundling **pyannote** (i.e. `both` or `pyannote`) uses gated Hugging Face models,
 so the build needs a token. Add a repository secret named **`HF_TOKEN`** (Settings

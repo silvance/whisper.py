@@ -69,6 +69,10 @@ def _comparison_lines(comparison: ComparisonResult) -> List[str]:
         f"Reference subject: {comparison.reference_name}",
         f"Questioned speaker: {comparison.questioned_label}",
     ]
+    # The recording this comparison actually measured. Without it a reader has
+    # to assume the report's source section describes the questioned audio,
+    # which is not necessarily true.
+    lines += comparison.source_lines()
     if comparison.refused:
         lines += [
             "Result: comparison refused.",
@@ -85,11 +89,16 @@ def _comparison_lines(comparison: ComparisonResult) -> List[str]:
             f"Margin over next best ({comparison.runner_up_name or 'n/a'}): "
             f"{comparison.margin:.2f}"
         )
+    measured = (
+        f", measured across {comparison.questioned_window_count} window(s)"
+        if comparison.questioned_window_count
+        else ""
+    )
     lines += [
         f"Reference speech: {comparison.reference_seconds:.1f} sec "
         f"({comparison.reference_quality})",
         f"Questioned speech: {comparison.questioned_seconds:.1f} sec "
-        f"({comparison.questioned_quality})",
+        f"({comparison.questioned_quality}){measured}",
         f"Speaker embedding model: {comparison.embedding_model}",
     ]
     for warning in comparison.warnings:
@@ -129,6 +138,27 @@ def build_report_sections(
             "No provenance was stored with this analysis, so the source and the "
             "models that produced it cannot be confirmed from this report.",
         ]
+    compared = sorted(
+        {
+            c.questioned_source_filename
+            for c in comparisons
+            if c.questioned_source_filename
+        }
+    )
+    if compared:
+        transcribed = provenance.source.filename if provenance else None
+        if not transcribed:
+            case_lines.append(
+                "The source information above does not describe the questioned "
+                "recording(s); each comparison below names its own."
+            )
+        elif any(name != transcribed for name in compared):
+            # Say so plainly rather than letting a reader assume one source.
+            case_lines.append(
+                f"Note: the transcribed recording ({transcribed}) is not the "
+                f"same as every recording compared below "
+                f"({', '.join(compared)}). Each comparison names its own source."
+            )
     if case_notes.strip():
         case_lines += ["", f"Case notes: {case_notes.strip()}"]
 

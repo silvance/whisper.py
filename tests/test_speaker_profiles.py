@@ -21,7 +21,7 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(sp, "speakers_dir", lambda: tmp_path / "speakers")
 
 
-def _model(sha="a" * 64, dim=192, name="titanet-large"):
+def _model(sha="a" * 64, dim=2, name="titanet-large"):
     return EmbeddingModelIdentity(name=name, sha256=sha, vector_dimension=dim)
 
 
@@ -44,7 +44,7 @@ def test_v2_save_load_round_trip(tmp_path, monkeypatch):
     assert loaded.schema_version == sp.SCHEMA_VERSION
     assert loaded.embedding_model is not None
     assert loaded.embedding_model.sha256 == "a" * 64
-    assert loaded.embedding_model.vector_dimension == 192
+    assert loaded.embedding_model.vector_dimension == 2
     assert len(loaded.trusted_samples()) == 1
     assert loaded.is_legacy is False
 
@@ -276,12 +276,136 @@ def test_future_schema_version_refused(tmp_path):
         load_profile_file(future)
 
 
-def test_sample_missing_metadata_loads_with_defaults():
-    sample = EnrollmentSample.from_dict({"embedding": [1.0, 0.0]})
-    assert sample.sample_type == SAMPLE_REFERENCE
-    assert sample.speech_duration == 0.0
-    assert sample.source_filename is None
+def test_a_sample_that_does_not_state_its_trust_is_not_trusted():
+    """Fail closed: an object with no trust metadata must not load as reference."""
+    issues = []
+    sample = EnrollmentSample.from_dict({"embedding": [1.0, 0.0]}, issues=issues)
+    assert sample is not None
+    assert sample.sample_type == SAMPLE_LEARNED
+    assert not sample.approved
+    assert not sample.is_trusted
+    # Kept for review rather than discarded, and the demotion is stated.
+    assert issues and "unapproved learned sample" in issues[0]
+    assert "review before approving" in sample.notes
     assert sample.sample_id
+
+
+def test_a_sample_claiming_reference_without_approval_is_not_trusted():
+    issues = []
+    sample = EnrollmentSample.from_dict(
+        {"embedding": [1.0, 0.0], "sample_type": SAMPLE_REFERENCE}, issues=issues
+    )
+    assert sample is not None and not sample.is_trusted
+    assert sample.sample_type == SAMPLE_LEARNED
+
+
+def test_an_explicit_reference_sample_still_loads_as_trusted():
+    sample = EnrollmentSample.from_dict(
+        {
+            "embedding": [1.0, 0.0],
+            "sample_type": SAMPLE_REFERENCE,
+            "approved": True,
+            "speech_duration": 12.0,
+        }
+    )
+    assert sample is not None
+    assert sample.sample_type == SAMPLE_REFERENCE
+    assert sample.is_trusted
+    assert sample.speech_duration == 12.0
+
+
+def test_an_unusable_embedding_is_dropped_rather_than_loaded():
+    for bad in (
+        {"embedding": []},
+        {"embedding": "not-a-vector"},
+        {"embedding": [1.0, float("nan")]},
+        {"embedding": [1.0, float("inf")]},
+        {"embedding": [1.0, "0.5"]},
+        {"embedding": [True, False]},
+        {},
+    ):
+        issues = []
+        assert EnrollmentSample.from_dict(bad, issues=issues) is None
+        # Never a silent drop.
+        assert issues and "Dropped sample" in issues[0]
+
+
+def test_saved_profiles_round_trip_their_trust_unchanged(tmp_path, monkeypatch):
+    """Strictness bites malformed files, not files this build wrote."""
+    _isolate(tmp_path, monkeypatch)
+    profile = SpeakerProfile(display_name="Round Trip", embedding_model=_model())
+    profile.add_reference_sample(_sample((1.0, 0.0)))
+    profile.propose_learned_sample(_sample((0.0, 1.0)))
+    (loaded,) = load_profile_file(save_speaker_profile(profile))
+    assert len(loaded.trusted_samples()) == 1
+    assert len(loaded.pending_samples()) == 1
+    assert loaded.import_warnings == []
+
+
+def test_vectors_of_the_wrong_dimension_are_dropped_with_a_reason(
+    tmp_path, monkeypatch
+):
+    _isolate(tmp_path, monkeypatch)
+    profile = SpeakerProfile(display_name="Mixed", embedding_model=_model(dim=2))
+    profile.add_reference_sample(_sample((1.0, 0.0)))
+    path = save_speaker_profile(profile)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    # A sample the recorded model could not have produced.
+    data["samples"].append(
+        {
+            "sample_id": "smp_wrong",
+            "embedding": [1.0, 0.0, 0.0, 0.0],
+            "sample_type": SAMPLE_REFERENCE,
+            "approved": True,
+            "speech_duration": 30.0,
+        }
+    )
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    (loaded,) = load_profile_file(path)
+    assert len(loaded.samples) == 1
+    assert loaded.import_warnings
+    assert "192" not in loaded.import_warnings[0]
+    assert "smp_wrong" in loaded.import_warnings[0]
+    # The surviving sample is the one the model can account for.
+    assert len(loaded.centroid()) == 2
+
+
+def test_mixed_dimensions_without_a_model_keep_the_majority(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    profile = SpeakerProfile(display_name="No model")
+    for vec in ((1.0, 0.0), (0.0, 1.0), (1.0, 0.0)):
+        profile.add_reference_sample(_sample(vec))
+    path = save_speaker_profile(profile)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["samples"].append(
+        {
+            "sample_id": "smp_odd",
+            "embedding": [1.0, 0.0, 0.0],
+            "sample_type": SAMPLE_REFERENCE,
+            "approved": True,
+        }
+    )
+    path.write_text(json.dumps(data), encoding="utf-8")
+    (loaded,) = load_profile_file(path)
+    assert len(loaded.samples) == 3
+    assert any("smp_odd" in w for w in loaded.import_warnings)
+
+
+# -- Telling two subjects with the same name apart ---------------------------
+
+
+def test_display_labels_are_unique_when_two_subjects_share_a_name():
+    a = SpeakerProfile(display_name="J. Smith")
+    b = SpeakerProfile(display_name="J. Smith")
+    c = SpeakerProfile(display_name="Someone Else")
+    labels = sp.display_labels([a, b, c])
+    assert labels[c.subject_id] == "Someone Else"
+    assert labels[a.subject_id] != labels[b.subject_id]
+    assert a.subject_id in labels[a.subject_id]
+    assert b.subject_id in labels[b.subject_id]
+    # Three distinct labels for three distinct subjects.
+    assert len(set(labels.values())) == 3
 
 
 # -- Finding a subject by the name a transcript uses -------------------------
