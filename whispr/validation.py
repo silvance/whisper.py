@@ -588,7 +588,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    report = validate_corpus(args.corpus, progress=lambda msg: print(msg))
+    try:
+        report = validate_corpus(args.corpus, progress=lambda msg: print(msg))
+    except (RuntimeError, FileNotFoundError, ValueError) as exc:
+        # A missing model or an unreadable corpus is an operator-facing problem,
+        # not a traceback to decode.
+        print(f"Validation could not run: {exc}")
+        return 2
+    if not report.trials:
+        print(
+            "No comparable trials were produced. A corpus needs at least two "
+            "recordings of the same speaker and more than one speaker, each with "
+            "enough usable speech."
+        )
+        return 2
     out = Path(args.out)
     write_json(report, out / "validation.json")
     write_trials_csv(report, out / "trials.csv")

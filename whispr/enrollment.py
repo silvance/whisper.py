@@ -20,6 +20,7 @@ silently enrolled as weak evidence.
 
 from __future__ import annotations
 
+import wave
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
@@ -35,6 +36,7 @@ from .speaker_profiles import (
     bundled_model_identity,
     check_compatibility,
 )
+from .transcription import WHISPER_SAMPLE_RATE
 
 PathLike = Union[str, Path]
 ProgressFn = Callable[[str], None]
@@ -214,6 +216,28 @@ def enroll_from_wav(
     return result
 
 
+def _is_analysis_wav(path: Path) -> bool:
+    """True when ``path`` is already 16 kHz mono 16-bit PCM WAV.
+
+    Anything else - a different rate, stereo, 8- or 24-bit, or a non-WAV
+    container - goes through ffmpeg, because the embedder and the quality
+    metrics both assume this exact format.
+    """
+    if path.suffix.lower() != ".wav":
+        return False
+    try:
+        with wave.open(str(path), "rb") as handle:
+            return (
+                handle.getnchannels() == 1
+                and handle.getsampwidth() == 2
+                and handle.getframerate() == WHISPER_SAMPLE_RATE
+            )
+    except (OSError, wave.Error, EOFError):
+        # A truncated file, or one that is not a WAV despite the extension,
+        # raises rather than reporting a format - either way, convert it.
+        return False
+
+
 def prepare_source(
     source: PathLike, *, progress: Optional[ProgressFn] = None
 ) -> Tuple[Path, Optional[str], bool]:
@@ -229,6 +253,11 @@ def prepare_source(
     if progress is not None:
         progress(f"Hashing {source_path.name}…")
     digest = sha256_file_or_none(source_path)
+    if _is_analysis_wav(source_path):
+        # Already exactly what the embedder and the quality metrics want, so
+        # there is nothing to convert - and no reason to require ffmpeg for a
+        # corpus that was prepared in advance.
+        return source_path, digest, False
     if progress is not None:
         progress("Preparing audio…")
     wav = convert_to_wav(source_path, progress=progress)

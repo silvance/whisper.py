@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from whispr import validation
 from whispr.validation import (
     CorpusItem,
     EmbeddedItem,
@@ -270,3 +271,33 @@ def test_empty_report_does_not_crash():
     report = ValidationReport()
     assert report.to_dict()["trial_count"] == 0
     assert report.summary_lines()
+
+
+# -- CLI failure modes ------------------------------------------------------
+
+
+def test_cli_reports_a_missing_model_in_plain_language(tmp_path, monkeypatch, capsys):
+    def _no_model(*args, **kwargs):
+        raise RuntimeError("Speaker features need sherpa-onnx, which is not installed")
+
+    monkeypatch.setattr(validation, "validate_corpus", _no_model)
+    code = validation.main([str(tmp_path), "--out", str(tmp_path / "out")])
+    out = capsys.readouterr().out
+    assert code == 2
+    # A plain sentence, not a traceback - and no attempt to fetch anything.
+    assert "Validation could not run" in out
+    assert "sherpa-onnx" in out
+    assert "Traceback" not in out
+
+
+def test_cli_explains_an_unusable_corpus_instead_of_writing_empty_results(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        validation, "validate_corpus", lambda *a, **k: validation.ValidationReport()
+    )
+    out_dir = tmp_path / "out"
+    assert validation.main([str(tmp_path), "--out", str(out_dir)]) == 2
+    assert "No comparable trials" in capsys.readouterr().out
+    # Nothing is written for a run that measured nothing.
+    assert not out_dir.exists()

@@ -347,7 +347,16 @@ class SpeakerEmbedder:
     def __init__(self, model_path: Optional[PathLike] = None) -> None:
         import os
 
-        import sherpa_onnx
+        try:
+            import sherpa_onnx
+        except ImportError as exc:
+            # Plain language, and no attempt to fetch anything: on an air-gapped
+            # machine a missing component is a fact to report, not to fix.
+            raise RuntimeError(
+                "Speaker features need sherpa-onnx, which is not installed in "
+                "this build. Use a bundle that includes it (see the Self-test), "
+                "or install it with:  pip install 'silvance-whisper[gui]'"
+            ) from exc
 
         if model_path is None:
             model_path = bundled_embedding_model()

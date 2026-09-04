@@ -1,4 +1,5 @@
 import wave
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -274,3 +275,60 @@ def test_parse_time_ranges_rejects_bad_input():
     for bad in ("", "10", "abc-def", "10-5", "1:2:3:4-9"):
         with pytest.raises(ValueError):
             parse_time_ranges(bad)
+
+
+# -- Preparing a source recording -------------------------------------------
+
+
+def test_a_ready_wav_is_used_as_is_without_ffmpeg(wav, monkeypatch):
+    """A 16 kHz mono 16-bit WAV needs no conversion - and no ffmpeg."""
+    import whispr.transcription as transcription
+
+    def _no_ffmpeg(*args, **kwargs):
+        raise AssertionError("convert_to_wav should not be called for a ready WAV")
+
+    monkeypatch.setattr(transcription, "convert_to_wav", _no_ffmpeg)
+    prepared, digest, temporary = enrollment.prepare_source(wav)
+    assert prepared == Path(wav)
+    assert not temporary  # not a temp copy, so the caller must not delete it
+    assert digest and len(digest) == 64
+
+
+def test_the_hash_is_of_the_source_the_operator_chose(wav):
+    from whispr.hashing import sha256_file
+
+    _prepared, digest, _temporary = enrollment.prepare_source(wav)
+    assert digest == sha256_file(wav)
+
+
+def test_only_the_exact_analysis_format_skips_conversion(tmp_path, wav):
+    import wave as wave_module
+
+    assert enrollment._is_analysis_wav(Path(wav))
+    # Stereo, a different rate, or 8-bit all still need converting.
+    stereo = tmp_path / "stereo.wav"
+    with wave_module.open(str(stereo), "wb") as handle:
+        handle.setnchannels(2)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x00" * 400)
+    assert not enrollment._is_analysis_wav(stereo)
+
+    resampled = tmp_path / "44k.wav"
+    with wave_module.open(str(resampled), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(44100)
+        handle.writeframes(b"\x00" * 400)
+    assert not enrollment._is_analysis_wav(resampled)
+
+    assert not enrollment._is_analysis_wav(tmp_path / "missing.wav")
+    not_a_wav = tmp_path / "clip.mp3"
+    not_a_wav.write_bytes(b"not audio")
+    assert not enrollment._is_analysis_wav(not_a_wav)
+
+
+def test_a_wav_extension_on_a_non_wav_file_is_not_trusted(tmp_path):
+    impostor = tmp_path / "actually-mp3.wav"
+    impostor.write_bytes(b"ID3\x00\x00")
+    assert not enrollment._is_analysis_wav(impostor)
