@@ -1,5 +1,7 @@
 import math
 
+import pytest
+
 from whispr.matching import (
     ComparisonResult,
     compare_embedding_to_profile,
@@ -14,6 +16,7 @@ from whispr.speaker_profiles import (
 from whispr.thresholds import (
     BAND_HIGH,
     BAND_INSUFFICIENT,
+    BAND_INTERMEDIATE,
     BAND_LOW,
     DISCLAIMER,
 )
@@ -320,3 +323,22 @@ def test_gallery_record_round_trip():
 
 def test_comparison_result_defaults_are_inconclusive():
     assert ComparisonResult().conclusive is False
+
+
+def test_a_configured_threshold_override_is_honoured(monkeypatch):
+    """The comparison band edge comes from the active set, not a frozen default."""
+    from whispr import thresholds as th
+
+    monkeypatch.setattr(th, "_active", th.Thresholds(comparison_high=0.99))
+    profile = _profile(seconds=30.0)
+    result = compare_embedding_to_profile(
+        _at_cosine(0.90),
+        profile,
+        questioned_seconds=20.0,
+        questioned_quality=GOOD,
+        questioned_model=MODEL,
+    )
+    # 0.90 clears the shipped 0.62 but not the configured 0.99.
+    assert result.score == pytest.approx(0.90, abs=1e-6)
+    assert result.band == BAND_INTERMEDIATE
+    assert result.operational_threshold == 0.99

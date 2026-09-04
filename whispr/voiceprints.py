@@ -174,19 +174,27 @@ def compare_voiceprints(a: Voiceprint, b: Voiceprint) -> float:
     return cosine_similarity(a.centroid, b.centroid)
 
 
-def similarity_band(score: float) -> Tuple[str, str]:
+def similarity_band(
+    score: float,
+    high: float = COMPARISON_HIGH_BAND,
+    intermediate: float = COMPARISON_INTERMEDIATE_BAND,
+) -> Tuple[str, str]:
     """Map a comparison ``score`` to a qualitative ``(band, explanation)``.
 
     Deliberately *similarity* language. A cosine similarity is not a probability
     that two recordings contain the same person, so nothing here claims identity;
     the caller adds the investigative-only disclaimer.
+
+    The band edges default to the shipped values; callers that hold a configured
+    :class:`~whispr.thresholds.Thresholds` pass theirs, so a retuned build bands
+    by the numbers it actually recorded in its reports.
     """
-    if score >= COMPARISON_HIGH_BAND:
+    if score >= high:
         return (
             BAND_HIGH,
             "the questioned speech is highly similar to the reference voice",
         )
-    if score >= COMPARISON_INTERMEDIATE_BAND:
+    if score >= intermediate:
         return (
             BAND_INTERMEDIATE,
             "the questioned speech is moderately similar to the reference voice",

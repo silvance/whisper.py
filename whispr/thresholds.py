@@ -9,14 +9,16 @@ conservative starting points; update them from the validation harness
 (:mod:`whispr.validation`) run over a representative corpus, and record the
 active values in exported reports so a result can be interpreted later.
 
-Operators can override them in the settings file (see :func:`load_overrides`)
-but the defaults are intentionally not exposed as casual GUI controls.
+Operators can override them in the settings file (see :func:`active`), and the
+GUI shows which values are in force and where they came from - but they are not
+exposed as casual GUI controls, because changing one silently changes how every
+subsequent result should be read.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # --- Diarization ----------------------------------------------------------
 # sherpa clustering cut-off: how eagerly turns merge into one speaker. Purely a
@@ -114,6 +116,38 @@ def from_settings(settings: Dict[str, Any]) -> Thresholds:
     return Thresholds(**{**DEFAULTS.to_dict(), **values})  # type: ignore[arg-type]
 
 
+_active: Optional[Thresholds] = None
+
+
+def active(refresh: bool = False) -> Thresholds:
+    """The threshold set actually in force for this run.
+
+    Reads the settings file once and caches it, so every decision in a session
+    uses one consistent set and a mid-run edit cannot change the meaning of
+    results already produced. Pass ``refresh=True`` to re-read (the GUI does this
+    when it displays them).
+    """
+    global _active
+    if _active is None or refresh:
+        from .settings import load_settings
+
+        _active = from_settings(load_settings())
+    return _active
+
+
+def overrides(
+    thresholds: Optional[Thresholds] = None,
+) -> Dict[str, Tuple[float, float]]:
+    """``{field: (configured, shipped_default)}`` for every overridden value."""
+    current = (active() if thresholds is None else thresholds).to_dict()
+    shipped = DEFAULTS.to_dict()
+    return {
+        name: (value, shipped[name])
+        for name, value in current.items()
+        if value != shipped[name]
+    }
+
+
 def describe(thresholds: Thresholds = DEFAULTS) -> List[str]:
     """Human-readable lines describing the active thresholds (for reports)."""
     return [
@@ -127,3 +161,41 @@ def describe(thresholds: Thresholds = DEFAULTS) -> List[str]:
         (f"Minimum questioned speech: {thresholds.min_questioned_seconds:.1f}s"),
         f"Minimum reference speech: {thresholds.min_reference_seconds:.1f}s",
     ]
+
+
+def describe_active() -> List[str]:
+    """Lines for the GUI/self-test: the values in force and where they came from.
+
+    Deliberately read-only. These numbers are not calibrated for any particular
+    operational setting, and retuning them without validation changes how every
+    result should be read, so they are shown rather than offered as a control.
+    """
+    from .settings import settings_path
+
+    current = active(refresh=True)
+    changed = overrides(current)
+    lines = ["Active thresholds", "-----------------"]
+    lines += describe(current)
+    lines.append("")
+    if changed:
+        lines.append("Overridden from the shipped defaults:")
+        for name, (value, default) in sorted(changed.items()):
+            lines.append(f"  {name}: {value:g} (default {default:g})")
+    else:
+        lines.append("All values are the shipped defaults.")
+    lines.append(f"Configured in: {settings_path()} (key '{SETTINGS_KEY}')")
+    lines.append("")
+    lines += _wrap(
+        "These thresholds are conservative starting points, not values "
+        "calibrated against operational recordings. Change them only from a "
+        "validation run over a representative corpus (python -m whispr.validation), "
+        "and note that a change alters how every subsequent result should be "
+        "read. The values in force are recorded in exported reports."
+    )
+    return lines
+
+
+def _wrap(text: str, width: int = 76) -> List[str]:
+    import textwrap
+
+    return textwrap.wrap(text, width=width)

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Callable, List, Optional, Sequence, Tuple, Union
 
 from .resources import bundled_diarization_models, pyannote_cache_dir
+from .thresholds import DIARIZATION_CLUSTERING_THRESHOLD
 from .transcription import (
     CancelCallback,
     CancelledError,
@@ -88,7 +89,7 @@ def diarize(
     segmentation_model: Optional[PathLike] = None,
     embedding_model: Optional[PathLike] = None,
     num_speakers: Optional[int] = None,
-    threshold: float = 0.5,
+    threshold: float = DIARIZATION_CLUSTERING_THRESHOLD,
     progress: Optional[ProgressCallback] = None,
     on_progress: Optional[Callable[[float], None]] = None,
     cancelled: Optional[CancelCallback] = None,
@@ -287,7 +288,7 @@ def _diarize_sherpa(
     segmentation_model: Optional[PathLike] = None,
     embedding_model: Optional[PathLike] = None,
     num_speakers: Optional[int] = None,
-    threshold: float = 0.5,
+    threshold: float = DIARIZATION_CLUSTERING_THRESHOLD,
     progress: Optional[ProgressCallback] = None,
     on_progress: Optional[Callable[[float], None]] = None,
     cancelled: Optional[CancelCallback] = None,

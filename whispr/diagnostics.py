@@ -10,6 +10,7 @@ answers the questions that decide whether a build is usable for an operation:
     Can this build compare voices?
     Which speaker-embedding model does it use, and what is its SHA-256?
     Can it export reports?
+    Which decision thresholds are in force, and were any overridden?
     Is every required local asset present?
 
 and summarises them as READY / NOT READY, with the build identity (build id,
@@ -27,7 +28,7 @@ import importlib.util
 from dataclasses import dataclass
 from typing import List
 
-from . import resources
+from . import resources, thresholds
 from .buildinfo import build_info
 from .hashing import short
 from .playback import playback_available
@@ -363,6 +364,8 @@ def format_report(checks: "List[Check] | None" = None) -> str:
     for check in checks:
         mark = "OK " if check.ok else "-- "
         lines.append(f"[{mark}] {check.label.ljust(width)}  {check.detail}")
+
+    lines += ["", *thresholds.describe_active()]
 
     caveat = str(resources.bundled_embedding_model_info().get("caveat") or "")
     if caveat:

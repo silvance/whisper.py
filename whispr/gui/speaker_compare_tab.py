@@ -39,7 +39,7 @@ from ..speaker_profiles import (
     bundled_model_identity,
     list_speaker_profiles,
 )
-from ..thresholds import DEFAULTS, DISCLAIMER
+from ..thresholds import DISCLAIMER, active, describe_active
 from ..transcription import AUDIO_EXTENSIONS
 from ..voiceprints import SpeakerEmbedder
 from .errors import friendly_error
@@ -175,6 +175,13 @@ class SpeakerCompareTab:
             text="Allow a profile whose embedding model can't be verified",
             variable=self.allow_unverified_var,
         ).pack(side="left", padx=(12, 0))
+        # Read-only: the thresholds behind every verdict on this tab. Shown so an
+        # analyst can state them, not offered as a control - retuning them
+        # changes how every result should be read, and belongs to a validation
+        # run rather than a click.
+        ttk.Button(actions, text="Thresholds…", command=self._show_thresholds).pack(
+            side="right"
+        )
 
         # --- Result --------------------------------------------------------
         result_frame = ttk.LabelFrame(container, text="Result", padding=8)
@@ -238,10 +245,11 @@ class SpeakerCompareTab:
                 "Embedding model: unknown (legacy import) — comparison needs "
                 "explicit confirmation."
             )
-        if profile.total_reference_seconds < DEFAULTS.min_reference_seconds:
+        minimum = active().min_reference_seconds
+        if profile.total_reference_seconds < minimum:
             lines.append(
                 "Warning: this profile holds less reference speech than the "
-                f"recommended {DEFAULTS.min_reference_seconds:.0f}s."
+                f"recommended {minimum:.0f}s."
             )
         self.reference_detail_var.set("\n".join(lines))
 
@@ -427,6 +435,21 @@ class SpeakerCompareTab:
 
     def _show(self, lines: List[str]) -> None:
         set_readonly_text(self.result_text, "\n".join(lines) + "\n\n" + DISCLAIMER)
+
+    def _show_thresholds(self) -> None:
+        """Show the decision thresholds in force (read-only)."""
+        window = tk.Toplevel(self.root)
+        window.title("Whispers - active thresholds")
+        window.transient(self.root)  # type: ignore[call-overload]
+        text = ScrolledText(
+            window, wrap="word", width=76, height=22, font="TkFixedFont"
+        )
+        text.pack(fill="both", expand=True, padx=8, pady=8)
+        text.insert("end", "\n".join(describe_active()))
+        text.configure(state="disabled")
+        ttk.Button(window, text="Close", command=window.destroy).pack(
+            side="right", padx=8, pady=(0, 8)
+        )
 
     def _copy_result(self) -> None:
         text = self.result_text.get("1.0", "end-1c")

@@ -42,6 +42,7 @@ from ..provenance import (
 )
 from ..reports import write_analysis_report
 from ..resources import bundled_models
+from ..thresholds import active as active_thresholds
 from ..transcription import (
     AUDIO_EXTENSIONS,
     MODEL_SIZES,
@@ -1335,11 +1336,17 @@ class TranscribeTab:
         if embedder is None:
             return speaker_segments
         try:
+            active = active_thresholds()
             relabeled, name_map = recognize(
                 diar_wav,
                 speaker_segments,
                 list(profile.voiceprints.values()),
                 embedder,
+                threshold=active.recognition_acceptance,
+                margin=active.recognition_margin,
+                # min_seconds stays voiceprints.MIN_TURN_SECONDS: it is the
+                # shortest turn worth embedding at all, not the comparison
+                # tool's minimum for making an assessment.
             )
         except Exception as exc:  # noqa: BLE001 - never fail a run on recognition
             append_line(self.status, f"Voice recognition skipped: {exc}")

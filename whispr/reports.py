@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Sequence, Union
 
 from .matching import ComparisonResult
 from .provenance import AnalysisProvenance
-from .thresholds import DEFAULTS, DISCLAIMER, Thresholds, describe
+from .thresholds import DISCLAIMER, Thresholds, active, describe
 from .transcription import TranscriptionResult
 
 PathLike = Union[str, Path]
@@ -110,10 +110,13 @@ def build_report_sections(
     speaker_names: Optional[Dict[str, str]] = None,
     provenance: Optional[AnalysisProvenance] = None,
     comparisons: Sequence[ComparisonResult] = (),
-    thresholds: Thresholds = DEFAULTS,
+    thresholds: Optional[Thresholds] = None,
     case_notes: str = "",
 ) -> List[ReportSection]:
     """Assemble the report's content, in order, as headed sections."""
+    # A result can only be interpreted against the numbers that produced it, so
+    # the report records the set actually in force, not the shipped defaults.
+    thresholds = thresholds or active()
     generated = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
     case_lines: List[str] = [f"Report generated (UTC): {generated}"]
@@ -216,7 +219,7 @@ def write_analysis_report(
     speaker_names: Optional[Dict[str, str]] = None,
     provenance: Optional[AnalysisProvenance] = None,
     comparisons: Sequence[ComparisonResult] = (),
-    thresholds: Thresholds = DEFAULTS,
+    thresholds: Optional[Thresholds] = None,
     case_notes: str = "",
     title: str = REPORT_TITLE,
 ) -> Path:

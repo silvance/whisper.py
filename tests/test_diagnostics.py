@@ -214,3 +214,12 @@ def test_self_test_names_the_embedding_file_and_carries_its_caveat(
     assert "CAM++" in report and "Mandarin" in report
     assert "multilingual" not in report.lower()
     assert "Performance varies with language" in report
+
+
+def test_self_test_shows_the_thresholds_in_force(monkeypatch, tmp_path):
+    _all_present(monkeypatch, tmp_path)
+    report = diagnostics.format_report()
+    assert "Active thresholds" in report
+    assert "Recognition acceptance:" in report
+    # Visible, with the caveat - not offered as a casual control.
+    assert "not values calibrated" in report

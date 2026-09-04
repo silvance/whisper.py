@@ -30,9 +30,9 @@ from .quality import INSUFFICIENT
 from .speaker_profiles import Compatibility, SpeakerProfile, check_compatibility
 from .thresholds import (
     BAND_INSUFFICIENT,
-    DEFAULTS,
     DISCLAIMER,
     Thresholds,
+    active,
 )
 from .voiceprints import (
     MatchDecision,
@@ -56,7 +56,7 @@ class ComparisonResult:
     reference_quality: str = INSUFFICIENT
     questioned_quality: str = INSUFFICIENT
     embedding_model: str = "unknown"
-    thresholds: Thresholds = field(default_factory=lambda: DEFAULTS)
+    thresholds: Thresholds = field(default_factory=active)
     compatibility: Optional[Compatibility] = None
     refused: bool = False
     refusal_reason: str = ""
@@ -174,7 +174,7 @@ def compare_embedding_to_profile(
     questioned_warnings: Optional[Sequence[str]] = None,
     questioned_label: str = "Questioned speaker",
     questioned_model: Optional[Any] = None,
-    thresholds: Thresholds = DEFAULTS,
+    thresholds: Optional[Thresholds] = None,
     allow_unverified_model: bool = False,
 ) -> ComparisonResult:
     """Compare one questioned embedding against a known subject's reference.
@@ -185,6 +185,7 @@ def compare_embedding_to_profile(
     ``allow_unverified_model`` after an operator has accepted the risk - and even
     then only for missing provenance, never for a proven mismatch.
     """
+    thresholds = thresholds or active()
     reference_seconds, reference_quality, warnings = _reference_view(profile)
     result = ComparisonResult(
         reference_name=profile.display_name,
@@ -244,7 +245,11 @@ def compare_embedding_to_profile(
         )
         return result
 
-    result.band, _ = similarity_band(result.score)
+    result.band, _ = similarity_band(
+        result.score,
+        thresholds.comparison_high,
+        thresholds.comparison_intermediate,
+    )
     return result
 
 
@@ -267,7 +272,7 @@ class GalleryResult:
     decision: Optional[MatchDecision] = None
     searched: int = 0
     skipped: List[str] = field(default_factory=list)
-    thresholds: Thresholds = field(default_factory=lambda: DEFAULTS)
+    thresholds: Thresholds = field(default_factory=active)
 
     @property
     def accepted_name(self) -> Optional[str]:
@@ -325,7 +330,7 @@ def search_gallery(
     questioned_seconds: float,
     questioned_label: str = "Questioned speaker",
     questioned_model: Optional[Any] = None,
-    thresholds: Thresholds = DEFAULTS,
+    thresholds: Optional[Thresholds] = None,
 ) -> GalleryResult:
     """Rank a questioned speaker against every known subject.
 
@@ -333,6 +338,7 @@ def search_gallery(
     per-turn recognition decides whether the top hit is even a lead, so a gallery
     whose best score is 0.63 against a 0.62 runner-up yields nothing.
     """
+    thresholds = thresholds or active()
     result = GalleryResult(questioned_label=questioned_label, thresholds=thresholds)
     candidates: List[Tuple[str, List[float]]] = []
     by_name: Dict[str, SpeakerProfile] = {}
@@ -362,7 +368,9 @@ def search_gallery(
     result.decision = decision
     for name, score in _ranked(embedding, candidates):
         profile = by_name[name]
-        band, _ = similarity_band(score)
+        band, _ = similarity_band(
+            score, thresholds.comparison_high, thresholds.comparison_intermediate
+        )
         result.matches.append(
             GalleryMatch(
                 subject_id=profile.subject_id,
