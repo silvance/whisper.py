@@ -38,7 +38,20 @@ from ..speaker_profiles import (
 from ..transcription import AUDIO_EXTENSIONS
 from ..voiceprints import SpeakerEmbedder
 from .errors import friendly_error
-from .widgets import bind_wheel, scrollable_body
+from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, Style, palette
+from .widgets import (
+    Card,
+    EmptyState,
+    KeyValueRow,
+    PageHeader,
+    StatusBanner,
+    bind_wheel,
+    danger_button,
+    primary_button,
+    scrollable_body,
+    secondary_button,
+    subtle_button,
+)
 
 # Enrolment modes offered when a recording is added.
 MODE_WHOLE = "whole"
@@ -63,7 +76,6 @@ class SpeakerProfilesTab:
         self._selected: Optional[SpeakerProfile] = None
         self._embedder: Optional[SpeakerEmbedder] = None
         self.status_var = tk.StringVar(value="Idle")
-        self.summary_var = tk.StringVar(value="No subject selected.")
         self._build()
         self.refresh()
 
@@ -72,104 +84,146 @@ class SpeakerProfilesTab:
     def _build(self) -> None:
         canvas, container = scrollable_body(self.parent)
 
-        ttk.Label(
+        PageHeader(
             container,
-            text="Known-subject reference voices",
-            font=("", 12, "bold"),
-        ).pack(anchor="w")
-        ttk.Label(
-            container,
-            text=(
-                "Create a subject, then add historical recordings you know contain "
-                "them. Whispers enrols several trusted samples per recording and "
-                "records where each came from."
-            ),
-            wraplength=620,
-            justify="left",
-            font=("", 8),
-        ).pack(anchor="w", pady=(0, 8))
+            "Speaker Profiles",
+            "Build a reference voice for someone you know, from recordings you "
+            "already have.",
+        ).pack(fill="x", pady=(0, SPACE_LG))
 
-        # --- Subjects ------------------------------------------------------
-        subjects = ttk.LabelFrame(container, text="Subjects", padding=8)
-        subjects.pack(fill="x")
+        # Master and detail: who exists on the left, everything about the
+        # selected person on the right. At 1366 wide both fit; the list is kept
+        # narrow so the detail - which is where the work happens - gets the room.
+        columns = ttk.Frame(container, style=Style.PAGE)
+        columns.pack(fill="both", expand=True)
+        columns.columnconfigure(0, weight=0, minsize=300)
+        columns.columnconfigure(1, weight=1)
+        columns.rowconfigure(0, weight=1)
+
+        self._build_subject_list(columns)
+        self._build_detail(columns)
+
+        self.banner = StatusBanner(container)
+        ttk.Label(
+            container, textvariable=self.status_var, style=Style.PAGE_SUBTITLE
+        ).pack(anchor="w", pady=(SPACE_MD, 0))
+        bind_wheel(canvas, container)
+
+    def _build_subject_list(self, parent: tk.Misc) -> None:
+        card = Card(parent, "Subjects")
+        card.grid(row=0, column=0, sticky="nsew", padx=(0, SPACE_MD))
+
         self.subject_tree = ttk.Treeview(
-            subjects,
-            columns=("samples", "speech", "model"),
-            show="tree headings",
-            height=6,
+            card.body,
+            columns=("samples",),
+            show="tree",
+            height=12,
+            selectmode="browse",
         )
-        self.subject_tree.heading("#0", text="Subject")
-        self.subject_tree.heading("samples", text="Samples")
-        self.subject_tree.heading("speech", text="Reference speech")
-        self.subject_tree.heading("model", text="Embedding model")
-        self.subject_tree.column("#0", width=180)
-        self.subject_tree.column("samples", width=110, anchor="center")
-        self.subject_tree.column("speech", width=120, anchor="center")
-        self.subject_tree.column("model", width=220)
-        self.subject_tree.pack(fill="x")
+        self.subject_tree.column("#0", width=180, stretch=True)
+        self.subject_tree.column("samples", width=90, anchor="e", stretch=False)
+        self.subject_tree.pack(fill="both", expand=True)
         self.subject_tree.bind("<<TreeviewSelect>>", lambda _e: self._on_select())
 
-        buttons = ttk.Frame(subjects)
-        buttons.pack(fill="x", pady=(6, 0))
-        ttk.Button(buttons, text="New subject…", command=self._new_subject).pack(
+        # Shown instead of the list until there is a first subject: a blank box
+        # gives a first-time operator nothing to act on.
+        self.subjects_empty = EmptyState(
+            card.body,
+            "No speaker profiles yet",
+            "Create one from a recording you know contains a particular person, "
+            "so later recordings can be compared against it.",
+        )
+
+        buttons = ttk.Frame(card.body, style=Style.CARD_INNER)
+        buttons.pack(fill="x", pady=(SPACE_MD, 0))
+        primary_button(buttons, "New profile", self._new_subject).pack(side="left")
+        subtle_button(buttons, "Import…", self._import_profile).pack(
+            side="left", padx=(SPACE_SM, 0)
+        )
+        subtle_button(buttons, "Export…", self._export_profile).pack(side="left")
+        subtle_button(buttons, "Refresh", self.refresh).pack(side="left")
+
+    def _build_detail(self, parent: tk.Misc) -> None:
+        card = Card(parent, "")
+        card.grid(row=0, column=1, sticky="nsew")
+        self._detail_card = card
+
+        # Nothing selected: say what to do rather than showing an empty table.
+        self.detail_empty = EmptyState(
+            card.body,
+            "No subject selected",
+            "Choose someone on the left, or create a profile to begin.",
+        )
+        self.detail_empty.pack(fill="both", expand=True)
+
+        self.detail_body = ttk.Frame(card.body, style=Style.CARD_INNER)
+
+        heading = ttk.Frame(self.detail_body, style=Style.CARD_INNER)
+        heading.pack(fill="x")
+        self.subject_name_var = tk.StringVar(value="")
+        ttk.Label(
+            heading, textvariable=self.subject_name_var, style=Style.SECTION_TITLE
+        ).pack(side="left")
+        danger_button(heading, "Delete profile", self._delete_profile).pack(
+            side="right"
+        )
+
+        facts = ttk.Frame(self.detail_body, style=Style.CARD_INNER)
+        facts.pack(fill="x", pady=(SPACE_MD, 0))
+        self._fact_rows = {
+            "reference": KeyValueRow(facts, "Reference speech"),
+            "trusted": KeyValueRow(facts, "Trusted samples"),
+            "pending": KeyValueRow(facts, "Awaiting review"),
+            "sources": KeyValueRow(facts, "From recordings"),
+            "model": KeyValueRow(facts, "Voice model"),
+        }
+        for row in self._fact_rows.values():
+            row.pack(fill="x", pady=(0, SPACE_XS))
+
+        actions = ttk.Frame(self.detail_body, style=Style.CARD_INNER)
+        actions.pack(fill="x", pady=(SPACE_MD, 0))
+        primary_button(actions, "Add a recording", self._add_recording).pack(
             side="left"
         )
-        ttk.Button(buttons, text="Import…", command=self._import_profile).pack(
-            side="left", padx=(6, 0)
+        self._approve_button = secondary_button(
+            actions, "Approve sample", self._approve
         )
-        ttk.Button(buttons, text="Export…", command=self._export_profile).pack(
-            side="left", padx=(6, 0)
-        )
-        ttk.Button(buttons, text="Delete", command=self._delete_profile).pack(
-            side="left", padx=(6, 0)
-        )
-        ttk.Button(buttons, text="Refresh", command=self.refresh).pack(
-            side="left", padx=(6, 0)
-        )
+        self._approve_button.pack(side="left", padx=(SPACE_SM, 0))
+        danger_button(actions, "Remove sample", self._remove).pack(side="left")
 
-        # --- Selected subject ---------------------------------------------
-        detail = ttk.LabelFrame(container, text="Selected subject", padding=8)
-        detail.pack(fill="both", expand=True, pady=(10, 0))
         ttk.Label(
-            detail, textvariable=self.summary_var, wraplength=620, justify="left"
-        ).pack(anchor="w")
-
-        add_row = ttk.Frame(detail)
-        add_row.pack(fill="x", pady=(8, 4))
-        ttk.Button(
-            add_row,
-            text="Add historical recording…",
-            command=self._add_recording,
-        ).pack(side="left")
-        ttk.Button(add_row, text="Approve sample", command=self._approve).pack(
-            side="left", padx=(6, 0)
-        )
-        ttk.Button(add_row, text="Remove sample", command=self._remove).pack(
-            side="left", padx=(6, 0)
-        )
-
+            self.detail_body, text="Reference samples", style=Style.FIELD_LABEL
+        ).pack(anchor="w", pady=(SPACE_LG, SPACE_XS))
         self.sample_tree = ttk.Treeview(
-            detail,
-            columns=("type", "state", "source", "span", "speech", "quality"),
+            self.detail_body,
+            columns=("state", "source", "span", "speech", "quality"),
             show="headings",
             height=8,
         )
-        for column, heading, width in (
-            ("type", "Class", 90),
-            ("state", "State", 90),
-            ("source", "Source", 190),
-            ("span", "Span", 110),
-            ("speech", "Speech", 80),
-            ("quality", "Quality", 90),
-        ):
-            self.sample_tree.heading(column, text=heading)
-            self.sample_tree.column(column, width=width, anchor="w")
+        sample_columns: List[Tuple[str, str, int, bool]] = [
+            ("state", "State", 150, False),
+            ("source", "Recording", 150, True),
+            ("span", "Where", 90, False),
+            ("speech", "Speech", 70, False),
+            ("quality", "Quality", 80, False),
+        ]
+        for column, heading_text, width, stretch in sample_columns:
+            self.sample_tree.heading(column, text=heading_text)
+            self.sample_tree.column(column, width=width, stretch=stretch, anchor="w")
+        # Durations line up when they are right-aligned.
+        self.sample_tree.column("speech", anchor="e")
         self.sample_tree.pack(fill="both", expand=True)
+        # A sample awaiting review is not a row of ordinary text: it is the one
+        # thing on this screen that asks the operator for a decision.
+        self.sample_tree.tag_configure("pending", foreground=palette().warning)
+        self.sample_tree.tag_configure("outlier", foreground=palette().danger_active)
 
-        ttk.Label(container, textvariable=self.status_var, wraplength=620).pack(
-            anchor="w", pady=(8, 0)
+        self.samples_empty = EmptyState(
+            self.detail_body,
+            "No reference samples yet",
+            "Add a recording that contains this person, and say which speech is "
+            "theirs.",
         )
-        bind_wheel(canvas, container)
 
     # -- Data --------------------------------------------------------------
 
@@ -179,23 +233,24 @@ class SpeakerProfilesTab:
         self.subject_tree.delete(*self.subject_tree.get_children())
         for profile in self._profiles:
             summary = profile.summary()
-            model = (
-                profile.embedding_model.describe()
-                if profile.embedding_model
-                else "unknown (legacy)"
-            )
+            pending = int(summary["pending_sample_count"])
+            # The list answers "who exists and does anyone need me": the detail
+            # panel carries the rest.
+            suffix = f"  ·  {pending} to review" if pending else ""
             self.subject_tree.insert(
                 "",
                 "end",
                 iid=profile.subject_id,
-                text=profile.display_name,
-                values=(
-                    f"{summary['trusted_sample_count']} trusted / "
-                    f"{summary['pending_sample_count']} pending",
-                    f"{profile.total_reference_seconds:.1f}s",
-                    model,
-                ),
+                text=f"{profile.display_name}{suffix}",
+                tags=("pending",) if pending else (),
             )
+        self.subject_tree.tag_configure("pending", foreground=palette().warning)
+        if self._profiles:
+            self.subjects_empty.pack_forget()
+            self.subject_tree.pack(fill="both", expand=True)
+        else:
+            self.subject_tree.pack_forget()
+            self.subjects_empty.pack(fill="both", expand=True)
         self._on_select()
 
     def _on_select(self) -> None:
@@ -212,28 +267,38 @@ class SpeakerProfilesTab:
         self.sample_tree.delete(*self.sample_tree.get_children())
         profile = self._selected
         if profile is None:
-            self.summary_var.set("No subject selected.")
+            self.detail_body.pack_forget()
+            self.detail_empty.pack(fill="both", expand=True)
             return
+        self.detail_empty.pack_forget()
+        self.detail_body.pack(fill="both", expand=True)
+
         summary = profile.summary()
-        lines = [
-            f"{profile.display_name}  ({profile.subject_id})",
-            f"Trusted samples: {summary['trusted_sample_count']}   "
-            f"Pending review: {summary['pending_sample_count']}   "
-            f"Reference speech: {profile.total_reference_seconds:.1f}s",
-            f"Sources: {', '.join(profile.source_files()) or 'none recorded'}",
-        ]
+        pending = int(summary["pending_sample_count"])
+        self.subject_name_var.set(profile.display_name)
+        self._fact_rows["reference"].set(f"{profile.total_reference_seconds:.1f} sec")
+        self._fact_rows["trusted"].set(str(summary["trusted_sample_count"]))
+        self._fact_rows["pending"].set(
+            f"{pending} — review before they are used" if pending else "None",
+            style_name=Style.WARNING if pending else Style.BODY,
+        )
+        self._fact_rows["sources"].set(
+            ", ".join(profile.source_files()) or "none recorded"
+        )
         if profile.embedding_model:
-            lines.append(
-                f"Embedding model: {profile.embedding_model.name} "
-                f"(sha256 {short(profile.embedding_model.sha256)}, "
-                f"dim {profile.embedding_model.vector_dimension})"
+            self._fact_rows["model"].set(
+                f"{profile.embedding_model.name}  ·  "
+                f"{short(profile.embedding_model.sha256)}",
+                style_name=Style.BODY,
             )
         else:
-            lines.append(
-                "Embedding model: unknown — imported from an older format, so "
-                "model compatibility cannot be proven."
+            # A profile that cannot prove which model made it is a real
+            # limitation on any later comparison, so it is said plainly.
+            self._fact_rows["model"].set(
+                "unknown — imported from an older format, so it cannot be "
+                "proven to match this build",
+                style_name=Style.WARNING,
             )
-        self.summary_var.set("\n".join(lines))
 
         for sample in profile.samples:
             span = (
@@ -241,19 +306,35 @@ class SpeakerProfilesTab:
                 if sample.source_start is not None and sample.source_end is not None
                 else "—"
             )
+            outlier = "Outlier" in (sample.notes or "")
+            state: str
+            tags: Tuple[str, ...]
+            if sample.is_trusted:
+                state, tags = "Trusted", ()
+            elif outlier:
+                state, tags = "Needs review — unlike the reference", ("outlier",)
+            else:
+                state, tags = "Needs review", ("pending",)
             self.sample_tree.insert(
                 "",
                 "end",
                 iid=sample.sample_id,
                 values=(
-                    sample.sample_type,
-                    "trusted" if sample.is_trusted else "needs review",
+                    state,
                     sample.source_filename or "—",
                     span,
                     f"{sample.speech_duration:.1f}s",
                     str(sample.quality.get("assessment", "—")),
                 ),
+                tags=tags,
             )
+        if profile.samples:
+            self.samples_empty.pack_forget()
+            self.sample_tree.pack(fill="both", expand=True)
+        else:
+            self.sample_tree.pack_forget()
+            self.samples_empty.pack(fill="both", expand=True)
+        self._approve_button.configure(state="normal" if pending else "disabled")
 
     # -- Subject management -------------------------------------------------
 
@@ -367,6 +448,11 @@ class SpeakerProfilesTab:
         ]
         messagebox.showwarning(
             "Imported with changes", "\n".join(lines), parent=self.root
+        )
+        self.banner.show(
+            "warning",
+            f"{len(issues)} sample(s) in {filename} were dropped or set aside for "
+            "review. See the profile's sample list.",
         )
 
     # -- Sample review ------------------------------------------------------

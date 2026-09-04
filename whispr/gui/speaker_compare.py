@@ -24,6 +24,7 @@ from ..profiles import (
 from ..thresholds import COMPARISON_HIGH_BAND, DISCLAIMER
 from ..voiceprints import Voiceprint, compare_voiceprints, similarity_band
 from .errors import friendly_error
+from .theme import SPACE_MD, SPACE_XL, Style, palette
 
 # Reports a one-line status/result back to the caller (e.g. a status label).
 StatusFn = Callable[[str], None]
@@ -120,15 +121,16 @@ def open_compare_dialog(root: tk.Misc) -> None:
     win = tk.Toplevel(root)
     win.title("Compare voices")
     win.transient(root)  # type: ignore[call-overload]
-    frame = ttk.Frame(win, padding=12)
+    win.configure(background=palette().background)
+    frame = ttk.Frame(win, padding=SPACE_XL, style=Style.PAGE)
     frame.pack(fill="both", expand=True)
     frame.columnconfigure(1, weight=1)
 
     ttk.Label(
         frame,
         text="Compare two speaker voiceprints for similarity.",
-        font=("", 11, "bold"),
-    ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        style=Style.PAGE_TITLE,
+    ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, SPACE_MD))
 
     slots: Dict[str, Optional[Voiceprint]] = {"a": None, "b": None}
     name_vars = {
@@ -174,9 +176,9 @@ def open_compare_dialog(root: tk.Misc) -> None:
     ttk.Button(frame, text="Compare", command=_do_compare).grid(
         row=3, column=0, sticky="w", pady=(8, 4)
     )
-    ttk.Label(frame, textvariable=result_var, font=("", 10), justify="left").grid(
-        row=4, column=0, columnspan=3, sticky="w", pady=(0, 8)
-    )
+    ttk.Label(
+        frame, textvariable=result_var, style=Style.PAGE_SUBTITLE, justify="left"
+    ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(0, 8))
 
     ttk.Label(
         frame,
@@ -188,7 +190,7 @@ def open_compare_dialog(root: tk.Misc) -> None:
         ),
         wraplength=420,
         justify="left",
-        font=("", 8),
+        style=Style.PAGE_SUBTITLE,
     ).grid(row=5, column=0, columnspan=3, sticky="w")
     ttk.Button(frame, text="Close", command=win.destroy).grid(
         row=6, column=2, sticky="e", pady=(10, 0)

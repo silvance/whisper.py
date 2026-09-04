@@ -24,6 +24,7 @@ from ..transcription import (
     is_low_confidence_segment,
     is_low_confidence_word,
 )
+from .theme import palette
 
 # Foreground colour for low-confidence text when highlighting is enabled.
 _LOW_CONFIDENCE_COLOR = "#ff7a7a"
@@ -157,7 +158,9 @@ class TranscriptView:
             self.widget.tag_config("lowconf", foreground=_LOW_CONFIDENCE_COLOR)
             if result is None:
                 if self._placeholder:
-                    self.widget.tag_config("placeholder", foreground="#8a8a8a")
+                    self.widget.tag_config(
+                        "placeholder", foreground=palette().text_muted
+                    )
                     self.widget.insert("end", self._placeholder, ("placeholder",))
                 self.widget.configure(state="disabled")
                 return

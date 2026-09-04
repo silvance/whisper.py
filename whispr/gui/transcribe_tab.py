@@ -70,13 +70,31 @@ from ..transcription import (
 from ..voiceprints import SpeakerEmbedder, enroll_spans, recognize
 from . import speaker_compare
 from .errors import friendly_error
+from .theme import (
+    SPACE_LG,
+    SPACE_MD,
+    SPACE_SM,
+    SPACE_XL,
+    SPACE_XS,
+    Style,
+    theme,
+)
 from .transcript_view import TranscriptView
 from .widgets import (
-    CollapsibleSection,
+    Card,
+    Disclosure,
+    FileDropZone,
+    PageHeader,
+    StatusBanner,
     append_line,
     bind_wheel,
+    danger_button,
+    primary_button,
     register_drop,
     scrollable_body,
+    secondary_button,
+    style_text_widget,
+    subtle_button,
 )
 
 # A handful of common languages for the dropdown; "Auto" lets Whisper detect.
@@ -106,6 +124,31 @@ ENGINE_CHOICES = {
     "sherpa - faster, for clean audio": "sherpa",
 }
 ENGINE_LABELS = list(ENGINE_CHOICES)
+
+
+# What each model size means to someone choosing one. The size stays visible -
+# an operator who knows the names still needs to see them, and a report has to
+# name the model that ran - but "small.en" is not a description of anything.
+# Deliberately relative words: none of these promises an accuracy figure.
+MODEL_DESCRIPTIONS = {
+    "tiny": "Fastest",
+    "tiny.en": "Fastest",
+    "base": "Fast",
+    "base.en": "Fast",
+    "small": "Balanced",
+    "small.en": "Balanced",
+    "medium": "More thorough",
+    "medium.en": "More thorough",
+    "large": "Most thorough, slowest",
+    "large-v3": "Most thorough, slowest",
+    "turbo": "Thorough and quick",
+}
+
+
+def _model_label(model: str) -> str:
+    """``small.en`` -> ``Balanced — small.en``; a folder path shows as itself."""
+    description = MODEL_DESCRIPTIONS.get(model)
+    return f"{description} — {model}" if description else model
 
 
 # The hardware dropdown shows friendly labels; the run needs the mode behind one.
@@ -153,6 +196,10 @@ class TranscribeTab:
         self.output_dir_var = tk.StringVar()
         self.write_output_var = tk.BooleanVar(value=True)
         self.model_var = tk.StringVar(value=default_model)
+        # What the dropdown shows. model_var stays the raw model name, because
+        # that is what a run, a saved profile and a report all record.
+        self.model_choice_var = tk.StringVar(value=_model_label(default_model))
+        self._syncing_model = False
         # Live note under the Model box: whether the current pick is in this build.
         self.model_status_var = tk.StringVar(value="")
         self.task_var = tk.StringVar(value="transcribe")
@@ -218,353 +265,396 @@ class TranscribeTab:
 
     def _build(self) -> None:
         transcribe_canvas, container = scrollable_body(self.parent)
+        self._page = container
 
-        # Collapsible settings sections (hidden as a group when a run starts).
-        self._setting_sections: List[CollapsibleSection] = []
+        PageHeader(
+            container,
+            "Transcribe",
+            "Turn an audio or video recording into searchable text.",
+        ).pack(fill="x", pady=(0, SPACE_LG))
 
-        # --- Input & output ------------------------------------------------
-        io_section = CollapsibleSection(container, "Input & output")
-        io_section.pack(fill="x")
-        self._setting_sections.append(io_section)
-        io_frame = io_section.body
-        io_frame.columnconfigure(1, weight=1)
+        # Everything the operator sets before running, in one region that can be
+        # put away once there is a transcript to read.
+        self._settings_area = ttk.Frame(container, style=Style.PAGE)
+        self._settings_area.pack(fill="x")
 
-        ttk.Label(io_frame, text="Audio / video file").grid(
-            row=0, column=0, sticky="w", padx=(0, 8), pady=4
-        )
-        ttk.Entry(io_frame, textvariable=self.input_file_var).grid(
-            row=0, column=1, sticky="ew", pady=4
-        )
-        ttk.Button(io_frame, text="Browse…", command=self.choose_file).grid(
-            row=0, column=2, padx=(8, 0), pady=4
-        )
+        self._build_recording_card(self._settings_area)
+        self._build_basic_options(self._settings_area)
+        self._build_advanced_options(self._settings_area)
+        self._build_action_row(container)
+        self._build_results(container)
 
-        ttk.Checkbutton(
-            io_frame,
-            text="Save transcript to a folder",
-            variable=self.write_output_var,
-            command=self._update_output_state,
-        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 2))
-
-        ttk.Label(io_frame, text="Output folder").grid(
-            row=2, column=0, sticky="w", padx=(0, 8), pady=4
-        )
-        self.output_dir_entry = ttk.Entry(io_frame, textvariable=self.output_dir_var)
-        self.output_dir_entry.grid(row=2, column=1, sticky="ew", pady=4)
-        self.output_dir_button = ttk.Button(
-            io_frame, text="Select…", command=self.choose_output_dir
-        )
-        self.output_dir_button.grid(row=2, column=2, padx=(8, 0), pady=4)
-
-        # Batch queue (optional): Run transcribes all of these instead of the
-        # single file above. Outputs go to the chosen folder, else beside each
-        # source so a multi-file run never loses results.
-        ttk.Label(io_frame, text="Batch (optional)").grid(
-            row=3, column=0, sticky="w", padx=(0, 8), pady=4
-        )
-        batch_row = ttk.Frame(io_frame)
-        batch_row.grid(row=3, column=1, columnspan=2, sticky="w", pady=4)
-        ttk.Button(batch_row, text="Add files…", command=self._add_batch_files).pack(
-            side="left"
-        )
-        ttk.Button(batch_row, text="Clear", command=self._clear_batch_files).pack(
-            side="left", padx=(8, 0)
-        )
-        ttk.Label(
-            io_frame,
-            textvariable=self.batch_files_var,
-            wraplength=420,
-            justify="left",
-        ).grid(row=4, column=1, columnspan=2, sticky="w")
-
-        # --- Model & language ---------------------------------------------
-        model_section = CollapsibleSection(container, "Model & language")
-        model_section.pack(fill="x", pady=(8, 0))
-        self._setting_sections.append(model_section)
-        model_frame = model_section.body
-        model_frame.columnconfigure(1, weight=1)
-
-        # What to offer in the dropdown. On a real (bundled) build, list only the
-        # models actually present - offering every size just lets an operator pick
-        # one that can't be fetched offline. From source (nothing bundled), list
-        # the known sizes so a dev run can download them. Either way, Browse… still
-        # allows a custom CTranslate2 model folder.
-        if self._bundled_models:
-            model_values = list(self._bundled_models)
-        else:
-            model_values = list(MODEL_SIZES)
-        ttk.Label(model_frame, text="Model").grid(
-            row=0, column=0, sticky="w", padx=(0, 8), pady=4
-        )
-        ttk.Combobox(
-            model_frame, textvariable=self.model_var, values=model_values
-        ).grid(row=0, column=1, sticky="ew", pady=4)
-        ttk.Button(model_frame, text="Browse…", command=self.choose_model_dir).grid(
-            row=0, column=2, padx=(8, 0), pady=4
-        )
-        # A live note telling the operator whether the chosen model is actually in
-        # this (offline) build - the dropdown lists every size, but only bundled
-        # ones work air-gapped, so this flags a pick that would fail before Run.
-        ttk.Label(model_frame, textvariable=self.model_status_var, font=("", 8)).grid(
-            row=1, column=1, columnspan=2, sticky="w"
-        )
-        self.model_var.trace_add("write", self._update_model_status)
+        # A model can also arrive from a saved profile or last session's
+        # settings, so the dropdown follows the value rather than owning it.
+        self.model_var.trace_add("write", self._sync_model_choice)
         self._update_model_status()
 
-        ttk.Label(model_frame, text="Task").grid(
-            row=2, column=0, sticky="w", padx=(0, 8), pady=4
-        )
-        ttk.Combobox(
-            model_frame,
-            textvariable=self.task_var,
-            values=["transcribe", "translate"],
-            state="readonly",
-            width=16,
-        ).grid(row=2, column=1, sticky="w", pady=4)
+        # Initialise the enabled/disabled state of dependent fields.
+        self._update_output_state()
+        self._update_speaker_state()
+        # Mouse-wheel scrolls the page (the scrollbar always works regardless).
+        bind_wheel(transcribe_canvas, container)
+        # Drop a recording anywhere it would plausibly be dropped.
+        for target in (self._drop_zone, self.transcript_view.widget, self.status):
+            register_drop(self.root, self._dnd_ok, target, self._on_drop_media)
 
-        ttk.Label(model_frame, text="Language").grid(
-            row=3, column=0, sticky="w", padx=(0, 8), pady=4
+    # -- Recording ---------------------------------------------------------
+
+    def _build_recording_card(self, parent: tk.Misc) -> None:
+        card = Card(parent, "Recording")
+        card.pack(fill="x")
+        self._drop_zone = FileDropZone(card.body, self.input_file_var, self.choose_file)
+        self._drop_zone.pack(fill="x")
+
+        # Batch stays available, but a queue is the exception: it sits under the
+        # single file it would otherwise compete with.
+        batch = ttk.Frame(card.body, style=Style.CARD_INNER)
+        batch.pack(fill="x", pady=(SPACE_MD, 0))
+        subtle_button(batch, "Add several files…", self._add_batch_files).pack(
+            side="left"
+        )
+        self._batch_clear = subtle_button(batch, "Clear list", self._clear_batch_files)
+        self._batch_row = batch
+        ttk.Label(
+            card.body,
+            textvariable=self.batch_files_var,
+            style=Style.META,
+            wraplength=560,
+            justify="left",
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
+        self._update_batch_label()
+
+    # -- Basic options -----------------------------------------------------
+
+    def _build_basic_options(self, parent: tk.Misc) -> None:
+        """Only what most operators need, in the words they would use."""
+        card = Card(parent, "Options")
+        card.pack(fill="x", pady=(SPACE_MD, 0))
+        body = card.body
+        body.columnconfigure(1, weight=1)
+
+        ttk.Label(body, text="Language", style=Style.FIELD_LABEL).grid(
+            row=0, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS
         )
         ttk.Combobox(
-            model_frame,
+            body,
             textvariable=self.language_var,
             values=COMMON_LANGUAGES,
-            width=16,
-        ).grid(row=3, column=1, sticky="w", pady=4)
+            width=18,
+        ).grid(row=0, column=1, sticky="w", pady=SPACE_XS)
 
-        ttk.Label(model_frame, text="Custom words").grid(
-            row=4, column=0, sticky="w", padx=(0, 8), pady=4
+        ttk.Label(body, text="Quality", style=Style.FIELD_LABEL).grid(
+            row=1, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS
         )
-        ttk.Entry(model_frame, textvariable=self.vocab_var).grid(
-            row=4, column=1, columnspan=2, sticky="ew", pady=4
+        model_row = ttk.Frame(body, style=Style.CARD_INNER)
+        model_row.grid(row=1, column=1, sticky="ew", pady=SPACE_XS)
+        self.model_combo = ttk.Combobox(
+            model_row,
+            textvariable=self.model_choice_var,
+            values=self._model_labels(),
+            state="readonly",
+            width=34,
         )
-        ttk.Label(
-            model_frame,
-            text="Names, places, jargon or callsigns to expect (improves accuracy).",
-            font=("", 8),
-        ).grid(row=5, column=1, columnspan=2, sticky="w")
+        self.model_combo.pack(side="left")
+        self.model_combo.bind(
+            "<<ComboboxSelected>>", lambda _e: self._on_model_choice()
+        )
+        subtle_button(model_row, "Use a model folder…", self.choose_model_dir).pack(
+            side="left", padx=(SPACE_SM, 0)
+        )
+        ttk.Label(body, textvariable=self.model_status_var, style=Style.META).grid(
+            row=2, column=1, sticky="w"
+        )
 
-        # --- Options -------------------------------------------------------
-        opt_section = CollapsibleSection(container, "Options", expanded=False)
-        opt_section.pack(fill="x", pady=(8, 0))
-        self._setting_sections.append(opt_section)
-        opt_frame = opt_section.body
         ttk.Checkbutton(
-            opt_frame,
+            body,
+            text="Identify who is speaking",
+            variable=self.diarize_var,
+            command=self._update_speaker_state,
+            style=Style.CHECK,
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(SPACE_MD, 0))
+        ttk.Label(
+            body,
+            text="Splits the transcript by speaker, so each line says who said it.",
+            style=Style.META,
+        ).grid(row=4, column=0, columnspan=2, sticky="w", padx=(SPACE_XL, 0))
+
+        ttk.Checkbutton(
+            body,
+            text="Save a copy to a folder",
+            variable=self.write_output_var,
+            command=self._update_output_state,
+            style=Style.CHECK,
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(SPACE_MD, 0))
+        output_row = ttk.Frame(body, style=Style.CARD_INNER)
+        output_row.grid(row=6, column=0, columnspan=2, sticky="ew", padx=(SPACE_XL, 0))
+        output_row.columnconfigure(0, weight=1)
+        self.output_dir_entry = ttk.Entry(output_row, textvariable=self.output_dir_var)
+        self.output_dir_entry.grid(row=0, column=0, sticky="ew")
+        self.output_dir_button = secondary_button(
+            output_row, "Choose folder…", self.choose_output_dir
+        )
+        self.output_dir_button.grid(row=0, column=1, padx=(SPACE_SM, 0))
+
+    # -- Advanced ----------------------------------------------------------
+
+    def _build_advanced_options(self, parent: tk.Misc) -> None:
+        """Everything that assumes you already know what it means.
+
+        Nothing is removed - an operator who understands diarization engines or
+        compute devices still has them - but nobody needs to walk past them to
+        transcribe a recording.
+        """
+        self._advanced = Disclosure(parent, "Advanced options")
+        self._advanced.pack(fill="x", pady=(SPACE_MD, 0))
+        body = self._advanced.body
+
+        audio = Card(body, "Audio and output")
+        audio.pack(fill="x")
+        ttk.Checkbutton(
+            audio.body,
             text="Skip silence (voice activity detection)",
             variable=self.vad_var,
-        ).grid(row=0, column=0, sticky="w", pady=2)
+            style=Style.CHECK,
+        ).pack(anchor="w")
         ttk.Checkbutton(
-            opt_frame,
-            text="Convert video to WAV first (ffmpeg)",
+            audio.body,
+            text="Convert video to audio first (ffmpeg)",
             variable=self.convert_video_var,
-        ).grid(row=1, column=0, sticky="w", pady=2)
+            style=Style.CHECK,
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
         ttk.Checkbutton(
-            opt_frame, text="Also save .srt subtitles", variable=self.srt_var
-        ).grid(row=2, column=0, sticky="w", pady=2)
+            audio.body,
+            text="Also save .srt subtitles",
+            variable=self.srt_var,
+            style=Style.CHECK,
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
         ttk.Checkbutton(
-            opt_frame,
-            text="Blank line between segments (easier to read / paste)",
+            audio.body,
+            text="Blank line between segments (easier to read and paste)",
             variable=self.blank_lines_var,
             command=self._rerender_transcript,
-        ).grid(row=3, column=0, sticky="w", pady=2)
+            style=Style.CHECK,
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
         ttk.Checkbutton(
-            opt_frame,
+            audio.body,
             text="Highlight low-confidence words (verify these)",
             variable=self.highlight_conf_var,
             command=self._rerender_transcript,
-        ).grid(row=4, column=0, sticky="w", pady=2)
+            style=Style.CHECK,
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
 
-        device_row = ttk.Frame(opt_frame)
-        device_row.grid(row=6, column=0, sticky="w", pady=(6, 2))
-        ttk.Label(device_row, text="Processing hardware").pack(side="left")
+        language = Card(body, "Language and vocabulary")
+        language.pack(fill="x", pady=(SPACE_MD, 0))
+        language.body.columnconfigure(1, weight=1)
+        ttk.Label(language.body, text="Task", style=Style.FIELD_LABEL).grid(
+            row=0, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS
+        )
         ttk.Combobox(
-            device_row,
+            language.body,
+            textvariable=self.task_var,
+            values=["transcribe", "translate"],
+            state="readonly",
+            width=18,
+        ).grid(row=0, column=1, sticky="w", pady=SPACE_XS)
+        ttk.Label(language.body, text="Expected words", style=Style.FIELD_LABEL).grid(
+            row=1, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS
+        )
+        ttk.Entry(language.body, textvariable=self.vocab_var).grid(
+            row=1, column=1, sticky="ew", pady=SPACE_XS
+        )
+        ttk.Label(
+            language.body,
+            text="Names, places, jargon or callsigns to expect, so they are spelled right.",
+            style=Style.META,
+        ).grid(row=2, column=1, sticky="w")
+
+        hardware = Card(body, "Processing hardware")
+        hardware.pack(fill="x", pady=(SPACE_MD, 0))
+        row = ttk.Frame(hardware.body, style=Style.CARD_INNER)
+        row.pack(fill="x")
+        ttk.Combobox(
+            row,
             textvariable=self.device_var,
             values=[label for _, label in MODE_LABELS],
             state="readonly",
-            width=32,
-        ).pack(side="left", padx=(8, 0))
-        ttk.Label(opt_frame, text=describe_hardware(), font=("", 8)).grid(
-            row=7, column=0, sticky="w"
+            width=34,
+        ).pack(side="left")
+        ttk.Label(hardware.body, text=describe_hardware(), style=Style.META).pack(
+            anchor="w", pady=(SPACE_XS, 0)
         )
         if not cuda_available():
             ttk.Label(
-                opt_frame,
-                text=(
-                    "CPU runs everything this build does; a GPU only makes it faster."
-                ),
-                font=("", 8),
-            ).grid(row=8, column=0, sticky="w")
+                hardware.body,
+                text="The processor runs everything; a graphics card only makes it faster.",
+                style=Style.META,
+            ).pack(anchor="w")
 
-        # --- Speakers ------------------------------------------------------
-        spk_section = CollapsibleSection(container, "Speakers", expanded=False)
-        spk_section.pack(fill="x", pady=(8, 0))
-        self._setting_sections.append(spk_section)
-        spk_frame = spk_section.body
-        spk_frame.columnconfigure(1, weight=1)
-        ttk.Checkbutton(
-            spk_frame,
-            text="Identify speakers (diarization)",
-            variable=self.diarize_var,
-            command=self._update_speaker_state,
-        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        self._build_speaker_advanced(body)
+        self._build_profile_card(body)
 
-        ttk.Label(spk_frame, text="Engine").grid(
-            row=1, column=0, sticky="w", padx=(0, 8), pady=4
+    def _build_speaker_advanced(self, parent: tk.Misc) -> None:
+        card = Card(
+            parent,
+            "Speaker separation",
+            "Used when “Identify who is speaking” is on.",
+        )
+        card.pack(fill="x", pady=(SPACE_MD, 0))
+        frame = card.body
+        frame.columnconfigure(1, weight=1)
+
+        ttk.Label(frame, text="Method", style=Style.FIELD_LABEL).grid(
+            row=0, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS
         )
         self.engine_combo = ttk.Combobox(
-            spk_frame,
+            frame,
             textvariable=self.engine_var,
             values=ENGINE_LABELS,
             state="readonly",
-            width=32,
+            width=34,
         )
-        self.engine_combo.grid(row=1, column=1, sticky="w", pady=4)
+        self.engine_combo.grid(row=0, column=1, sticky="w", pady=SPACE_XS)
 
-        ttk.Label(spk_frame, text="Number of speakers (blank = auto)").grid(
-            row=2, column=0, sticky="w", padx=(0, 8), pady=4
-        )
+        ttk.Label(
+            frame, text="How many people (blank = work it out)", style=Style.FIELD_LABEL
+        ).grid(row=1, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS)
         self.num_speakers_entry = ttk.Entry(
-            spk_frame, textvariable=self.num_speakers_var, width=10
+            frame, textvariable=self.num_speakers_var, width=8
         )
-        self.num_speakers_entry.grid(row=2, column=1, sticky="w", pady=4)
+        self.num_speakers_entry.grid(row=1, column=1, sticky="w", pady=SPACE_XS)
         # Entering a count reveals a name field per speaker (filled in below).
         self.num_speakers_var.trace_add("write", self._on_num_speakers_changed)
 
         ttk.Label(
-            spk_frame, text="Sensitivity (higher = fewer speakers; sherpa only)"
-        ).grid(row=3, column=0, sticky="w", padx=(0, 8), pady=4)
+            frame,
+            text="Grouping sensitivity (higher = fewer speakers)",
+            style=Style.FIELD_LABEL,
+        ).grid(row=2, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS)
         self.sensitivity_entry = ttk.Entry(
-            spk_frame, textvariable=self.sensitivity_var, width=10
+            frame, textvariable=self.sensitivity_var, width=8
         )
-        self.sensitivity_entry.grid(row=3, column=1, sticky="w", pady=4)
+        self.sensitivity_entry.grid(row=2, column=1, sticky="w", pady=SPACE_XS)
 
         # Dynamic per-speaker name fields, rebuilt when the count changes.
-        self.speaker_names_frame = ttk.Frame(spk_frame)
+        self.speaker_names_frame = ttk.Frame(frame, style=Style.CARD_INNER)
         self.speaker_names_frame.grid(
-            row=4, column=0, columnspan=2, sticky="ew", pady=(2, 0)
+            row=3, column=0, columnspan=2, sticky="ew", pady=(SPACE_SM, 0)
         )
-
         ttk.Label(
-            spk_frame,
+            frame,
             text=(
-                "Tip: if you know how many people are in the recording, enter it "
-                "above and (optionally) name them. In the Transcript, click a "
-                "[speaker] tag to rename or move the whole line, click a single "
-                "word to move just that word (or from it onward), or highlight a "
-                "run of words and drag it onto another speaker's line to move it "
-                "there (right-click still offers the same as a menu)."
+                "In the transcript you can click a speaker tag to rename or move a "
+                "whole line, click a word to move it, or drag a highlighted run of "
+                "words onto another speaker."
             ),
-            wraplength=420,
+            style=Style.META,
+            wraplength=560,
             justify="left",
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(SPACE_SM, 0))
 
-        # --- Profile (learn speakers) -------------------------------------
-        profile_section = CollapsibleSection(
-            container, "Profile (learn speakers)", expanded=False
+    def _build_profile_card(self, parent: tk.Misc) -> None:
+        card = Card(
+            parent,
+            "Operation profile",
+            "Remembers these settings and the voices you correct, per operation.",
         )
-        profile_section.pack(fill="x", pady=(8, 0))
-        self._setting_sections.append(profile_section)
-        prof_frame = profile_section.body
-        prof_frame.columnconfigure(1, weight=1)
+        card.pack(fill="x", pady=(SPACE_MD, 0))
+        frame = card.body
+        frame.columnconfigure(1, weight=1)
 
-        ttk.Label(prof_frame, text="Profile").grid(
-            row=0, column=0, sticky="w", padx=(0, 8), pady=4
+        ttk.Label(frame, text="Profile", style=Style.FIELD_LABEL).grid(
+            row=0, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS
         )
         self.profile_combo = ttk.Combobox(
-            prof_frame,
+            frame,
             textvariable=self.profile_var,
             values=[""] + list_profiles(),
             state="readonly",
             width=26,
         )
-        self.profile_combo.grid(row=0, column=1, sticky="w", pady=4)
+        self.profile_combo.grid(row=0, column=1, sticky="w", pady=SPACE_XS)
         self.profile_combo.bind(
             "<<ComboboxSelected>>", lambda _e: self._on_profile_selected()
         )
-        prof_buttons = ttk.Frame(prof_frame)
-        prof_buttons.grid(row=0, column=2, sticky="e", pady=4)
-        ttk.Button(prof_buttons, text="New…", command=self._new_profile).pack(
-            side="left"
-        )
-        ttk.Button(prof_buttons, text="Save", command=self._save_profile_settings).pack(
-            side="left", padx=(6, 0)
-        )
-        ttk.Button(prof_buttons, text="Delete", command=self._delete_profile).pack(
-            side="left", padx=(6, 0)
-        )
 
-        # Share a profile between machines: export the active one to a file, or
-        # import one someone else exported (settings + learned voiceprints travel
-        # together in the file).
-        share_buttons = ttk.Frame(prof_frame)
-        share_buttons.grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 0))
-        ttk.Button(share_buttons, text="Export…", command=self._export_profile).pack(
-            side="left"
-        )
-        ttk.Button(share_buttons, text="Import…", command=self._import_profile).pack(
-            side="left", padx=(6, 0)
-        )
-
-        # Speaker-level tools: export one speaker's voiceprint, and compare two
-        # voiceprints (possibly from different profiles) for a similarity score.
-        speaker_buttons = ttk.Frame(prof_frame)
-        speaker_buttons.grid(row=2, column=0, columnspan=3, sticky="w", pady=(2, 0))
-        ttk.Button(
-            speaker_buttons, text="Export speaker…", command=self._export_speaker
-        ).pack(side="left")
-        ttk.Button(
-            speaker_buttons, text="Compare voices…", command=self._compare_voices
-        ).pack(side="left", padx=(6, 0))
+        buttons = ttk.Frame(frame, style=Style.CARD_INNER)
+        buttons.grid(row=1, column=0, columnspan=2, sticky="w", pady=(SPACE_SM, 0))
+        for text, command in (
+            ("New…", self._new_profile),
+            ("Save", self._save_profile_settings),
+            ("Export…", self._export_profile),
+            ("Import…", self._import_profile),
+            ("Export speaker…", self._export_speaker),
+            ("Compare voices…", self._compare_voices),
+        ):
+            subtle_button(buttons, text, command).pack(side="left", padx=(0, SPACE_SM))
+        danger_button(buttons, "Delete", self._delete_profile).pack(side="left")
 
         ttk.Checkbutton(
-            prof_frame,
-            text="Recognise & learn speaker voices for this profile",
+            frame,
+            text="Recognise and learn speaker voices for this profile",
             variable=self.learn_var,
-        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 0))
-
+            style=Style.CHECK,
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(SPACE_MD, 0))
         ttk.Label(
-            prof_frame,
+            frame,
             text=(
-                "Pick a profile per operation. With diarization on, the app "
-                "matches each speaker against the voices this profile has learned "
-                "and labels them automatically — and every correction you make "
-                "(rename or move a line to a named speaker) teaches it that voice, "
-                "so the next recording gets better. Voiceprints only sharpen "
-                "labelling; they don't retrain the transcription model. Export a "
-                "profile to share it (and its learned voices) with another machine, "
-                "or use Compare voices to score how alike two speakers are."
+                "With speaker identification on, each speaker is matched against "
+                "the voices this profile has learned. Correcting a name teaches it "
+                "that voice for next time; it does not change the words themselves."
             ),
-            wraplength=460,
+            style=Style.META,
+            wraplength=560,
             justify="left",
-            font=("", 8),
-        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(SPACE_XS, 0))
 
-        # --- Run + progress -----------------------------------------------
-        run_frame = ttk.Frame(container)
-        run_frame.pack(fill="x", pady=(12, 0))
-        run_frame.columnconfigure(2, weight=1)
-        self.run_button = ttk.Button(run_frame, text="Run", command=self.run_in_thread)
-        self.run_button.grid(row=0, column=0, sticky="w")
-        self.cancel_button = ttk.Button(
-            run_frame, text="Cancel", command=self._on_cancel, state="disabled"
-        )
-        self.cancel_button.grid(row=0, column=1, sticky="w", padx=(8, 0))
-        self.progress_bar = ttk.Progressbar(run_frame, mode="indeterminate")
-        self.progress_bar.grid(row=0, column=2, sticky="ew", padx=(10, 0))
-        self.toggle_settings_button = ttk.Button(
-            run_frame, text="Hide settings", command=self._toggle_all_settings
-        )
-        self.toggle_settings_button.grid(row=0, column=3, padx=(10, 0))
-        ttk.Label(run_frame, textvariable=self.progress_label_var).grid(
-            row=1, column=0, columnspan=4, sticky="w", pady=(4, 0)
-        )
+    # -- The action ---------------------------------------------------------
 
-        # --- Output tabs ---------------------------------------------------
-        self._output_tabs = ttk.Notebook(container)
+    def _build_action_row(self, parent: tk.Misc) -> None:
+        """One obvious thing to do, and an honest account of it while it runs."""
+        actions = ttk.Frame(parent, style=Style.PAGE)
+        actions.pack(fill="x", pady=(SPACE_LG, 0))
+        self._action_row = actions
+        self.run_button = primary_button(
+            actions, "Transcribe recording", self.run_in_thread
+        )
+        self.run_button.pack(side="left")
+        self.cancel_button = secondary_button(actions, "Cancel", self._on_cancel)
+        self.cancel_button.configure(state="disabled")
+        self.cancel_button.pack(side="left", padx=(SPACE_SM, 0))
+        self.toggle_settings_button = subtle_button(
+            actions, "Hide settings", self._toggle_all_settings
+        )
+        self.toggle_settings_button.pack(side="right")
+
+        progress = ttk.Frame(parent, style=Style.PAGE)
+        progress.pack(fill="x", pady=(SPACE_SM, 0))
+        self.progress_bar = ttk.Progressbar(progress, mode="indeterminate")
+        self.progress_bar.pack(fill="x")
+        ttk.Label(
+            progress, textvariable=self.progress_label_var, style=Style.PAGE_SUBTITLE
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
+        # Inserted above the results, so a failure is read before the
+        # empty transcript that follows it.
+        self.banner = StatusBanner(parent)
+
+    # -- Results ------------------------------------------------------------
+
+    def _build_results(self, parent: tk.Misc) -> None:
+        """The transcript is the product; after a run it gets the page."""
+        results = Card(parent, "Transcript")
+        results.pack(fill="both", expand=True, pady=(SPACE_XL, 0))
+        self.banner.insert_before(results)
+        self._results_card = results
+
+        self.result_summary_var = tk.StringVar(value="")
+        ttk.Label(
+            results.body, textvariable=self.result_summary_var, style=Style.MUTED
+        ).pack(anchor="w")
+
+        self._output_tabs = ttk.Notebook(results.body)
         tabs = self._output_tabs
-        tabs.pack(fill="both", expand=True, pady=(12, 0))
+        tabs.pack(fill="both", expand=True, pady=(SPACE_SM, 0))
         self.transcript_view = TranscriptView(
             tabs,
             self.root,
@@ -574,82 +664,59 @@ class TranscribeTab:
             on_play=self._play_segment if self._playback_ok else None,
             on_enroll=self._enroll_voice,
             placeholder=(
-                "No transcript yet.\n\n"
-                "1.  Choose an audio or video file (Browse… under Input & output),\n"
-                "     or drag one onto this window.\n"
-                "2.  Click Run.\n\n"
-                "Your transcript appears here. If you ticked “Save transcript to a "
-                "folder”, a .txt is also written there.\n\n"
-                "Stuck? The Status tab shows details, and “Self-test…” (top-right) "
-                "confirms what this build can do."
+                "Choose a recording above, then select Transcribe recording.\n\n"
+                "Your transcript appears here. Drag a file onto this window to "
+                "load it.\n\n"
+                "If something goes wrong, the Status tab explains what happened, "
+                "and System status (top right) shows what this copy can do."
             ),
         )
-        self.status = ScrolledText(
-            tabs, wrap="word", state="disabled", height=14, font="TkFixedFont"
-        )
+        style_text_widget(self.transcript_view.widget)
+        self.status = ScrolledText(tabs, wrap="word", state="disabled", height=12)
+        style_text_widget(self.status)
+        self.status.configure(font=theme().mono)
         tabs.add(self.transcript_view.widget, text="Transcript")
         tabs.add(self.status, text="Status")
 
         # Find within the transcript (Enter = next, Shift+Enter = previous).
-        find_row = ttk.Frame(container)
-        find_row.pack(fill="x", pady=(6, 0))
-        ttk.Label(find_row, text="Find").pack(side="left")
+        tools = ttk.Frame(results.body, style=Style.CARD_INNER)
+        tools.pack(fill="x", pady=(SPACE_MD, 0))
+        ttk.Label(tools, text="Find", style=Style.FIELD_LABEL, width=6).pack(
+            side="left"
+        )
         self.find_var = tk.StringVar()
-        find_entry = ttk.Entry(find_row, textvariable=self.find_var, width=30)
-        find_entry.pack(side="left", padx=(6, 0))
+        find_entry = ttk.Entry(tools, textvariable=self.find_var, width=26)
+        find_entry.pack(side="left")
         find_entry.bind("<Return>", lambda _e: self._find_next())
         find_entry.bind("<Shift-Return>", lambda _e: self._find_prev())
-        ttk.Button(find_row, text="Next", command=self._find_next).pack(
-            side="left", padx=(6, 0)
+        subtle_button(tools, "Next", self._find_next).pack(
+            side="left", padx=(SPACE_SM, 0)
         )
-        ttk.Button(find_row, text="Prev", command=self._find_prev).pack(
-            side="left", padx=(4, 0)
-        )
+        subtle_button(tools, "Previous", self._find_prev).pack(side="left")
         self.find_status_var = tk.StringVar()
-        ttk.Label(find_row, textvariable=self.find_status_var).pack(
-            side="left", padx=(8, 0)
+        ttk.Label(tools, textvariable=self.find_status_var, style=Style.META).pack(
+            side="left", padx=(SPACE_SM, 0)
         )
 
-        # Copy / export the transcript (handy for pasting into Word).
-        export_row = ttk.Frame(container)
-        export_row.pack(fill="x", pady=(6, 0))
-        ttk.Button(
-            export_row, text="Copy transcript", command=self._copy_transcript
-        ).pack(side="left")
-        ttk.Button(
-            export_row, text="Save as Word…", command=self._save_transcript_docx
-        ).pack(side="left", padx=(8, 0))
-        ttk.Button(
-            export_row,
-            text="Analysis report…",
-            command=self._save_analysis_report,
-        ).pack(side="left", padx=(8, 0))
-        ttk.Button(export_row, text="Save project…", command=self._save_project).pack(
-            side="left", padx=(8, 0)
-        )
-        ttk.Button(export_row, text="Open project…", command=self._open_project).pack(
-            side="left", padx=(8, 0)
-        )
-        if self._playback_ok:
-            ttk.Button(export_row, text="⏹ Stop audio", command=self._stop_audio).pack(
-                side="left", padx=(8, 0)
+        exports = ttk.Frame(results.body, style=Style.CARD_INNER)
+        exports.pack(fill="x", pady=(SPACE_SM, 0))
+        for text, command in (
+            ("Copy transcript", self._copy_transcript),
+            ("Save as Word…", self._save_transcript_docx),
+            ("Analysis report…", self._save_analysis_report),
+            ("Save project…", self._save_project),
+            ("Open project…", self._open_project),
+        ):
+            secondary_button(exports, text, command).pack(
+                side="left", padx=(0, SPACE_SM)
             )
+        if self._playback_ok:
+            subtle_button(exports, "Stop audio", self._stop_audio).pack(side="left")
             ttk.Label(
-                export_row,
-                text="Ctrl-click a line (or a word) to play its audio.",
-                font=("", 8),
-            ).pack(side="left", padx=(10, 0))
-
-        # Initialise the enabled/disabled state of dependent fields.
-        self._update_output_state()
-        self._update_speaker_state()
-        # Mouse-wheel scrolls the page (the scrollbar always works regardless).
-        bind_wheel(transcribe_canvas, container)
-        # Drag an audio/video file onto the transcript pane to load it.
-        register_drop(
-            self.root, self._dnd_ok, self.transcript_view.widget, self._on_drop_media
-        )
-        register_drop(self.root, self._dnd_ok, self.status, self._on_drop_media)
+                results.body,
+                text="Ctrl-click a line or a word to play its audio.",
+                style=Style.META,
+            ).pack(anchor="w", pady=(SPACE_XS, 0))
 
     # -- Cancellation ------------------------------------------------------
 
@@ -660,18 +727,25 @@ class TranscribeTab:
 
     # -- Settings state ----------------------------------------------------
 
+    def _settings_visible(self) -> bool:
+        return bool(self._settings_area.winfo_manager())
+
     def _toggle_all_settings(self) -> None:
-        expand = not any(section.expanded for section in self._setting_sections)
-        for section in self._setting_sections:
-            section.set_expanded(expand)
-        self.toggle_settings_button.configure(
-            text="Hide settings" if expand else "Show settings"
-        )
+        self._show_settings(not self._settings_visible())
 
     def _collapse_all_settings(self) -> None:
-        for section in self._setting_sections:
-            section.set_expanded(False)
-        self.toggle_settings_button.configure(text="Show settings")
+        """Put the settings away so the transcript has the page."""
+        self._show_settings(False)
+
+    def _show_settings(self, visible: bool) -> None:
+        if visible:
+            # Re-inserted above the action row so the page order is preserved.
+            self._settings_area.pack(fill="x", before=self._action_row)
+        else:
+            self._settings_area.pack_forget()
+        self.toggle_settings_button.configure(
+            text="Hide settings" if visible else "Show settings"
+        )
 
     def _update_output_state(self) -> None:
         state = "normal" if self.write_output_var.get() else "disabled"
@@ -735,16 +809,39 @@ class TranscribeTab:
                 # (setup, ffmpeg conversion, model loading).
                 self.progress_bar.configure(mode="indeterminate")
                 self.progress_bar.start(12)
-                self.progress_label_var.set(message or "Processing...")
+                self.progress_label_var.set(message or "Working…")
+                self.banner.hide()
             else:
                 self.progress_bar.stop()
                 self.progress_bar.configure(mode="determinate")
                 self.progress_bar["value"] = 0
-                self.progress_label_var.set(message or "Idle")
+                self.progress_label_var.set(message or "Ready")
                 self.run_button.configure(state="normal")
                 self.cancel_button.configure(state="disabled")
 
         self.root.after(0, _do)
+
+    def _announce(self, kind: str, message: str) -> None:
+        """Put a result or a failure where it cannot be scrolled past."""
+        self.root.after(0, lambda: self.banner.show(kind, message))
+
+    def _describe_result(self) -> None:
+        """The one-line account of what was produced, above the transcript."""
+        result = self._result
+        if result is None:
+            self.result_summary_var.set("")
+            return
+        parts = []
+        if self._result_source is not None:
+            parts.append(self._result_source.name)
+        if result.language:
+            parts.append(f"language {result.language}")
+        if result.duration:
+            parts.append(f"{result.duration / 60:.1f} min")
+        speakers = {seg.speaker for seg in result.segments if seg.speaker}
+        if speakers:
+            parts.append(f"{len(speakers)} speaker(s)")
+        self.result_summary_var.set("  ·  ".join(parts))
 
     def _set_progress(self, fraction: float, message: str) -> None:
         """Show real progress on a determinate bar (fraction is 0..1)."""
@@ -779,6 +876,38 @@ class TranscribeTab:
             self.model_var.set(path)
 
     # -- Model selection ---------------------------------------------------
+
+    def _model_labels(self) -> List[str]:
+        """The models this build can actually offer, described."""
+        if self._bundled_models:
+            names = list(self._bundled_models)
+        else:
+            names = list(MODEL_SIZES)
+        return [_model_label(name) for name in names]
+
+    def _on_model_choice(self) -> None:
+        """Dropdown -> the raw model name the rest of the application uses."""
+        label = self.model_choice_var.get()
+        for name in list(self._bundled_models) or list(MODEL_SIZES):
+            if _model_label(name) == label:
+                self._set_model(name)
+                return
+        self._set_model(label)
+
+    def _set_model(self, name: str) -> None:
+        self._syncing_model = True
+        try:
+            self.model_var.set(name)
+        finally:
+            self._syncing_model = False
+        self._update_model_status()
+
+    def _sync_model_choice(self, *_args: object) -> None:
+        """Raw model name -> dropdown, for a profile or a remembered setting."""
+        if self._syncing_model:
+            return
+        self.model_choice_var.set(_model_label(self._selected_model()))
+        self._update_model_status()
 
     def _selected_model(self) -> str:
         """The chosen model name or path, trimmed of surrounding whitespace."""
@@ -825,9 +954,7 @@ class TranscribeTab:
 
     def _run(self) -> None:
         task = self.task_var.get()
-        self._set_busy(
-            True, "Translating..." if task == "translate" else "Transcribing..."
-        )
+        self._set_busy(True, "Preparing audio…")
         final_status = "Finished"
         # Drop any prior run's kept audio so a correction can only ever enrol
         # against audio from this run's diarized file(s).
@@ -836,13 +963,13 @@ class TranscribeTab:
             self.transcript_view.set_result(None, {})
             jobs = self._collect_jobs()
             if not jobs:
-                append_line(
-                    self.status,
-                    "Couldn't find a file. Pick an audio/video file with Browse… "
-                    "or add files to the batch.",
+                message = (
+                    "Choose a recording first — drop one onto the window, or "
+                    "select Choose file."
                 )
-                final_status = "No input file"
-                self._show_status_tab()
+                append_line(self.status, message)
+                self._announce("warning", message)
+                final_status = "No recording chosen"
                 return
 
             outdir = self.output_dir_var.get() if self.write_output_var.get() else None
@@ -869,14 +996,27 @@ class TranscribeTab:
                 )
                 done += 1
             final_status = f"Finished {done} file(s)" if total > 1 else "Finished"
+            self._announce(
+                "success",
+                f"Transcription complete — {done} recording(s)."
+                if total > 1
+                else "Transcription complete.",
+            )
+            self.root.after(0, self._describe_result)
         except CancelledError:
             append_line(self.status, "Cancelled.")
+            self._announce("info", "Cancelled before finishing.")
             final_status = "Cancelled"
         except Exception as exc:
-            append_line(self.status, friendly_error(exc))
-            # Keep the full traceback in the log for troubleshooting.
+            friendly = friendly_error(exc)
+            append_line(self.status, friendly)
+            # Keep the full traceback in the log for troubleshooting - never in
+            # front of an operator who cannot act on it.
             append_line(self.status, traceback.format_exc())
             final_status = "Error"
+            self._announce(
+                "error", f"{friendly}  (Status tab has the technical details.)"
+            )
             # Surface the reason: a non-technical user won't think to open the
             # Status tab on their own, so bring it to the front.
             self._show_status_tab()
@@ -1325,10 +1465,16 @@ class TranscribeTab:
         count = len(self._batch_files)
         if not count:
             self.batch_files_var.set("")
+            # Nothing to clear, so nothing offering to.
+            self._batch_clear.pack_forget()
             return
         names = ", ".join(p.name for p in self._batch_files[:4])
         more = "" if count <= 4 else f" (+{count - 4} more)"
-        self.batch_files_var.set(f"Batch: {count} file(s) — {names}{more}")
+        self.batch_files_var.set(
+            f"{count} recording(s) queued — {names}{more}. "
+            "Transcribe recording will work through all of them."
+        )
+        self._batch_clear.pack(side="left", padx=(SPACE_SM, 0))
 
     # -- Audio playback ----------------------------------------------------
 
