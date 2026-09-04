@@ -330,6 +330,35 @@ speaker-embedding model; Whispers refuses the comparison outright when the model
 hash or vector dimension differs, and asks for explicit confirmation when an older
 profile cannot prove which model produced it.
 
+### Validating speaker comparison (developer/analyst tool)
+
+The unit tests exercise software behaviour on synthetic vectors. They say nothing
+about whether the system can tell two people apart — that needs real recordings of
+known speakers. `whispr.validation` is the offline harness for measuring it:
+
+```bash
+python -m whispr.validation /path/to/corpus --out validation-results
+```
+
+The corpus is either a directory of per-speaker folders
+(`corpus/SPEAKER_A/call1.wav`) or a JSON/CSV manifest with `speaker_id`, `path`
+and an optional `condition` (channel, microphone, environment) so results can be
+grouped. It embeds each recording with the bundled model, builds **genuine**
+(same speaker, different recordings) and **impostor** (different speakers)
+comparisons, and writes:
+
+- `validation.json` — score distributions, error rates by threshold, equal error
+  rate, and results grouped by how much speech was available
+- `trials.csv` — every raw trial score, for re-analysis
+- `roc.csv` — ROC data (false-accept vs genuine-accept)
+- `validation.png` — plots, if matplotlib is installed (never a bundle dependency)
+
+**The operational thresholds in `whispr/thresholds.py` are conservative defaults,
+not calibrated values.** They should be replaced with figures measured on
+recordings representative of the intended deployment — language, channel,
+microphone, noise and speech duration all move these numbers substantially. Until
+that has been done, treat similarity results as directional only.
+
 ### Live (stream) transcription
 
 The **Live** tab transcribes an incoming stream in near-real-time — e.g. a GoPro
