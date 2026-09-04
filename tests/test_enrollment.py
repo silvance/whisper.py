@@ -1,0 +1,225 @@
+import wave
+
+import numpy as np
+import pytest
+
+from whispr import enrollment
+from whispr.enrollment import (
+    EnrollmentResult,
+    enroll_from_wav,
+    spans_for_speaker,
+    speaker_totals,
+    windows,
+)
+from whispr.speaker_profiles import (
+    SAMPLE_LEARNED,
+    SAMPLE_REFERENCE,
+    EmbeddingModelIdentity,
+    ProfileError,
+    SpeakerProfile,
+)
+
+RATE = 16000
+rng = np.random.default_rng(7)
+
+
+def _speechlike(seconds, level=0.2):
+    total = int(seconds * RATE)
+    signal = rng.normal(0, 0.0005, total).astype(np.float32)
+    burst = int(0.3 * RATE)
+    pos = 0
+    while pos + burst < total:
+        signal[pos : pos + burst] += rng.normal(0, level, burst).astype(np.float32)
+        pos += burst + int(0.1 * RATE)
+    return np.clip(signal, -1.0, 1.0)
+
+
+@pytest.fixture
+def wav(tmp_path):
+    path = tmp_path / "subject.wav"
+    pcm = (_speechlike(40.0) * 32767).astype(np.int16)
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(RATE)
+        handle.writeframes(pcm.tobytes())
+    return path
+
+
+class _FakeEmbedder:
+    """Returns a fixed-dimension vector; enough to exercise enrolment wiring."""
+
+    def __init__(self, dim=192):
+        self.dim = dim
+        self.calls = []
+
+    def embed_span(self, _wav, start, end):
+        self.calls.append((start, end))
+        return [1.0] + [0.0] * (self.dim - 1)
+
+
+@pytest.fixture(autouse=True)
+def _model(monkeypatch):
+    monkeypatch.setattr(
+        enrollment,
+        "bundled_model_identity",
+        lambda: EmbeddingModelIdentity(name="titanet-large", sha256="c" * 64),
+    )
+
+
+class _Seg:
+    def __init__(self, start, end, speaker):
+        self.start, self.end, self.speaker = start, end, speaker
+
+
+# -- windowing -------------------------------------------------------------
+
+
+def test_windows_drops_too_short_span():
+    assert windows(0.0, 1.0) == []
+
+
+def test_windows_keeps_short_but_usable_span_whole():
+    assert windows(0.0, 5.0) == [(0.0, 5.0)]
+
+
+def test_windows_splits_long_span_into_several():
+    pieces = windows(0.0, 30.0, window=8.0, minimum=3.0)
+    assert len(pieces) == 4  # 8+8+8+6
+    assert pieces[0] == (0.0, 8.0)
+    assert pieces[-1][1] == 30.0
+
+
+def test_windows_drops_tiny_remainder():
+    pieces = windows(0.0, 17.0, window=8.0, minimum=3.0)
+    assert pieces == [(0.0, 8.0), (8.0, 16.0)]  # trailing 1s dropped
+
+
+# -- enrolment -------------------------------------------------------------
+
+
+def test_enrolls_multiple_embeddings_not_one(wav):
+    profile = SpeakerProfile(display_name="Subject A")
+    embedder = _FakeEmbedder()
+    result = enroll_from_wav(
+        profile, wav, [(0.0, 32.0)], embedder, source_filename="subject.wav"
+    )
+    assert isinstance(result, EnrollmentResult)
+    # One recording must yield several independent samples.
+    assert result.added_count >= 4
+    assert len(profile.reference_samples()) == result.added_count
+    assert len(embedder.calls) == result.added_count
+
+
+def test_enrolled_samples_are_trusted_reference_with_provenance(wav):
+    profile = SpeakerProfile(display_name="Subject B")
+    result = enroll_from_wav(
+        profile,
+        wav,
+        [(0.0, 16.0)],
+        _FakeEmbedder(),
+        source_filename="subject.wav",
+        source_sha256="d" * 64,
+    )
+    sample = result.added[0]
+    assert sample.sample_type == SAMPLE_REFERENCE
+    assert sample.approved is True
+    assert sample.source_filename == "subject.wav"
+    assert sample.source_sha256 == "d" * 64
+    assert sample.source_start == 0.0
+    assert sample.speech_duration > 0
+    assert sample.quality["assessment"] in ("Good", "Fair")
+    assert profile.total_reference_seconds > 0
+
+
+def test_embedding_model_identity_is_stamped(wav):
+    profile = SpeakerProfile(display_name="Subject C")
+    enroll_from_wav(profile, wav, [(0.0, 16.0)], _FakeEmbedder(dim=192))
+    assert profile.embedding_model is not None
+    assert profile.embedding_model.sha256 == "c" * 64
+    assert profile.embedding_model.vector_dimension == 192
+    assert profile.is_legacy is False
+
+
+def test_refuses_to_mix_embedding_models(wav):
+    profile = SpeakerProfile(
+        display_name="Subject D",
+        embedding_model=EmbeddingModelIdentity(
+            name="other", sha256="e" * 64, vector_dimension=192
+        ),
+    )
+    with pytest.raises(ProfileError, match="different speaker-embedding model"):
+        enroll_from_wav(profile, wav, [(0.0, 16.0)], _FakeEmbedder())
+
+
+def test_short_span_is_skipped_with_a_reason(wav):
+    profile = SpeakerProfile(display_name="Subject E")
+    result = enroll_from_wav(profile, wav, [(0.0, 1.0)], _FakeEmbedder())
+    assert result.added_count == 0
+    assert result.skipped and "shorter than" in result.skipped[0]
+
+
+def test_silent_span_is_skipped_not_enrolled(tmp_path):
+    silent = tmp_path / "silence.wav"
+    with wave.open(str(silent), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(RATE)
+        handle.writeframes(np.zeros(RATE * 30, dtype=np.int16).tobytes())
+    profile = SpeakerProfile(display_name="Subject F")
+    result = enroll_from_wav(profile, silent, [(0.0, 24.0)], _FakeEmbedder())
+    assert result.added_count == 0
+    assert profile.samples == []
+    assert any("insufficient" in reason for reason in result.skipped)
+
+
+def test_duplicate_source_span_is_not_enrolled_twice(wav):
+    profile = SpeakerProfile(display_name="Subject G")
+    common = dict(source_filename="subject.wav", source_sha256="f" * 64)
+    first = enroll_from_wav(profile, wav, [(0.0, 16.0)], _FakeEmbedder(), **common)
+    second = enroll_from_wav(profile, wav, [(0.0, 16.0)], _FakeEmbedder(), **common)
+    assert first.added_count > 0
+    assert second.added_count == 0
+    assert any("already enrolled" in reason for reason in second.skipped)
+
+
+def test_duplicate_allowed_when_requested(wav):
+    profile = SpeakerProfile(display_name="Subject H")
+    common = dict(source_filename="s.wav", source_sha256="a" * 64)
+    enroll_from_wav(profile, wav, [(0.0, 16.0)], _FakeEmbedder(), **common)
+    again = enroll_from_wav(
+        profile, wav, [(0.0, 16.0)], _FakeEmbedder(), allow_duplicates=True, **common
+    )
+    assert again.added_count > 0
+
+
+def test_learned_sample_type_is_not_auto_trusted(wav):
+    profile = SpeakerProfile(display_name="Subject I")
+    result = enroll_from_wav(
+        profile, wav, [(0.0, 16.0)], _FakeEmbedder(), sample_type=SAMPLE_LEARNED
+    )
+    assert result.added_count > 0
+    assert all(s.sample_type == SAMPLE_LEARNED for s in result.added)
+    assert all(not s.approved for s in result.added)
+    assert profile.trusted_samples() == []
+
+
+def test_run_quality_is_reported(wav):
+    profile = SpeakerProfile(display_name="Subject J")
+    result = enroll_from_wav(profile, wav, [(0.0, 32.0)], _FakeEmbedder())
+    assert result.quality is not None
+    assert result.quality.assessment in ("Good", "Fair")
+    assert result.added_seconds > 0
+
+
+# -- diarized cluster selection -------------------------------------------
+
+
+def test_spans_and_totals_for_diarized_clusters():
+    segments = [
+        _Seg(0.0, 10.0, "SPEAKER_00"),
+        _Seg(10.0, 14.0, "SPEAKER_01"),
+        _Seg(14.0, 30.0, "SPEAKER_00"),
+    ]
+    assert spans_for_speaker(segments, "SPEAKER_00") == [(0.0, 10.0), (14.0, 30.0)]
+    assert speaker_totals(segments) == [("SPEAKER_00", 26.0), ("SPEAKER_01", 4.0)]
