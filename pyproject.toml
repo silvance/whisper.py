@@ -34,18 +34,23 @@ optional-dependencies.dev = [ "mypy", "pytest", "pytest-cov", "ruff", "scipy" ]
 # tkinter ships with CPython; faster-whisper (CTranslate2) is the CPU backend.
 # python-docx (Word export), langdetect (auto source-language) and tkinterdnd2
 # (file drag-and-drop) are small UX add-ons used when present.
+# Versions are capped at the current major so a rebuild cannot silently pick up a
+# breaking release; the exact resolved versions of every build are recorded in
+# whispr_assets/build_manifest.json, which is what makes a bundle reproducible.
 optional-dependencies.gui = [
-  "faster-whisper",
-  "ttkbootstrap",
-  "sherpa-onnx",
-  "python-docx",
-  "langdetect",
-  "tkinterdnd2",
+  "faster-whisper>=1.2,<2",
+  "ctranslate2>=4.8,<5",
+  "onnxruntime>=1.17,<2",
+  "sherpa-onnx>=1.13,<2",
+  "ttkbootstrap>=1.10,<2",
+  "python-docx>=1.1,<2",
+  "langdetect>=1.0,<2",
+  "tkinterdnd2>=0.4,<0.5",
 ]
 # Build-time tooling for producing offline, air-gapped PyInstaller bundles.
 # huggingface-hub <1.0: pyannote 3.1.1 forwards the use_auth_token kwarg (removed
 # in huggingface_hub 1.0) into hf_hub_download.
-optional-dependencies.bundle = [ "pyinstaller", "imageio-ffmpeg", "huggingface-hub<1.0" ]
+optional-dependencies.bundle = [ "pyinstaller>=6.22,<7", "imageio-ffmpeg>=0.5,<1", "huggingface-hub<1.0" ]
 # High-accuracy diarization backend (PyTorch-based; gated HF models). Preferred
 # over sherpa-onnx for hard/low-quality audio when installed. Pinned to 3.1.1:
 # newer releases require torchcodec, the gated community-1 PLDA, and add inference
@@ -54,10 +59,10 @@ optional-dependencies.bundle = [ "pyinstaller", "imageio-ffmpeg", "huggingface-h
 optional-dependencies.pyannote = [ "pyannote.audio==3.1.1", "soundfile", "numpy<2" ]
 # Offline text translation backend (CTranslate2-based, CPU). Language packs are
 # bundled into the air-gapped build; see whispr.resources.configure_offline_translation.
-optional-dependencies.translate = [ "argostranslate" ]
+optional-dependencies.translate = [ "argostranslate>=1.9,<2" ]
 # Offline OCR for the translation workflow (image/PDF -> text). pytesseract drives
 # a bundled Tesseract binary; pypdfium2 + Pillow handle PDFs and images.
-optional-dependencies.ocr = [ "pytesseract", "pypdfium2", "pillow" ]
+optional-dependencies.ocr = [ "pytesseract>=0.3.10,<0.4", "pypdfium2>=4,<5", "pillow>=10,<12" ]
 urls = { Homepage = "https://github.com/silvance/whisper.py" }
 scripts.whisper = "whisper.transcribe:cli"
 scripts.whispr = "whispr.app:main"

@@ -112,13 +112,17 @@ jobs:
           python -m pip install --upgrade pip
           # Always-present GUI runtime stack + build tools. faster-whisper/
           # ctranslate2 do the transcription; sherpa-onnx is the fallback diarizer.
-          pip install faster-whisper ttkbootstrap sherpa-onnx
+          # Version bounds mirror pyproject's [gui]/[bundle] extras so a rebuild
+          # cannot silently pick up a breaking major release. The exact resolved
+          # versions are recorded in the build manifest below.
+          pip install "faster-whisper>=1.2,<2" "ctranslate2>=4.8,<5" \
+            "onnxruntime>=1.17,<2" "sherpa-onnx>=1.13,<2" "ttkbootstrap>=1.10,<2"
           # huggingface_hub <1.0: pyannote 3.1.1 forwards the (removed-in-1.0)
           # use_auth_token kwarg into hf_hub_download; 0.x still accepts it.
-          pip install pyinstaller imageio-ffmpeg "huggingface_hub<1.0"
+          pip install "pyinstaller>=6.22,<7" "imageio-ffmpeg>=0.5,<1" "huggingface_hub<1.0"
           # Small UX add-ons bundled when present: Word export, source-language
           # auto-detect, and file drag-and-drop.
-          pip install python-docx langdetect tkinterdnd2
+          pip install "python-docx>=1.1,<2" "langdetect>=1.0,<2" "tkinterdnd2>=0.4,<0.5"
       - name: Install pyannote diarizer (CPU PyTorch)
         if: env.DIARIZER != 'sherpa'
         # Install CPU-only torch from PyTorch's CPU index FIRST so pyannote.audio
@@ -137,7 +141,7 @@ jobs:
         if: env.TRANSLATE_LANGS != ''
         # numpy<2 keeps a single numpy across the bundle (matches the pyannote pin
         # and stanza's expectations).
-        run: pip install argostranslate "numpy<2"
+        run: pip install "argostranslate>=1.9,<2" "numpy<2"
       - name: Install Tesseract OCR engine (Linux)
         if: env.OCR_LANGS != '' && runner.os == 'Linux'
         run: |
@@ -174,6 +178,14 @@ jobs:
       - name: Fetch OCR engine (Tesseract binary + language data)
         if: env.OCR_LANGS != ''
         run: python packaging/fetch_assets.py tesseract ${{ env.OCR_LANGS }}
+      # Record what went into this bundle (commit, dependency versions, and a
+      # SHA-256 for every bundled model) so the shipped app can state its own
+      # identity and a result can be traced back to a specific build.
+      - name: Write build manifest
+        run: >-
+          python packaging/build_manifest.py
+          --build-id "${{ github.run_id }}-${{ github.run_attempt }}"
+          --commit "${{ github.sha }}"
       - name: Build bundle
         run: pyinstaller --noconfirm packaging/whispr.spec
       - name: Upload bundle
