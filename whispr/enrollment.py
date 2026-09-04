@@ -124,22 +124,46 @@ def _resolve_model_identity(
     return existing
 
 
-def _already_enrolled(
-    profile: SpeakerProfile, source_sha256: Optional[str], start: float, end: float
-) -> bool:
-    """True if this exact source span is already a sample (avoids double weight)."""
+def subtract_spans(
+    spans: Sequence[Tuple[float, float]],
+    taken: Sequence[Tuple[float, float]],
+) -> List[Tuple[float, float]]:
+    """``spans`` minus ``taken`` - the parts not already covered."""
+    covered = normalize_spans(taken)
+    out: List[Tuple[float, float]] = []
+    for start, end in normalize_spans(spans):
+        cursor = start
+        for taken_start, taken_end in covered:
+            if taken_end <= cursor or taken_start >= end:
+                continue
+            if taken_start > cursor:
+                out.append((cursor, min(taken_start, end)))
+            cursor = max(cursor, taken_end)
+            if cursor >= end:
+                break
+        if cursor < end:
+            out.append((cursor, end))
+    return out
+
+
+def enrolled_spans(
+    profile: SpeakerProfile, source_sha256: Optional[str]
+) -> List[Tuple[float, float]]:
+    """Which parts of one recording this profile already holds samples of.
+
+    Keyed on the source hash, so it is the *recording* that is recognised, not
+    a filename someone may have changed.
+    """
     if not source_sha256:
-        return False
-    for sample in profile.samples:
-        if (
-            sample.source_sha256 == source_sha256
-            and sample.source_start is not None
-            and sample.source_end is not None
-            and abs(sample.source_start - start) < 0.01
-            and abs(sample.source_end - end) < 0.01
-        ):
-            return True
-    return False
+        return []
+    spans = [
+        (sample.source_start, sample.source_end)
+        for sample in profile.samples
+        if sample.source_sha256 == source_sha256
+        and sample.source_start is not None
+        and sample.source_end is not None
+    ]
+    return normalize_spans(spans)
 
 
 def enroll_from_wav(
@@ -171,6 +195,20 @@ def enroll_from_wav(
             "stretch(es) of audio; ranges that overlap, repeat or run straight "
             "on are enrolled once."
         )
+    if not allow_duplicates:
+        # The same guard across sessions: audio already enrolled from this
+        # recording must not be enrolled again, or that stretch of the voice
+        # carries extra weight in the centroid every time it is re-selected.
+        # Exact repeats are only the easy case - a later 4-12s selection
+        # overlapping an earlier 0-8s one is the same problem.
+        already = enrolled_spans(profile, source_sha256)
+        remaining = subtract_spans(distinct, already)
+        for skipped_start, skipped_end in subtract_spans(distinct, remaining):
+            result.skipped.append(
+                f"{skipped_start:.1f}-{skipped_end:.1f}s: already enrolled from "
+                "this recording; only the new audio was added."
+            )
+        distinct = remaining
     for span_start, span_end in distinct:
         pieces = windows(span_start, span_end)
         if not pieces:
@@ -180,13 +218,6 @@ def enroll_from_wav(
             )
             continue
         for start, end in pieces:
-            if not allow_duplicates and _already_enrolled(
-                profile, source_sha256, start, end
-            ):
-                result.skipped.append(
-                    f"{start:.1f}-{end:.1f}s: already enrolled from this recording."
-                )
-                continue
             report = analyse_span(wav_path, start, end)
             if not report.usable:
                 result.skipped.append(

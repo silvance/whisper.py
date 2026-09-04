@@ -8,9 +8,11 @@ from whispr import enrollment
 from whispr.enrollment import (
     EnrollmentResult,
     enroll_from_wav,
+    enrolled_spans,
     normalize_spans,
     spans_for_speaker,
     speaker_totals,
+    subtract_spans,
     windows,
 )
 from whispr.speaker_profiles import (
@@ -389,3 +391,101 @@ def test_normalize_spans_unions_and_sorts():
     assert normalize_spans([(10, 20), (20, 30)]) == [(10.0, 30.0)]
     assert normalize_spans([(5, 5), (1, 2)]) == [(1.0, 2.0)]
     assert normalize_spans([]) == []
+
+
+# -- Re-enrolling the same recording later ----------------------------------
+
+
+def _digest():
+    return "e" * 64
+
+
+def test_audio_already_enrolled_from_this_recording_is_not_enrolled_again(wav):
+    profile = SpeakerProfile(display_name="Subject Q")
+    first = enroll_from_wav(
+        profile, wav, [(0.0, 16.0)], _FakeEmbedder(), source_sha256=_digest()
+    )
+    assert first.added_count > 0
+
+    # A later session selects 8-24s, overlapping the 0-16s already enrolled.
+    second = enroll_from_wav(
+        profile, wav, [(8.0, 24.0)], _FakeEmbedder(), source_sha256=_digest()
+    )
+    # Only 16-24s is new; 8-16s must not be weighted a second time.
+    for sample in second.added:
+        assert sample.source_start is not None and sample.source_start >= 15.99
+    assert any("already enrolled from this recording" in n for n in second.skipped)
+
+
+def test_a_fully_overlapping_reselection_adds_nothing(wav):
+    profile = SpeakerProfile(display_name="Subject R")
+    enroll_from_wav(
+        profile, wav, [(0.0, 24.0)], _FakeEmbedder(), source_sha256=_digest()
+    )
+    before = len(profile.samples)
+    again = enroll_from_wav(
+        profile, wav, [(4.0, 20.0)], _FakeEmbedder(), source_sha256=_digest()
+    )
+    assert again.added_count == 0
+    assert len(profile.samples) == before
+    assert again.skipped
+
+
+def test_a_different_recording_is_unaffected(wav):
+    profile = SpeakerProfile(display_name="Subject S")
+    enroll_from_wav(
+        profile, wav, [(0.0, 16.0)], _FakeEmbedder(), source_sha256=_digest()
+    )
+    # Same spans, different recording: nothing is already enrolled from it.
+    other = enroll_from_wav(
+        profile, wav, [(0.0, 16.0)], _FakeEmbedder(), source_sha256="f" * 64
+    )
+    assert other.added_count > 0
+
+
+def test_allow_duplicates_still_re_enrols_deliberately(wav):
+    profile = SpeakerProfile(display_name="Subject T")
+    enroll_from_wav(
+        profile, wav, [(0.0, 16.0)], _FakeEmbedder(), source_sha256=_digest()
+    )
+    again = enroll_from_wav(
+        profile,
+        wav,
+        [(0.0, 16.0)],
+        _FakeEmbedder(),
+        source_sha256=_digest(),
+        allow_duplicates=True,
+    )
+    assert again.added_count > 0
+
+
+def test_an_unhashed_source_cannot_be_matched_against_and_is_enrolled(wav):
+    profile = SpeakerProfile(display_name="Subject U")
+    enroll_from_wav(profile, wav, [(0.0, 16.0)], _FakeEmbedder())
+    again = enroll_from_wav(profile, wav, [(0.0, 16.0)], _FakeEmbedder())
+    # With no hash there is nothing to recognise the recording by; the guard
+    # claims nothing it cannot prove.
+    assert again.added_count > 0
+
+
+def test_enrolled_spans_reports_what_the_profile_already_holds(wav):
+    profile = SpeakerProfile(display_name="Subject V")
+    enroll_from_wav(
+        profile, wav, [(0.0, 16.0)], _FakeEmbedder(), source_sha256=_digest()
+    )
+    covered = enrolled_spans(profile, _digest())
+    assert covered and covered[0][0] == 0.0
+    assert enrolled_spans(profile, "0" * 64) == []
+    assert enrolled_spans(profile, None) == []
+
+
+def test_subtract_spans_removes_only_the_covered_parts():
+    assert subtract_spans([(4.0, 12.0)], [(0.0, 8.0)]) == [(8.0, 12.0)]
+    assert subtract_spans([(0.0, 10.0)], [(0.0, 10.0)]) == []
+    assert subtract_spans([(0.0, 30.0)], [(5.0, 10.0), (20.0, 25.0)]) == [
+        (0.0, 5.0),
+        (10.0, 20.0),
+        (25.0, 30.0),
+    ]
+    assert subtract_spans([(0.0, 10.0)], []) == [(0.0, 10.0)]
+    assert subtract_spans([(0.0, 10.0)], [(20.0, 30.0)]) == [(0.0, 10.0)]

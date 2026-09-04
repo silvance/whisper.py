@@ -349,3 +349,37 @@ def test_a_comparison_inherits_the_measurement_and_its_provenance(long_wav):
     assert comparison.questioned_source_sha256 == measured.source_sha256
     assert comparison.questioned_source_filename == long_wav.name
     assert comparison.questioned_window_count == len(measured.embedded_spans)
+
+
+def test_a_comparison_counts_embeddings_not_source_intervals(scattered_wav):
+    """Joined turns make one window map to several intervals - report windows."""
+    from whispr.matching import compare_questioned_to_profile
+    from whispr.quality import GOOD
+    from whispr.speaker_profiles import (
+        EmbeddingModelIdentity,
+        EnrollmentSample,
+        SpeakerProfile,
+    )
+
+    spans = [(i * 4.0, i * 4.0 + 2.0) for i in range(8)]
+    measured = measure_from_wav(scattered_wav, spans, _CountingEmbedder())
+    assert measured.aggregated
+    # Several source intervals behind a smaller number of embeddings.
+    assert len(measured.embedded_spans) > measured.window_count
+
+    model = EmbeddingModelIdentity(name="m", sha256="a" * 64, vector_dimension=4)
+    profile = SpeakerProfile(display_name="Subject A", embedding_model=model)
+    profile.add_reference_sample(
+        EnrollmentSample(
+            embedding=[1.0, 0.0, 0.0, 0.0],
+            speech_duration=30.0,
+            quality={"assessment": GOOD},
+        )
+    )
+    comparison = compare_questioned_to_profile(
+        measured, profile, questioned_model=model
+    )
+    assert comparison.questioned_window_count == measured.window_count
+    assert comparison.questioned_window_count < len(measured.embedded_spans)
+    text = "\n".join(comparison.format_lines())
+    assert f"measured across {measured.window_count} window(s)" in text
