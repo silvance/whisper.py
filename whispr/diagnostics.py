@@ -351,8 +351,13 @@ def format_report(checks: "List[Check] | None" = None) -> str:
     lines += ["Build", "-----"]
     lines += info.describe()
     lines.append(
-        "Runtime network access: none - Whispers performs no network calls, "
-        "downloads no models and sends no telemetry."
+        "Analysis runs entirely on this machine. No cloud service, no "
+        "telemetry, and no model or software downloads at runtime."
+    )
+    lines.append(
+        "The only network path in the application is the Live page, which "
+        "connects to a stream address an operator enters. It is idle unless "
+        "used."
     )
     lines.append("")
 

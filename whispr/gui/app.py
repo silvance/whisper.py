@@ -85,11 +85,8 @@ class WhisprApp:
     def _build_ui(self) -> None:
         # 1366x768 is the small end of what these machines have, so the shell has
         # to be usable there: a compact rail, not a wide sidebar.
-        self.root.minsize(940, 620)
-        try:
-            self.root.geometry("1180x780")
-        except tk.TclError:
-            pass
+        self.root.minsize(940, 600)
+        self._size_window(1180, 760)
         self.theme = init_theme(self.root, bootstrap=self._bootstrap)
 
         # Translation and live capture appear only when this build supports them.
@@ -177,6 +174,28 @@ class WhisprApp:
             self._nav_rail.pack(side="left", fill="y")
         self.show_page("transcribe")
 
+    def _size_window(self, width: int, height: int) -> None:
+        """Open at a comfortable size, but never larger than the screen.
+
+        A fixed 780 is taller than a 1366x768 laptop once the title bar and
+        taskbar are taken out, which would put the primary action off the
+        bottom on the smallest machine this has to run on. The page scrolls
+        either way, so there is nothing to gain by asking for height that is
+        not there.
+        """
+        try:
+            available_width = self.root.winfo_screenwidth()
+            available_height = self.root.winfo_screenheight()
+        except tk.TclError:  # pragma: no cover - no display metrics
+            available_width, available_height = width, height
+        # Leave room for the window chrome and a taskbar.
+        width = max(900, min(width, available_width - 80))
+        height = max(560, min(height, available_height - 120))
+        try:
+            self.root.geometry(f"{width}x{height}")
+        except tk.TclError:  # pragma: no cover - a toolkit that refuses it
+            pass
+
     def _build_header(self) -> None:
         """Identity, posture, and the two things that are not part of a workflow."""
         colors = self.theme.palette
@@ -195,13 +214,14 @@ class WhisprApp:
         )
         subtle_button(header, "Help", self._show_help).pack(side="right")
 
-        # A statement of how this build operates, not a claim about the network:
-        # Whispers makes no connections, which is why it can say so without
-        # having tested anything.
+        # What is actually guaranteed: the analysis happens here, on this
+        # machine, with no cloud service behind it. Not "offline" - the Live
+        # page connects to a stream an operator supplies, and a badge that
+        # contradicts a feature of the same application is worse than no badge.
         posture = ttk.Frame(header, style=Style.HEADER)
         posture.pack(side="right", padx=(0, SPACE_XL))
         ttk.Label(posture, text="●", style=Style.SUCCESS).pack(side="left")
-        ttk.Label(posture, text="Offline", style=Style.MUTED).pack(
+        ttk.Label(posture, text="Local processing", style=Style.MUTED).pack(
             side="left", padx=(SPACE_XS, 0)
         )
         ttk.Frame(self.root, height=1, style=Style.PAGE).pack(fill="x")
@@ -286,7 +306,11 @@ class WhisprApp:
             "   the Status tab holds the technical detail.\n"
             "• System status (top right) lists exactly what this copy can do,\n"
             "   and says READY or NOT READY before an operation.\n"
-            "• Whispers works entirely offline. It makes no network connections.\n"
+            "• Whispers analyses everything on this machine. It needs no\n"
+            "   internet connection and uses no cloud service, and nothing you\n"
+            "   load — recordings, transcripts or voices — leaves the computer.\n"
+            "• The one exception is the Live page, which connects to a stream\n"
+            "   address you enter yourself. It does nothing unless you use it.\n"
         )
         self._text_window("Whispers — Help", guide, wrap="word", width=74)
 

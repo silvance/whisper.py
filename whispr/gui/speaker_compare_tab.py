@@ -606,7 +606,10 @@ class SpeakerCompareTab:
                 "The score below is not meaningful."
             )
         elif result.band == BAND_HIGH:
-            self._set_band(result.band, Style.SUCCESS)
+            # Blue, not green. Green is this application's "success / ready",
+            # and a green speaker result reads as "we got the right person" -
+            # the exact conclusion every word on this card is written to avoid.
+            self._set_band(result.band, Style.ACCENT)
             self.lead_var.set(
                 f"The questioned speaker produced high similarity to the "
                 f"{result.reference_name} reference profile. Further review is "
@@ -690,7 +693,7 @@ class SpeakerCompareTab:
                 "conclusion about any subject."
             )
         elif result.accepted_name:
-            self._set_band("Possible lead", Style.SUCCESS)
+            self._set_band("Possible lead", Style.ACCENT)
             self.lead_var.set(
                 f"The questioned speaker produced high similarity to the "
                 f"{result.accepted_name} reference profile. Further review is "
