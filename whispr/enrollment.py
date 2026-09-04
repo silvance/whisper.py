@@ -312,3 +312,52 @@ def speaker_totals(speaker_segments: Sequence[Any]) -> List[Tuple[str, float]]:
         key=lambda item: item[1],
         reverse=True,
     )
+
+
+def parse_time_ranges(text: str) -> List[Tuple[float, float]]:
+    """Parse operator-typed time ranges into ``[(start, end), ...]``.
+
+    Accepts ``mm:ss`` / ``h:mm:ss`` / plain seconds, ranges separated by ``-``,
+    and several ranges separated by commas, semicolons or newlines::
+
+        "0:10-0:45, 1:20-2:00"   ->  [(10.0, 45.0), (80.0, 120.0)]
+
+    Raises ``ValueError`` naming the offending piece, so the operator can see
+    exactly what failed instead of silently enrolling the wrong audio.
+    """
+    ranges: List[Tuple[float, float]] = []
+    cleaned = text.replace(";", ",").replace("\n", ",")
+    for chunk in cleaned.split(","):
+        piece = chunk.strip()
+        if not piece:
+            continue
+        if "-" not in piece:
+            raise ValueError(f"'{piece}' is not a range (expected start-end).")
+        raw_start, _, raw_end = piece.partition("-")
+        start = _parse_timestamp(raw_start.strip(), piece)
+        end = _parse_timestamp(raw_end.strip(), piece)
+        if end <= start:
+            raise ValueError(f"'{piece}' ends before it starts.")
+        ranges.append((start, end))
+    if not ranges:
+        raise ValueError("No time ranges given.")
+    return ranges
+
+
+def _parse_timestamp(value: str, context: str) -> float:
+    """Seconds from ``ss``, ``mm:ss`` or ``h:mm:ss``."""
+    if not value:
+        raise ValueError(f"'{context}' is missing a time.")
+    parts = value.split(":")
+    if len(parts) > 3:
+        raise ValueError(f"'{context}' has too many ':' parts.")
+    try:
+        numbers = [float(part) for part in parts]
+    except ValueError as exc:
+        raise ValueError(f"'{context}' is not a valid time.") from exc
+    seconds = 0.0
+    for number in numbers:
+        seconds = seconds * 60.0 + number
+    if seconds < 0:
+        raise ValueError(f"'{context}' is negative.")
+    return seconds

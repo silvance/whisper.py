@@ -223,3 +223,33 @@ def test_spans_and_totals_for_diarized_clusters():
     ]
     assert spans_for_speaker(segments, "SPEAKER_00") == [(0.0, 10.0), (14.0, 30.0)]
     assert speaker_totals(segments) == [("SPEAKER_00", 26.0), ("SPEAKER_01", 4.0)]
+
+
+# -- operator-typed time ranges -------------------------------------------
+
+
+def test_parse_time_ranges_mm_ss():
+    from whispr.enrollment import parse_time_ranges
+
+    assert parse_time_ranges("0:10-0:45, 1:20-2:00") == [(10.0, 45.0), (80.0, 120.0)]
+
+
+def test_parse_time_ranges_plain_seconds_and_hours():
+    from whispr.enrollment import parse_time_ranges
+
+    assert parse_time_ranges("5-12") == [(5.0, 12.0)]
+    assert parse_time_ranges("1:00:00-1:00:30") == [(3600.0, 3630.0)]
+
+
+def test_parse_time_ranges_separators():
+    from whispr.enrollment import parse_time_ranges
+
+    assert parse_time_ranges("1-2; 3-4\n5-6") == [(1.0, 2.0), (3.0, 4.0), (5.0, 6.0)]
+
+
+def test_parse_time_ranges_rejects_bad_input():
+    from whispr.enrollment import parse_time_ranges
+
+    for bad in ("", "10", "abc-def", "10-5", "1:2:3:4-9"):
+        with pytest.raises(ValueError):
+            parse_time_ranges(bad)
