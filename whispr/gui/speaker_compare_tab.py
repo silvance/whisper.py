@@ -33,6 +33,7 @@ from ..enrollment import (
 )
 from ..matching import (
     ComparisonResult,
+    GalleryResult,
     compare_questioned_to_profile,
     search_gallery_for_questioned,
 )
@@ -50,11 +51,33 @@ from ..speaker_profiles import (
     display_labels,
     list_speaker_profiles,
 )
-from ..thresholds import DISCLAIMER, active, describe_active
+from ..thresholds import (
+    BAND_HIGH,
+    BAND_INSUFFICIENT,
+    DISCLAIMER,
+    active,
+    describe_active,
+)
 from ..transcription import AUDIO_EXTENSIONS
 from ..voiceprints import SpeakerEmbedder
 from .errors import friendly_error
-from .widgets import bind_wheel, scrollable_body, set_readonly_text
+from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, Style, theme
+from .widgets import (
+    Card,
+    Disclosure,
+    EmptyState,
+    FileDropZone,
+    KeyValueRow,
+    PageHeader,
+    StatusBanner,
+    bind_wheel,
+    primary_button,
+    scrollable_body,
+    secondary_button,
+    set_readonly_text,
+    style_text_widget,
+    subtle_button,
+)
 
 MODE_WHOLE = "whole"
 MODE_DIARIZE = "diarize"
@@ -106,135 +129,206 @@ class SpeakerCompareTab:
     def _build(self) -> None:
         canvas, container = scrollable_body(self.parent)
 
-        ttk.Label(container, text="Speaker comparison", font=("", 12, "bold")).pack(
-            anchor="w"
-        )
-        ttk.Label(
+        PageHeader(
             container,
-            text=(
-                "Compare a speaker in a questioned recording against a known "
-                "subject's reference voice. The result is an investigative lead, "
-                "not an identification."
-            ),
-            wraplength=620,
-            justify="left",
-            font=("", 8),
-        ).pack(anchor="w", pady=(0, 8))
+            "Compare Speakers",
+            "Measure how similar a speaker in one recording is to a known "
+            "person's reference voice.",
+        ).pack(fill="x", pady=(0, SPACE_LG))
 
-        # --- Reference -----------------------------------------------------
-        reference = ttk.LabelFrame(
-            container, text="Reference (known subject)", padding=8
-        )
-        reference.pack(fill="x")
-        row = ttk.Frame(reference)
+        self._build_reference_step(container)
+        self._build_questioned_step(container)
+        self._build_action_step(container)
+        self._build_result_step(container)
+
+        ttk.Label(
+            container, textvariable=self.status_var, style=Style.PAGE_SUBTITLE
+        ).pack(anchor="w", pady=(SPACE_MD, 0))
+        bind_wheel(canvas, container)
+
+    # -- Step 1: the known person -----------------------------------------
+
+    def _build_reference_step(self, parent: tk.Misc) -> None:
+        card = Card(parent, "1.  Reference speaker")
+        card.pack(fill="x")
+        row = ttk.Frame(card.body, style=Style.CARD_INNER)
         row.pack(fill="x")
         self.reference_combo = ttk.Combobox(
-            row, textvariable=self.reference_var, state="readonly", width=36
+            row, textvariable=self.reference_var, state="readonly", width=34
         )
         self.reference_combo.pack(side="left")
         self.reference_combo.bind(
             "<<ComboboxSelected>>", lambda _e: self._render_reference()
         )
-        ttk.Button(row, text="Refresh", command=self.refresh).pack(
-            side="left", padx=(6, 0)
+        subtle_button(row, "Refresh", self.refresh).pack(
+            side="left", padx=(SPACE_SM, 0)
         )
+
+        self._reference_facts = ttk.Frame(card.body, style=Style.CARD_INNER)
+        self._reference_facts.pack(fill="x", pady=(SPACE_MD, 0))
+        self._reference_rows = {
+            "speech": KeyValueRow(self._reference_facts, "Reference speech"),
+            "samples": KeyValueRow(self._reference_facts, "Trusted samples"),
+            "model": KeyValueRow(self._reference_facts, "Voice model"),
+        }
+        for row_widget in self._reference_rows.values():
+            row_widget.pack(fill="x", pady=(0, SPACE_XS))
+        self._reference_empty = EmptyState(
+            card.body,
+            "No reference profile selected",
+            "Create one under Speaker Profiles from a recording you know contains "
+            "that person.",
+        )
+
+    # -- Step 2: the recording in question ---------------------------------
+
+    def _build_questioned_step(self, parent: tk.Misc) -> None:
+        card = Card(parent, "2.  Questioned recording")
+        card.pack(fill="x", pady=(SPACE_MD, 0))
+        self._questioned_zone = FileDropZone(
+            card.body,
+            self.questioned_var,
+            self._choose_questioned,
+            prompt="Drop the recording to check here",
+            button_text="Choose recording",
+            change_text="Change recording",
+        )
+        self._questioned_zone.pack(fill="x")
+
         ttk.Label(
-            reference,
-            textvariable=self.reference_detail_var,
-            wraplength=620,
-            justify="left",
-        ).pack(anchor="w", pady=(6, 0))
-
-        # --- Questioned ----------------------------------------------------
-        questioned = ttk.LabelFrame(container, text="Questioned recording", padding=8)
-        questioned.pack(fill="x", pady=(10, 0))
-        pick = ttk.Frame(questioned)
-        pick.pack(fill="x")
-        ttk.Entry(pick, textvariable=self.questioned_var).pack(
-            side="left", fill="x", expand=True
-        )
-        ttk.Button(pick, text="Browse…", command=self._choose_questioned).pack(
-            side="left", padx=(6, 0)
-        )
-        ttk.Radiobutton(
-            questioned,
-            text="One speaker only — compare the whole recording",
-            variable=self.mode_var,
-            value=MODE_WHOLE,
-        ).pack(anchor="w", pady=(6, 0))
-        ttk.Radiobutton(
-            questioned,
-            text="Several people — separate speakers and let me pick",
-            variable=self.mode_var,
-            value=MODE_DIARIZE,
-        ).pack(anchor="w")
-        ttk.Radiobutton(
-            questioned,
-            text="Compare only these time ranges",
-            variable=self.mode_var,
-            value=MODE_RANGES,
-        ).pack(anchor="w")
-        ttk.Entry(questioned, textvariable=self.ranges_var, width=44).pack(
-            anchor="w", padx=(24, 0)
-        )
-        ttk.Label(questioned, text="e.g. 0:10-0:45, 1:20-2:00", font=("", 8)).pack(
-            anchor="w", padx=(24, 0)
+            card.body, text="Whose voice should be measured?", style=Style.FIELD_LABEL
+        ).pack(anchor="w", pady=(SPACE_MD, SPACE_XS))
+        for text, value in (
+            ("Only one person is speaking — use the whole recording", MODE_WHOLE),
+            ("Several people — separate them and let me pick", MODE_DIARIZE),
+            ("Only these parts of the recording", MODE_RANGES),
+        ):
+            ttk.Radiobutton(
+                card.body,
+                text=text,
+                variable=self.mode_var,
+                value=value,
+                style=Style.RADIO,
+            ).pack(anchor="w")
+        ranges = ttk.Frame(card.body, style=Style.CARD_INNER)
+        ranges.pack(anchor="w", padx=(SPACE_XL, 0))
+        ttk.Entry(ranges, textvariable=self.ranges_var, width=40).pack(side="left")
+        ttk.Label(ranges, text="e.g. 0:10-0:45, 1:20-2:00", style=Style.META).pack(
+            side="left", padx=(SPACE_SM, 0)
         )
 
-        # --- Actions -------------------------------------------------------
-        actions = ttk.Frame(container)
-        actions.pack(fill="x", pady=(10, 0))
-        ttk.Button(actions, text="Compare", command=self._compare).pack(side="left")
-        ttk.Button(
-            actions, text="Search all subjects", command=self._search_gallery
-        ).pack(side="left", padx=(6, 0))
+    # -- The comparison ----------------------------------------------------
+
+    def _build_action_step(self, parent: tk.Misc) -> None:
+        actions = ttk.Frame(parent, style=Style.PAGE)
+        actions.pack(fill="x", pady=(SPACE_LG, 0))
+        primary_button(actions, "Compare speakers", self._compare).pack(side="left")
+        secondary_button(actions, "Search all profiles", self._search_gallery).pack(
+            side="left", padx=(SPACE_SM, 0)
+        )
+        subtle_button(actions, "Thresholds…", self._show_thresholds).pack(side="right")
+
+        advanced = Disclosure(parent, "Advanced")
+        advanced.pack(fill="x", pady=(SPACE_SM, 0))
         ttk.Checkbutton(
-            actions,
-            text="Allow a profile whose embedding model can't be verified",
+            advanced.body,
+            text="Allow a profile whose voice model cannot be verified",
             variable=self.allow_unverified_var,
-        ).pack(side="left", padx=(12, 0))
-        # Read-only: the thresholds behind every verdict on this tab. Shown so an
-        # analyst can state them, not offered as a control - retuning them
-        # changes how every result should be read, and belongs to a validation
-        # run rather than a click.
-        ttk.Button(actions, text="Thresholds…", command=self._show_thresholds).pack(
-            side="right"
-        )
-
-        # --- Result --------------------------------------------------------
-        result_frame = ttk.LabelFrame(container, text="Result", padding=8)
-        result_frame.pack(fill="both", expand=True, pady=(10, 0))
-        self.result_text = ScrolledText(
-            result_frame, wrap="word", height=14, state="disabled", font="TkFixedFont"
-        )
-        self.result_text.pack(fill="both", expand=True)
+        ).pack(anchor="w")
         ttk.Label(
-            result_frame,
-            text=DISCLAIMER,
-            wraplength=620,
+            advanced.body,
+            text=(
+                "Only for an older profile that does not record which model made "
+                "it. A profile from a different model is always refused."
+            ),
+            style=Style.META,
+            wraplength=560,
             justify="left",
-            font=("", 8),
-        ).pack(anchor="w", pady=(6, 0))
-        result_actions = ttk.Frame(result_frame)
-        result_actions.pack(fill="x", pady=(6, 0))
-        ttk.Button(result_actions, text="Copy result", command=self._copy_result).pack(
+        ).pack(anchor="w", padx=(SPACE_XL, 0))
+
+    # -- Step 3: what was found --------------------------------------------
+
+    def _build_result_step(self, parent: tk.Misc) -> None:
+        card = Card(parent, "3.  Result")
+        card.pack(fill="both", expand=True, pady=(SPACE_LG, 0))
+        self._result_card = card
+
+        self._result_empty = EmptyState(
+            card.body,
+            "No comparison yet",
+            "Choose a reference profile and a questioned recording, then select "
+            "Compare speakers.",
+        )
+        self._result_empty.pack(fill="x")
+
+        self._result_body = ttk.Frame(card.body, style=Style.CARD_INNER)
+
+        # The band, not the number, is the finding. It is stated in words, in
+        # the largest type on the card, and never as a percentage.
+        self.band_var = tk.StringVar(value="")
+        self.band_label = ttk.Label(
+            self._result_body, textvariable=self.band_var, style=Style.SECTION_TITLE
+        )
+        self.band_label.pack(anchor="w")
+        self.lead_var = tk.StringVar(value="")
+        ttk.Label(
+            self._result_body,
+            textvariable=self.lead_var,
+            style=Style.BODY,
+            wraplength=680,
+            justify="left",
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
+
+        facts = ttk.Frame(self._result_body, style=Style.CARD_INNER)
+        facts.pack(fill="x", pady=(SPACE_MD, 0))
+        self._result_rows = {
+            "score": KeyValueRow(facts, "Similarity score"),
+            "threshold": KeyValueRow(facts, "Operational threshold"),
+            "questioned": KeyValueRow(facts, "Questioned speech"),
+            "reference": KeyValueRow(facts, "Reference speech"),
+            "quality": KeyValueRow(facts, "Audio quality"),
+            "model": KeyValueRow(facts, "Voice model"),
+            "source": KeyValueRow(facts, "Recording"),
+        }
+        for row_widget in self._result_rows.values():
+            row_widget.pack(fill="x", pady=(0, SPACE_XS))
+
+        self.result_warnings = StatusBanner(self._result_body, wraplength=680)
+
+        # The full text block stays: it is what an analyst copies into a case
+        # file, and it holds the detail the summary above deliberately omits.
+        self._detail_disclosure = Disclosure(self._result_body, "Full result text")
+        self.result_warnings.insert_before(self._detail_disclosure)
+        self._detail_disclosure.pack(fill="x", pady=(SPACE_MD, 0))
+        self.result_text = ScrolledText(
+            self._detail_disclosure.body, wrap="word", height=12, state="disabled"
+        )
+        style_text_widget(self.result_text)
+        self.result_text.configure(font=theme().mono)
+        self.result_text.pack(fill="both", expand=True)
+
+        # Kept as the last thing built but remembered, so the result can be
+        # inserted above it rather than after it.
+        self._disclaimer_label = ttk.Label(
+            card.body,
+            text=DISCLAIMER,
+            style=Style.META,
+            wraplength=680,
+            justify="left",
+        )
+        self._disclaimer_label.pack(anchor="w", pady=(SPACE_MD, 0))
+
+        result_actions = ttk.Frame(card.body, style=Style.CARD_INNER)
+        result_actions.pack(fill="x", pady=(SPACE_MD, 0))
+        secondary_button(result_actions, "Export report…", self._export_report).pack(
             side="left"
         )
-        # Every comparison made on this tab is kept, so one report can cover a
-        # questioned recording checked against several subjects.
-        ttk.Button(
-            result_actions, text="Export report…", command=self._export_report
-        ).pack(side="left", padx=(6, 0))
-        ttk.Button(
-            result_actions,
-            text="Clear recorded comparisons",
-            command=self._clear_comparisons,
-        ).pack(side="left", padx=(6, 0))
-
-        ttk.Label(container, textvariable=self.status_var, wraplength=620).pack(
-            anchor="w", pady=(8, 0)
+        secondary_button(result_actions, "Copy result", self._copy_result).pack(
+            side="left", padx=(SPACE_SM, 0)
         )
-        bind_wheel(canvas, container)
+        subtle_button(
+            result_actions, "Clear recorded comparisons", self._clear_comparisons
+        ).pack(side="left", padx=(SPACE_SM, 0))
 
     # -- Reference ----------------------------------------------------------
 
@@ -262,30 +356,39 @@ class SpeakerCompareTab:
     def _render_reference(self) -> None:
         profile = self._selected_profile()
         if profile is None:
+            self._reference_facts.pack_forget()
+            self._reference_empty.pack(fill="x")
             self.reference_detail_var.set(
-                "No reference selected. Create one in the Speaker profiles tab."
+                "No reference selected. Create one under Speaker Profiles."
             )
             return
+        self._reference_empty.pack_forget()
+        self._reference_facts.pack(fill="x", pady=(SPACE_MD, 0))
+
         summary = profile.summary()
-        lines = [
-            f"Subject: {profile.display_name}",
-            f"Enrolment samples: {summary['trusted_sample_count']} trusted",
-            f"Total reference speech: {profile.total_reference_seconds:.1f} sec",
-        ]
-        if profile.embedding_model:
-            lines.append(f"Embedding model: {profile.embedding_model.describe()}")
-        else:
-            lines.append(
-                "Embedding model: unknown (legacy import) — comparison needs "
-                "explicit confirmation."
-            )
         minimum = active().min_reference_seconds
-        if profile.total_reference_seconds < minimum:
-            lines.append(
-                "Warning: this profile holds less reference speech than the "
-                f"recommended {minimum:.0f}s."
+        thin = profile.total_reference_seconds < minimum
+        self._reference_rows["speech"].set(
+            f"{profile.total_reference_seconds:.1f} sec"
+            + (f"  —  less than the recommended {minimum:.0f} sec" if thin else ""),
+            style_name=Style.WARNING if thin else Style.BODY,
+        )
+        self._reference_rows["samples"].set(str(summary["trusted_sample_count"]))
+        if profile.embedding_model:
+            self._reference_rows["model"].set(
+                profile.embedding_model.describe(), style_name=Style.BODY
             )
-        self.reference_detail_var.set("\n".join(lines))
+        else:
+            self._reference_rows["model"].set(
+                "unknown (older profile) — a comparison needs explicit "
+                "confirmation under Advanced",
+                style_name=Style.WARNING,
+            )
+        # Still maintained for anything that reads the plain string.
+        self.reference_detail_var.set(
+            f"{profile.display_name} — {summary['trusted_sample_count']} trusted "
+            f"samples, {profile.total_reference_seconds:.1f}s reference speech"
+        )
 
     # -- Questioned ---------------------------------------------------------
 
@@ -431,9 +534,7 @@ class SpeakerCompareTab:
         try:
             measured = self._measure_questioned(source)
             if measured is None or not measured.usable:
-                self._status("No usable speech was found in the questioned selection.")
-                if measured is not None:
-                    self._show(measured.describe() + [""] + measured.warnings)
+                self._report_unusable(measured)
                 return
             result = compare_questioned_to_profile(
                 measured,
@@ -444,7 +545,7 @@ class SpeakerCompareTab:
             self._last_result = result
             self._comparisons.append(result)
             self._questioned_sources.add(measured.source_sha256 or "")
-            self._show(result.format_lines())
+            self.root.after(0, lambda: self._show_comparison(result))
             self._status("Comparison complete.")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
             self._status(friendly_error(exc))
@@ -462,24 +563,167 @@ class SpeakerCompareTab:
         try:
             measured = self._measure_questioned(source)
             if measured is None or not measured.usable:
-                self._status("No usable speech was found in the questioned selection.")
-                if measured is not None:
-                    self._show(measured.describe() + [""] + measured.warnings)
+                self._report_unusable(measured)
                 return
             result = search_gallery_for_questioned(
                 measured,
                 self._profiles,
                 questioned_model=bundled_model_identity(),
             )
-            self._show(measured.describe() + [""] + result.summary_lines())
-            self._status("Gallery search complete.")
+            self.root.after(0, lambda: self._show_gallery(measured, result))
+            self._status("Search complete.")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
             self._status(friendly_error(exc))
 
     # -- Output -------------------------------------------------------------
 
     def _show(self, lines: List[str]) -> None:
+        """The full text block - what an analyst copies into a case file."""
         set_readonly_text(self.result_text, "\n".join(lines) + "\n\n" + DISCLAIMER)
+        self.root.after(0, self._reveal_result)
+
+    def _reveal_result(self) -> None:
+        self._result_empty.pack_forget()
+        self._result_body.pack(fill="both", expand=True, before=self._disclaimer_label)
+
+    def _show_comparison(self, result: ComparisonResult) -> None:
+        """Present a comparison as a finding, with the numbers supporting it.
+
+        The band leads, in words. The score is shown out of 1.00 beside it -
+        never as a percentage, which reads as a probability that these are the
+        same person, which is not what a cosine similarity is. A result the
+        audio cannot support outranks whatever the number happens to be.
+        """
+        self._show(result.format_lines())
+
+        if result.refused:
+            self._set_band("Comparison refused", Style.DANGER)
+            self.lead_var.set(result.refusal_reason)
+        elif result.band == BAND_INSUFFICIENT:
+            self._set_band(BAND_INSUFFICIENT, Style.WARNING)
+            self.lead_var.set(
+                "There is not enough usable speech to support any assessment. "
+                "The score below is not meaningful."
+            )
+        elif result.band == BAND_HIGH:
+            self._set_band(result.band, Style.SUCCESS)
+            self.lead_var.set(
+                f"The questioned speaker produced high similarity to the "
+                f"{result.reference_name} reference profile. Further review is "
+                "warranted."
+            )
+        else:
+            self._set_band(result.band, Style.BODY)
+            self.lead_var.set(
+                f"The questioned speech is not strongly similar to the "
+                f"{result.reference_name} reference profile."
+            )
+
+        self._result_rows["score"].set(
+            "—" if result.refused else f"{result.score:.2f} / 1.00"
+        )
+        self._result_rows["threshold"].set(
+            f"{result.operational_threshold:.2f} for high similarity"
+        )
+        measured = (
+            f" across {result.questioned_window_count} window(s)"
+            if result.questioned_window_count
+            else ""
+        )
+        self._result_rows["questioned"].set(
+            f"{result.questioned_seconds:.1f} sec{measured}"
+        )
+        self._result_rows["reference"].set(f"{result.reference_seconds:.1f} sec")
+        self._result_rows["quality"].set(
+            f"questioned {result.questioned_quality.lower()}, "
+            f"reference {result.reference_quality.lower()}"
+        )
+        self._result_rows["model"].set(result.embedding_model)
+        self._result_rows["source"].set(
+            result.questioned_source_filename or "not recorded"
+        )
+
+        if result.warnings:
+            self.result_warnings.show("warning", "  ".join(result.warnings))
+        else:
+            self.result_warnings.hide()
+
+    def _report_unusable(self, measured: object) -> None:
+        """Not enough speech to measure is a result, and it has to look like one."""
+        message = "No usable speech was found in the questioned selection."
+        self._status(message)
+        if measured is None:
+            return
+        describe = getattr(measured, "describe", None)
+        warnings = list(getattr(measured, "warnings", []))
+        self._show((list(describe()) if callable(describe) else []) + [""] + warnings)
+
+        def _paint() -> None:
+            self._set_band(BAND_INSUFFICIENT, Style.WARNING)
+            self.lead_var.set(
+                message + " Select more of the speaker's audio, or a recording "
+                "with more of them speaking."
+            )
+            for row in self._result_rows.values():
+                row.set("—")
+            self._result_rows["source"].set(
+                str(getattr(measured, "source_filename", "") or "not recorded")
+            )
+            if warnings:
+                self.result_warnings.show("warning", "  ".join(warnings))
+
+        self.root.after(0, _paint)
+
+    def _set_band(self, text: str, style_name: str) -> None:
+        self.band_var.set(text)
+        self.band_label.configure(style=style_name)
+
+    def _show_gallery(self, measured: object, result: GalleryResult) -> None:
+        """A ranked search is context, not an identification."""
+        describe = getattr(measured, "describe", None)
+        lines = list(describe()) if callable(describe) else []
+        self._show(lines + [""] + result.summary_lines())
+        if result.inadequate_reason:
+            self._set_band(BAND_INSUFFICIENT, Style.WARNING)
+            self.lead_var.set(
+                f"{result.inadequate_reason} The ranking below supports no "
+                "conclusion about any subject."
+            )
+        elif result.accepted_name:
+            self._set_band("Possible lead", Style.SUCCESS)
+            self.lead_var.set(
+                f"The questioned speaker produced high similarity to the "
+                f"{result.accepted_name} reference profile. Further review is "
+                "warranted."
+            )
+        else:
+            self._set_band("No sufficiently strong match", Style.BODY)
+            self.lead_var.set("No known profile produced a sufficiently strong match.")
+        top = result.matches[0] if result.matches else None
+        self._result_rows["score"].set(
+            f"{top.score:.2f} / 1.00 ({top.display_name})" if top else "—"
+        )
+        self._result_rows["threshold"].set(
+            f"{result.thresholds.recognition_acceptance:.2f} to accept, "
+            f"{result.thresholds.recognition_margin:.2f} clear of the next"
+        )
+        self._result_rows["questioned"].set(
+            f"{getattr(measured, 'speech_seconds', 0.0):.1f} sec"
+        )
+        self._result_rows["reference"].set(f"{result.searched} profile(s) searched")
+        self._result_rows["quality"].set(str(getattr(measured, "quality", "—")))
+        self._result_rows["model"].set("—")
+        self._result_rows["source"].set(
+            str(getattr(measured, "source_filename", "") or "not recorded")
+        )
+        if result.skipped:
+            self.result_warnings.show(
+                "warning",
+                f"{len(result.skipped)} profile(s) skipped: "
+                + "; ".join(result.skipped[:2]),
+            )
+        else:
+            self.result_warnings.hide()
 
     def _show_thresholds(self) -> None:
         """Show the decision thresholds in force (read-only)."""
