@@ -83,13 +83,22 @@ def _normalize(vector: Sequence[float]) -> List[float]:
 
 
 def centroid(vectors: Sequence[Sequence[float]]) -> List[float]:
-    """Unit-length mean of ``vectors`` (empty in -> empty out)."""
+    """Unit-length mean of ``vectors`` (empty in -> empty out).
+
+    Each vector is scaled to unit length *before* it is averaged. The extractor
+    returns raw model output, not unit vectors, and its magnitude varies from
+    window to window - so averaging the vectors as they come weights a centroid
+    towards whichever windows happened to produce the largest numbers rather
+    than towards the voice they all describe. Every sample of a subject should
+    count once.
+    """
     if not vectors:
         return []
     dim = len(vectors[0])
     sums = [0.0] * dim
     for vec in vectors:
-        for i, value in enumerate(vec):
+        unit = _normalize(vec)
+        for i, value in enumerate(unit):
             sums[i] += value
     mean = [s / len(vectors) for s in sums]
     return _normalize(mean)

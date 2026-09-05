@@ -3,6 +3,7 @@ import wave
 import numpy as np
 
 from whispr import quality
+from whispr.enrollment import WINDOW_SECONDS
 from whispr.quality import (
     FAIR,
     GOOD,
@@ -113,6 +114,54 @@ def test_read_and_analyse_span_from_file(tmp_path):
     partial, _ = read_wav_span(path, 1.0, 6.0)
     assert abs(len(partial) - RATE * 5) <= 1
     assert analyse_span(path).assessment == GOOD
+
+
+def test_an_enrolment_window_can_reach_good():
+    """The band must not be out of reach of the span length actually measured.
+
+    Enrolment measures fixed windows, so a band gated on an absolute duration
+    longer than a window could never be awarded however clean the audio was.
+    """
+    report = analyse_samples(_speechlike(WINDOW_SECONDS), RATE)
+    assert report.voiced_seconds < quality.GOOD_MIN_SECONDS
+    assert report.assessment == GOOD
+
+
+def test_band_follows_the_audio_not_the_span_length():
+    short = analyse_samples(_speechlike(WINDOW_SECONDS), RATE)
+    long = analyse_samples(_speechlike(30.0), RATE)
+    assert short.assessment == long.assessment
+
+
+def test_normal_pauses_do_not_make_a_window_poor():
+    """Half a window of pauses is ordinary speech, not bad audio."""
+    report = analyse_samples(_speechlike(WINDOW_SECONDS, voiced_fraction=0.5), RATE)
+    assert report.assessment == FAIR
+
+
+def test_continuous_speech_is_not_measured_as_silence():
+    """A span with no pause has no noise floor to find - and is not thrown away.
+
+    The quietest tenth of continuous speech is quiet *speech*; treating it as
+    the background and demanding three times its level would rule out most of
+    the span, which is worst for the cleanest recordings.
+    """
+    steady = _speechlike(WINDOW_SECONDS, voiced_fraction=1.0)
+    report = analyse_samples(steady, RATE)
+    assert report.voiced_seconds > WINDOW_SECONDS * 0.8
+    assert report.usable
+    # It says so, and does not claim to be the best band on an estimate.
+    assert report.level_spread_low is True
+    assert report.assessment == FAIR
+    assert any("no quiet passage" in w for w in report.warnings)
+
+
+def test_steady_noise_is_flagged_rather_than_taken_for_speech():
+    noise = rng.normal(0, 0.2, RATE * 8).astype(np.float32)
+    report = analyse_samples(noise, RATE)
+    assert report.level_spread_low is True
+    assert report.assessment != GOOD
+    assert any("no quiet passage" in w for w in report.warnings)
 
 
 def test_combine_sums_duration_and_carries_warnings():
