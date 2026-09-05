@@ -192,6 +192,20 @@ class SpeakerProfilesTab:
         danger_button(actions, "Remove sample", self._remove).pack(side="left")
 
         ttk.Label(
+            self.detail_body,
+            text=(
+                "Add a recording asks which stretches of it are this person. For "
+                "a conversation, it is usually easier to transcribe it first with "
+                "\u201cIdentify who is speaking\u201d on, correct the speaker "
+                "tags there, then use Save speaker to profile\u2026 on the "
+                "Transcribe page."
+            ),
+            style=Style.META,
+            wraplength=520,
+            justify="left",
+        ).pack(anchor="w", pady=(SPACE_SM, 0))
+
+        ttk.Label(
             self.detail_body, text="Reference samples", style=Style.FIELD_LABEL
         ).pack(anchor="w", pady=(SPACE_LG, SPACE_XS))
         self.sample_tree = ttk.Treeview(
@@ -222,7 +236,8 @@ class SpeakerProfilesTab:
             self.detail_body,
             "No reference samples yet",
             "Add a recording that contains this person, and say which speech is "
-            "theirs.",
+            "theirs \u2014 or correct the speaker tags on a transcript and use "
+            "Save speaker to profile\u2026 there.",
         )
 
     # -- Data --------------------------------------------------------------

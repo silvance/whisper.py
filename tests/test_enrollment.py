@@ -10,6 +10,7 @@ from whispr.enrollment import (
     enroll_from_wav,
     enrolled_spans,
     normalize_spans,
+    spans_by_speaker_name,
     spans_for_speaker,
     speaker_totals,
     subtract_spans,
@@ -248,6 +249,26 @@ def test_spans_and_totals_for_diarized_clusters():
     ]
     assert spans_for_speaker(segments, "SPEAKER_00") == [(0.0, 10.0), (14.0, 30.0)]
     assert speaker_totals(segments) == [("SPEAKER_00", 26.0), ("SPEAKER_01", 4.0)]
+
+
+def test_spans_by_speaker_name_follows_the_corrected_labels():
+    """What the transcript says now, not what the diarizer first guessed."""
+    segments = [
+        _Seg(0.0, 10.0, "SPEAKER_00"),
+        _Seg(10.0, 14.0, "SPEAKER_01"),
+        _Seg(14.0, 30.0, "SPEAKER_02"),
+    ]
+    # The operator renamed two clusters to the same person and left one unnamed.
+    names = {"SPEAKER_00": "A. Suspect", "SPEAKER_02": "A. Suspect"}
+    grouped = spans_by_speaker_name(segments, names)
+    assert grouped["A. Suspect"] == [(0.0, 10.0), (14.0, 30.0)]
+    # An unnamed cluster is still selectable under its raw label.
+    assert grouped["SPEAKER_01"] == [(10.0, 14.0)]
+
+
+def test_spans_by_speaker_name_ignores_undiarized_segments():
+    segments = [_Seg(0.0, 5.0, None), _Seg(5.0, 9.0, "SPEAKER_00")]
+    assert spans_by_speaker_name(segments, {}) == {"SPEAKER_00": [(5.0, 9.0)]}
 
 
 # -- operator-typed time ranges -------------------------------------------

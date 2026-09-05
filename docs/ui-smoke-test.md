@@ -11,9 +11,9 @@ font change spacing, and that is exactly what this list is for.
 ## Startup
 
 - [ ] The window opens at a sensible size and can be resized down to its
-      minimum (940×620) without controls being clipped or overlapping.
+      minimum (940×600) without controls being clipped or overlapping.
 - [ ] The header shows **Whispers**, "Offline audio analysis", the green
-      **Offline** marker, **Help** and **System status**.
+      **Local processing** marker, **Help** and **System status**.
 - [ ] The navigation rail lists only the pages this build supports. On a
       transcribe-only build (or `WHISPR_MODE=transcribe`) the rail is absent
       and the Transcribe page fills the window.
@@ -54,6 +54,25 @@ font change spacing, and that is exactly what this list is for.
       run of words still reassigns speech.
 - [ ] A batch of several files still runs, and the queue summary appears with a
       **Clear list** action only when there is a queue.
+
+## Saving a corrected speaker to a subject
+
+- [ ] After a diarized run, **Save speaker to profile…** sits under the export
+      row with a one-line explanation beside it. It is absent in a build with no
+      speaker-embedding model.
+- [ ] Correct some speaker tags first; the dialog then lists the speakers under
+      the names you gave them, longest first, with how much speech each has.
+- [ ] The dialog offers an existing subject *or* a new one, and says that
+      samples arrive pending review. Escape closes it; Enter confirms.
+- [ ] Typing the name of a subject that already exists adds to that subject
+      rather than creating a second one with the same name.
+- [ ] After saving, the banner names how many samples were added and that they
+      need approval, and Speaker Profiles shows them under **Needs review** —
+      not counted in the trusted reference speech.
+- [ ] Saving the same speaker twice from the same recording adds nothing the
+      second time, and the Status tab explains why.
+- [ ] With no transcript, no diarized speakers, or no audio left on hand, the
+      button explains what is missing instead of failing silently.
 
 ## Speaker Profiles
 
@@ -105,6 +124,22 @@ font change spacing, and that is exactly what this list is for.
       with the Close button focused.
 - [ ] System status still leads with READY / NOT READY.
 - [ ] Compare voices… (from the operation profile card) is themed and readable.
+
+## Scrolling
+
+- [ ] Every page scrolls with the wheel and with the scrollbar, at 1366×768 and
+      when the window is made deliberately small.
+- [ ] **Hide settings** / **Show settings** on Transcribe, and expanding or
+      collapsing **Advanced options**, leave the page still scrollable — with no
+      resize, maximise or page switch in between.
+- [ ] Starting a transcription (which puts the settings away on its own) leaves
+      the page scrollable, and **Show settings** during a run does too.
+- [ ] Scrolling to the bottom and then hiding the settings does not leave the
+      page parked on blank space below its own content.
+- [ ] The wheel scrolls over controls that appeared after the page was built
+      (a result card, an expanded section), and one notch still moves one notch.
+- [ ] The wheel over the transcript and Status panes scrolls those panes, not
+      the page behind them.
 
 ## Layout and accessibility
 
