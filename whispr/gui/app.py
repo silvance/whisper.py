@@ -137,6 +137,9 @@ class WhisprApp:
                 profiles_root, self.root, self.cancel_event, self.cancel
             )
             self._tabs.append(self.speaker_profiles)
+            # Saving a corrected speaker from a transcript writes a subject
+            # profile, so this page has to pick the new samples up.
+            self.transcribe.on_profiles_changed = self.speaker_profiles.refresh
 
             compare_root = self._add_page("compare", "Compare Speakers")
             self.speaker_compare = SpeakerCompareTab(
@@ -296,6 +299,10 @@ class WhisprApp:
             "------------\n"
             "• Speaker Profiles builds a reference voice for someone you know,\n"
             "   from recordings you already have.\n"
+            "• Once you have corrected the speaker tags on a transcript, Save\n"
+            "   speaker to profile… (under the transcript) adds that speaker's\n"
+            "   audio to a subject. It is held pending review until you approve\n"
+            "   it on Speaker Profiles.\n"
             "• Compare Speakers measures how similar a speaker in a questioned\n"
             "   recording is to one of those references. The result is an\n"
             "   investigative lead for review — never an identification.\n"

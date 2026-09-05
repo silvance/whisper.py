@@ -29,7 +29,7 @@ from ..acceleration import (
 )
 from ..acceleration import resolve as resolve_device
 from ..diarization import assign_speakers, diarize
-from ..enrollment import enroll_from_wav
+from ..enrollment import enroll_from_media, enroll_from_wav, spans_by_speaker_name
 from ..export import transcript_to_docx
 from ..playback import PlaybackError, SegmentPlayer, playback_available
 from ..profiles import (
@@ -51,9 +51,10 @@ from ..provenance import (
     transcription_model_sha256,
 )
 from ..reports import write_analysis_report
-from ..resources import bundled_models
+from ..resources import bundled_embedding_model, bundled_models
 from ..speaker_profiles import (
     SAMPLE_LEARNED,
+    ProfileError,
     find_speaker_profile_by_name,
     save_speaker_profile,
 )
@@ -70,6 +71,7 @@ from ..transcription import (
 from ..voiceprints import SpeakerEmbedder, enroll_spans, recognize
 from . import speaker_compare
 from .errors import friendly_error
+from .save_speaker import SaveSpeakerChoice, ask_save_speaker
 from .theme import (
     SPACE_LG,
     SPACE_MD,
@@ -250,6 +252,8 @@ class TranscribeTab:
         # A 16 kHz mono copy of the last diarized audio, kept so corrections can
         # enrol voiceprints after the run; removed on the next run and on close.
         self._session_wav: Optional[Path] = None
+        # Set by the app so saving a speaker refreshes the Speaker Profiles page.
+        self.on_profiles_changed: Optional[Callable[[], None]] = None
         # Lazily-built speaker-embedding extractor; False once it has failed to
         # load (e.g. sherpa-onnx/model missing) so we don't retry every edit.
         self._embedder: "Optional[SpeakerEmbedder] | bool" = None
@@ -717,6 +721,29 @@ class TranscribeTab:
                 text="Ctrl-click a line or a word to play its audio.",
                 style=Style.META,
             ).pack(anchor="w", pady=(SPACE_XS, 0))
+
+        # Its own row: this one does not write a file, it adds to a subject's
+        # reference voice - and it is the point of having corrected the tags.
+        # Only offered where there is a Speaker Profiles page to save into: a
+        # build with no speaker-embedding model cannot measure a voice at all.
+        if bundled_embedding_model() is not None:
+            speaker_row = ttk.Frame(results.body, style=Style.CARD_INNER)
+            speaker_row.pack(fill="x", pady=(SPACE_MD, 0))
+            secondary_button(
+                speaker_row,
+                "Save speaker to profile…",
+                self._save_speaker_to_profile,
+            ).pack(side="left")
+            ttk.Label(
+                speaker_row,
+                text=(
+                    "Keeps the speaker labels you corrected as reference audio "
+                    "for a subject."
+                ),
+                style=Style.META,
+                wraplength=520,
+                justify="left",
+            ).pack(side="left", padx=(SPACE_MD, 0))
 
     # -- Cancellation ------------------------------------------------------
 
@@ -1668,6 +1695,162 @@ class TranscribeTab:
             )
         except Exception as exc:  # noqa: BLE001 - never fail a correction on this
             append_line(self.status, f"Could not propose a speaker sample: {exc}")
+
+    # -- Saving a corrected speaker to a subject profile -------------------
+
+    def _speaker_spans(self) -> "Dict[str, List[Tuple[float, float]]]":
+        """Display name -> the spans currently attributed to that speaker."""
+        result = self._result
+        if result is None:
+            return {}
+        return spans_by_speaker_name(result.segments, self._speaker_names)
+
+    def _save_speaker_to_profile(self) -> None:
+        """Keep the operator's speaker corrections as a subject's reference audio.
+
+        Correcting the tags in a transcript is where an operator knows, better
+        than the model does, which audio belongs to whom. This is how that work
+        leaves the transcript: the chosen speaker's lines are enrolled onto a
+        known subject - pending review, never trusted on the strength of a
+        correction alone.
+        """
+        if self._result is None:
+            self._announce("warning", "Transcribe a recording first.")
+            return
+        spans = self._speaker_spans()
+        if not spans:
+            self._announce(
+                "warning",
+                "This transcript has no separate speakers, so there is nothing to "
+                "attribute. Turn on \u201cIdentify who is speaking\u201d and "
+                "transcribe the recording again.",
+            )
+            return
+        embedder = self._get_embedder()
+        if embedder is None:
+            self._announce(
+                "error",
+                "No speaker-embedding model is available in this build, so a "
+                "reference sample cannot be measured. System status (top right) "
+                "shows what this copy can do.",
+            )
+            return
+        wav = self._session_wav
+        source = self._result_source
+        have_wav = wav is not None and wav.exists()
+        have_source = source is not None and source.exists()
+        if not have_wav and not have_source:
+            self._announce(
+                "warning",
+                "The audio behind this transcript is no longer on hand. Open the "
+                "recording and transcribe it again, then save the speaker.",
+            )
+            return
+
+        ordered = sorted(
+            (
+                (name, sum(end - start for start, end in items))
+                for name, items in spans.items()
+            ),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+        choice = ask_save_speaker(
+            self.root, ordered, recording=source.name if source else ""
+        )
+        if choice is None:
+            return
+        threading.Thread(
+            target=self._save_speaker_worker,
+            args=(choice, list(spans[choice.speaker]), embedder),
+            daemon=True,
+        ).start()
+
+    def _save_speaker_worker(
+        self,
+        choice: SaveSpeakerChoice,
+        spans: List[Tuple[float, float]],
+        embedder: SpeakerEmbedder,
+    ) -> None:
+        """Enrol the chosen speaker's audio off the UI thread, then report."""
+        subject = choice.profile
+        self.progress_label_var.set(f"Measuring {choice.speaker}\u2019s speech\u2026")
+        notes = (
+            f"Added from the transcript of "
+            f"{self._result_source.name if self._result_source else 'a recording'} "
+            f"after the speaker labels were corrected."
+        )
+        try:
+            wav = self._session_wav
+            if wav is not None and wav.exists():
+                provenance = self._result_provenance
+                result = enroll_from_wav(
+                    subject,
+                    wav,
+                    spans,
+                    embedder,
+                    source_filename=(
+                        self._result_source.name if self._result_source else None
+                    ),
+                    source_sha256=(
+                        provenance.source.sha256
+                        if provenance and provenance.source
+                        else None
+                    ),
+                    sample_type=SAMPLE_LEARNED,
+                    notes=notes,
+                )
+            else:
+                # No kept analysis audio (a reopened project, say): go back to the
+                # recording itself, which also hashes the file the samples came from.
+                result = enroll_from_media(
+                    subject,
+                    self._result_source,  # type: ignore[arg-type]
+                    embedder,
+                    spans=spans,
+                    sample_type=SAMPLE_LEARNED,
+                    notes=notes,
+                    progress=self.progress_label_var.set,
+                )
+            for reason in result.skipped:
+                append_line(self.status, f"Not enrolled - {reason}")
+            if not result.added_count:
+                self._announce(
+                    "warning",
+                    f"Nothing was added to {subject.display_name}: none of "
+                    f"{choice.speaker}\u2019s audio was usable, or it is already "
+                    "enrolled from this recording. The Status tab lists each "
+                    "stretch and why.",
+                )
+                self.progress_label_var.set("Ready")
+                return
+            # An empty new subject is never written: the profile only reaches
+            # disk once there is something in it.
+            save_speaker_profile(subject)
+        except ProfileError as exc:
+            self._announce("error", friendly_error(exc))
+            self.progress_label_var.set("Ready")
+            return
+        except Exception as exc:  # noqa: BLE001 - surfaced, never fatal
+            append_line(self.status, traceback.format_exc())
+            self._announce("error", friendly_error(exc))
+            self.progress_label_var.set("Ready")
+            return
+
+        created = " (new subject)" if choice.is_new else ""
+        self._announce(
+            "success",
+            f"Added {result.added_count} sample(s) - {result.added_seconds:.0f} "
+            f"sec of speech - to {subject.display_name}{created}. They are "
+            "pending review: approve them on the Speaker Profiles page before "
+            "they are used as reference material.",
+        )
+        self.progress_label_var.set(
+            f"Saved {choice.speaker} to {subject.display_name}."
+        )
+        refresh = self.on_profiles_changed
+        if refresh is not None:
+            self.root.after(0, refresh)
 
     # -- Profile management ------------------------------------------------
 

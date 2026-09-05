@@ -23,7 +23,7 @@ from __future__ import annotations
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from .hashing import sha256_file_or_none
 from .quality import QualityReport, analyse_span, combine
@@ -362,6 +362,27 @@ def spans_for_speaker(
         for seg in speaker_segments
         if getattr(seg, "speaker", None) == speaker_id
     ]
+
+
+def spans_by_speaker_name(
+    segments: Sequence[Any], names: Mapping[str, str]
+) -> Dict[str, List[Tuple[float, float]]]:
+    """Group transcript segments into ``display name -> spans``.
+
+    Used after an operator has corrected the speaker tags: the segments carry
+    the corrections, so this is what the transcript now says rather than what
+    the diarizer first guessed. Ids without a name keep the raw label (an
+    operator can still enrol an unnamed cluster), and two ids renamed to the
+    same person merge into one set of spans - which is what renaming them meant.
+    """
+    grouped: Dict[str, List[Tuple[float, float]]] = {}
+    for segment in segments:
+        speaker_id = getattr(segment, "speaker", None)
+        if not speaker_id:
+            continue
+        name = names.get(speaker_id, speaker_id)
+        grouped.setdefault(name, []).append((segment.start, segment.end))
+    return grouped
 
 
 def speaker_totals(speaker_segments: Sequence[Any]) -> List[Tuple[str, float]]:
