@@ -1,5 +1,7 @@
 import math
 
+import pytest
+
 from whispr.diarization import SpeakerSegment
 from whispr.voiceprints import (
     Voiceprint,
@@ -18,6 +20,26 @@ def test_normalize_and_cosine_of_identical_directions():
     a = [3.0, 0.0, 0.0]
     b = [10.0, 0.0, 0.0]
     assert cosine_similarity(a, b) == 1.0
+
+
+def test_centroid_gives_every_sample_the_same_weight():
+    """The extractor returns raw vectors, not unit ones, and their magnitude
+    varies from window to window. Averaging them as they come would let the
+    windows with the largest numbers pull the centroid around."""
+    loud = [10.0, 0.0, 0.0]
+    quiet = [0.0, 1.0, 0.0]
+    result = centroid([loud, quiet])
+    # Halfway between the two directions, not 10:1 towards the louder one.
+    assert result[0] == pytest.approx(result[1], abs=1e-9)
+    assert cosine_similarity(result, [1.0, 1.0, 0.0]) == pytest.approx(1.0, abs=1e-9)
+
+
+def test_centroid_is_unchanged_by_rescaling_a_sample():
+    vectors = [[0.3, 0.4, 0.0], [0.0, 0.6, 0.8], [0.5, 0.0, 0.5]]
+    scaled = [[v * 7.0 for v in vectors[0]], vectors[1], vectors[2]]
+    assert cosine_similarity(centroid(vectors), centroid(scaled)) == pytest.approx(
+        1.0, abs=1e-9
+    )
 
 
 def test_cosine_of_orthogonal_is_zero():
