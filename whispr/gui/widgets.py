@@ -14,7 +14,7 @@ from __future__ import annotations
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from .theme import (
     CARD_PADDING,
@@ -26,6 +26,17 @@ from .theme import (
     Style,
     palette,
 )
+
+# How often a scrollable page checks whether its content changed size. The
+# canvas pins the inner frame's height (so short pages still fill the window),
+# which means Tk stops reporting the frame's size changes through <Configure> -
+# showing/hiding the settings or expanding a section would otherwise leave the
+# scroll region stale and the page unscrollable until the window was resized.
+_SYNC_INTERVAL_MS = 150
+
+# Mouse-wheel re-binders, keyed by canvas path name, so a page whose content
+# changed can wire up the widgets that appeared since it was built.
+_WHEEL_REBINDERS: "Dict[str, Callable[[], None]]" = {}
 
 
 def scrollable_body(parent: tk.Misc) -> "tuple[tk.Canvas, ttk.Frame]":
@@ -46,20 +57,68 @@ def scrollable_body(parent: tk.Misc) -> "tuple[tk.Canvas, ttk.Frame]":
     inner = ttk.Frame(canvas, padding=PAGE_PADDING, style=Style.PAGE)
     window = canvas.create_window((0, 0), window=inner, anchor="nw")
 
+    signature: Optional[Tuple[int, int, int]] = None
+    tick_id: Optional[str] = None
+
     def _sync() -> None:
+        nonlocal signature
+        width = canvas.winfo_width()
+        viewport = canvas.winfo_height()
+        # The *requested* height is what changes when content is added, removed
+        # or collapsed; the actual height is pinned below and so cannot be used.
+        content = inner.winfo_reqheight()
+        current = (width, viewport, content)
+        if current == signature:
+            return
+        signature = current
+
         # Match the inner frame's width to the canvas, and let it stretch to fill
         # the viewport when the content is shorter than it (so widgets that expand
         # look right) while still allowing it to overflow + scroll.
-        canvas.itemconfigure(window, width=canvas.winfo_width())
-        canvas.itemconfigure(
-            window, height=max(inner.winfo_reqheight(), canvas.winfo_height())
-        )
-        canvas.configure(scrollregion=canvas.bbox("all"))
+        height = max(content, viewport)
+        canvas.itemconfigure(window, width=width, height=height)
+        canvas.configure(scrollregion=(0, 0, width, height))
 
-    # Re-sync both when the viewport resizes and when the content grows or shrinks
-    # (e.g. as settings sections are expanded/collapsed).
+        # Content can shrink out from under the current scroll position - putting
+        # the settings away, collapsing a section - which would otherwise leave
+        # the page parked below its own end, looking blank and stuck.
+        top = canvas.canvasy(0)
+        limit = float(max(0, height - viewport))
+        if top > limit:
+            canvas.yview_moveto(limit / height if height else 0.0)
+
+        # Widgets that appeared since the page was built need the wheel too.
+        rebind = _WHEEL_REBINDERS.get(str(canvas))
+        if rebind is not None:
+            rebind()
+
+    def _tick() -> None:
+        nonlocal tick_id
+        try:
+            if not canvas.winfo_exists():
+                return
+            if canvas.winfo_ismapped():
+                _sync()
+            tick_id = canvas.after(_SYNC_INTERVAL_MS, _tick)
+        except tk.TclError:  # interpreter going away during shutdown
+            tick_id = None
+
+    def _stop(_event: "tk.Event[tk.Misc]") -> None:
+        nonlocal tick_id
+        if tick_id is not None:
+            try:
+                canvas.after_cancel(tick_id)
+            except tk.TclError:
+                pass
+            tick_id = None
+        _WHEEL_REBINDERS.pop(str(canvas), None)
+
+    # <Configure> keeps resizing instant; the tick catches content changes, which
+    # a pinned frame cannot report.
     canvas.bind("<Configure>", lambda _e: _sync())
     inner.bind("<Configure>", lambda _e: _sync())
+    canvas.bind("<Destroy>", _stop, add="+")
+    tick_id = canvas.after(_SYNC_INTERVAL_MS, _tick)
     return canvas, inner
 
 
@@ -69,7 +128,13 @@ def bind_wheel(canvas: tk.Canvas, root_widget: tk.Misc) -> None:
     Bound recursively to every widget except ``tk.Text`` (and its ``ScrolledText``
     subclass), which keep their own native scrolling so the transcript/status
     panes don't fight the page scroll.
+
+    Re-applied whenever the page's content changes, so widgets built later scroll
+    too; each widget is bound once, otherwise every pass would add another
+    handler and the wheel would accelerate.
     """
+
+    bound: "set[str]" = set()
 
     def _on_wheel(event: "tk.Event[tk.Misc]") -> None:
         if getattr(event, "num", None) == 4:
@@ -80,15 +145,25 @@ def bind_wheel(canvas: tk.Canvas, root_widget: tk.Misc) -> None:
             canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
 
     def _bind(widget: tk.Misc) -> None:
-        if not isinstance(widget, tk.Text):
-            widget.bind("<MouseWheel>", _on_wheel, add="+")  # Windows / macOS
-            widget.bind("<Button-4>", _on_wheel, add="+")  # Linux scroll up
-            widget.bind("<Button-5>", _on_wheel, add="+")  # Linux scroll down
+        name = str(widget)
+        if name not in bound:
+            bound.add(name)
+            if not isinstance(widget, tk.Text):
+                widget.bind("<MouseWheel>", _on_wheel, add="+")  # Windows / macOS
+                widget.bind("<Button-4>", _on_wheel, add="+")  # Linux scroll up
+                widget.bind("<Button-5>", _on_wheel, add="+")  # Linux scroll down
         for child in widget.winfo_children():
             _bind(child)
 
-    _bind(canvas)
-    _bind(root_widget)
+    def _rebind() -> None:
+        try:
+            _bind(canvas)
+            _bind(root_widget)
+        except tk.TclError:  # a widget went away mid-walk
+            pass
+
+    _WHEEL_REBINDERS[str(canvas)] = _rebind
+    _rebind()
 
 
 def register_drop(
