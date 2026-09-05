@@ -141,9 +141,13 @@ class SpeakerCompareTab:
         self._build_action_step(container)
         self._build_result_step(container)
 
-        ttk.Label(
+        # A failure has to be visible on the page, not only in the status line.
+        self.banner = StatusBanner(container, wraplength=680)
+        self._status_label = ttk.Label(
             container, textvariable=self.status_var, style=Style.PAGE_SUBTITLE
-        ).pack(anchor="w", pady=(SPACE_MD, 0))
+        )
+        self._status_label.pack(anchor="w", pady=(SPACE_MD, 0))
+        self.banner.insert_before(self._status_label)
         bind_wheel(canvas, container)
 
     # -- Step 1: the known person -----------------------------------------
@@ -222,10 +226,14 @@ class SpeakerCompareTab:
     def _build_action_step(self, parent: tk.Misc) -> None:
         actions = ttk.Frame(parent, style=Style.PAGE)
         actions.pack(fill="x", pady=(SPACE_LG, 0))
-        primary_button(actions, "Compare speakers", self._compare).pack(side="left")
-        secondary_button(actions, "Search all profiles", self._search_gallery).pack(
-            side="left", padx=(SPACE_SM, 0)
+        self._compare_button = primary_button(
+            actions, "Compare speakers", self._compare
         )
+        self._compare_button.pack(side="left")
+        self._gallery_button = secondary_button(
+            actions, "Search all profiles", self._search_gallery
+        )
+        self._gallery_button.pack(side="left", padx=(SPACE_SM, 0))
         subtle_button(actions, "Thresholds…", self._show_thresholds).pack(side="right")
 
         advanced = Disclosure(parent, "Advanced")
@@ -260,6 +268,20 @@ class SpeakerCompareTab:
             "Compare speakers.",
         )
         self._result_empty.pack(fill="x")
+
+        # Shown while a comparison is running, *instead of* the previous result.
+        # Leaving the last result on screen with only a small status line
+        # underneath is how a finding about one recording gets read as a finding
+        # about the one being measured now.
+        self._result_busy = ttk.Frame(
+            card.body, style=Style.CARD_INNER, padding=(0, SPACE_MD)
+        )
+        self.busy_var = tk.StringVar(value="")
+        ttk.Label(self._result_busy, textvariable=self.busy_var, style=Style.BODY).pack(
+            anchor="w"
+        )
+        self._busy_bar = ttk.Progressbar(self._result_busy, mode="indeterminate")
+        self._busy_bar.pack(fill="x", pady=(SPACE_SM, 0))
 
         self._result_body = ttk.Frame(card.body, style=Style.CARD_INNER)
 
@@ -320,15 +342,19 @@ class SpeakerCompareTab:
 
         result_actions = ttk.Frame(card.body, style=Style.CARD_INNER)
         result_actions.pack(fill="x", pady=(SPACE_MD, 0))
-        secondary_button(result_actions, "Export report…", self._export_report).pack(
-            side="left"
-        )
-        secondary_button(result_actions, "Copy result", self._copy_result).pack(
-            side="left", padx=(SPACE_SM, 0)
-        )
-        subtle_button(
+        export = secondary_button(result_actions, "Export report…", self._export_report)
+        export.pack(side="left")
+        copy = secondary_button(result_actions, "Copy result", self._copy_result)
+        copy.pack(side="left", padx=(SPACE_SM, 0))
+        clear = subtle_button(
             result_actions, "Clear recorded comparisons", self._clear_comparisons
-        ).pack(side="left", padx=(SPACE_SM, 0))
+        )
+        clear.pack(side="left", padx=(SPACE_SM, 0))
+        # Everything that acts on "the result" is held while a new one is being
+        # measured: until it finishes, these still refer to the previous
+        # recording, and a copied or exported result about the wrong recording
+        # is worse than one you had to wait for.
+        self._result_actions = (export, copy, clear)
 
     # -- Reference ----------------------------------------------------------
 
@@ -481,6 +507,7 @@ class SpeakerCompareTab:
         if not source:
             self._status("Choose a questioned recording first.")
             return
+        self._start_measuring(Path(source), "Comparing")
         threading.Thread(
             target=self._compare_worker, args=(profile, Path(source)), daemon=True
         ).start()
@@ -548,13 +575,16 @@ class SpeakerCompareTab:
             self.root.after(0, lambda: self._show_comparison(result))
             self._status("Comparison complete.")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
-            self._status(friendly_error(exc))
+            self._fail(exc)
+        finally:
+            self.root.after(0, self._finish_measuring)
 
     def _search_gallery(self) -> None:
         source = self.questioned_var.get().strip()
         if not source:
             self._status("Choose a questioned recording first.")
             return
+        self._start_measuring(Path(source), "Searching all profiles against")
         threading.Thread(
             target=self._gallery_worker, args=(Path(source),), daemon=True
         ).start()
@@ -573,7 +603,9 @@ class SpeakerCompareTab:
             self.root.after(0, lambda: self._show_gallery(measured, result))
             self._status("Search complete.")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
-            self._status(friendly_error(exc))
+            self._fail(exc)
+        finally:
+            self.root.after(0, self._finish_measuring)
 
     # -- Output -------------------------------------------------------------
 
@@ -582,8 +614,41 @@ class SpeakerCompareTab:
         set_readonly_text(self.result_text, "\n".join(lines) + "\n\n" + DISCLAIMER)
         self.root.after(0, self._reveal_result)
 
+    def _busy_disabled(self) -> tuple:
+        """Controls that must not act while a comparison is in flight."""
+        return (self._compare_button, self._gallery_button, *self._result_actions)
+
+    def _start_measuring(self, source: Path, what: str) -> None:
+        """Clear the previous finding and show that a new one is being made.
+
+        The old result comes off the screen the moment a new comparison starts.
+        It described a different recording, and leaving it up - even with a
+        status line running underneath - invites reading it as the answer for
+        this one.
+        """
+        self.banner.hide()
+        self._result_empty.pack_forget()
+        self._result_body.pack_forget()
+        self.busy_var.set(f"{what} {source.name}…")
+        self._result_busy.pack(fill="x", before=self._disclaimer_label)
+        self._busy_bar.start(12)
+        for button in self._busy_disabled():
+            button.configure(state="disabled")
+
+    def _finish_measuring(self) -> None:
+        self._busy_bar.stop()
+        self._result_busy.pack_forget()
+        for button in self._busy_disabled():
+            button.configure(state="normal")
+        # Nothing was produced (an error, or a cancelled speaker picker): show
+        # the empty state rather than restoring a result about another
+        # recording.
+        if not self._result_body.winfo_manager():
+            self._result_empty.pack(fill="x", before=self._disclaimer_label)
+
     def _reveal_result(self) -> None:
         self._result_empty.pack_forget()
+        self._result_busy.pack_forget()
         self._result_body.pack(fill="both", expand=True, before=self._disclaimer_label)
 
     def _show_comparison(self, result: ComparisonResult) -> None:
@@ -650,6 +715,12 @@ class SpeakerCompareTab:
             self.result_warnings.show("warning", "  ".join(result.warnings))
         else:
             self.result_warnings.hide()
+
+    def _fail(self, exc: Exception) -> None:
+        """A failed comparison must not leave the previous one standing."""
+        message = friendly_error(exc)
+        self._status(message)
+        self.root.after(0, lambda: self.banner.show("error", message))
 
     def _report_unusable(self, measured: object) -> None:
         """Not enough speech to measure is a result, and it has to look like one."""
