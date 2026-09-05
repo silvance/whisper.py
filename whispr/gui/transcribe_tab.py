@@ -961,6 +961,9 @@ class TranscribeTab:
         self._clear_session_wav()
         try:
             self.transcript_view.set_result(None, {})
+            # The summary names a recording. Left standing, it names the
+            # previous one while the next is being transcribed.
+            self.root.after(0, lambda: self.result_summary_var.set(""))
             jobs = self._collect_jobs()
             if not jobs:
                 message = (
