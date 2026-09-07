@@ -25,6 +25,14 @@ from tkinter import filedialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Any, Callable, List, Optional, Tuple
 
+from ..comparison_log import (
+    ProfileError as _LogError,
+)
+from ..comparison_log import (
+    record_from_comparison,
+    record_from_gallery,
+    save_comparison,
+)
 from ..enrollment import (
     parse_time_ranges,
     prepare_source,
@@ -110,6 +118,8 @@ class SpeakerCompareTab:
         # attaches a transcript that is actually of the questioned audio.
         self._questioned_sources: set = set()
         self._comparisons: List[ComparisonResult] = []
+        # Set by the app so a new comparison shows up in the history page.
+        self.on_history_changed: Optional[Callable[[], None]] = None
         self._embedder: Optional[SpeakerEmbedder] = None
         self._last_result: Optional[ComparisonResult] = None
 
@@ -572,6 +582,14 @@ class SpeakerCompareTab:
             self._last_result = result
             self._comparisons.append(result)
             self._questioned_sources.add(measured.source_sha256 or "")
+            self._log(
+                record_from_comparison(
+                    result,
+                    profile=profile,
+                    questioned_path=str(source),
+                    questioned_spans=measured.embedded_spans,
+                )
+            )
             self.root.after(0, lambda: self._show_comparison(result))
             self._status("Comparison complete.")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
@@ -600,12 +618,48 @@ class SpeakerCompareTab:
                 self._profiles,
                 questioned_model=bundled_model_identity(),
             )
+            self._log(
+                record_from_gallery(
+                    result,
+                    questioned_seconds=measured.speech_seconds,
+                    questioned_quality=measured.quality,
+                    questioned_window_count=measured.window_count,
+                    questioned_path=str(source),
+                    questioned_spans=measured.embedded_spans,
+                    embedding_model=self._model_description(),
+                )
+            )
             self.root.after(0, lambda: self._show_gallery(measured, result))
             self._status("Search complete.")
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator
             self._fail(exc)
         finally:
             self.root.after(0, self._finish_measuring)
+
+    @staticmethod
+    def _model_description() -> str:
+        """The embedding model behind a gallery search, for the record."""
+        identity = bundled_model_identity()
+        return identity.describe() if identity is not None else ""
+
+    def _log(self, record: object) -> None:
+        """Write the record of a comparison, without ever failing the comparison.
+
+        The finding is on screen either way; a history that could not be written
+        is worth saying out loud but is not a reason to lose the result.
+        """
+        try:
+            save_comparison(record)  # type: ignore[arg-type]
+        except _LogError as exc:
+            message = (
+                "The comparison ran, but it could not be added to the history: "
+                f"{friendly_error(exc)}"
+            )
+            self.root.after(0, lambda: self.banner.show("warning", message))
+            return
+        refresh = self.on_history_changed
+        if refresh is not None:
+            self.root.after(0, refresh)
 
     # -- Output -------------------------------------------------------------
 
