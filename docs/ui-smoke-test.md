@@ -109,6 +109,34 @@ font change spacing, and that is exactly what this list is for.
 - [ ] **Full result text** expands to the copyable block; Export report… and
       Copy result work.
 
+## Comparison History
+
+- [ ] Running a comparison on Compare Speakers adds a row here without a
+      restart, and the row names the recording, the subject and the score.
+- [ ] Every outcome is listed, not only the interesting ones: high,
+      intermediate, low, insufficient data, and a refused model mismatch.
+- [ ] **Type** distinguishes a 1:1 comparison from a gallery search.
+- [ ] The **Subject** and **Recording** filters both narrow the list, and the
+      line underneath says how many of how many are shown.
+- [ ] Selecting a row fills the detail: score against the threshold in force at
+      the time, the questioned speech and the ranges it came from, the source
+      SHA-256, what the reference profile held **at the time**, the voice model
+      and the application version.
+- [ ] A gallery row shows the whole ranking, the margin over the runner-up, and
+      no reference-profile facts (there was no single reference).
+- [ ] The disclaimer sits at the end of the detail, below the ranking and any
+      caveats — never above them.
+- [ ] Deleting a speaker profile leaves its comparisons in the history, marked
+      **(deleted)**.
+- [ ] Moving or removing a questioned recording shows "not at this location
+      now" against the record, which is otherwise unchanged.
+- [ ] **Export as CSV…** writes the filtered rows; the file has one row per
+      comparison and no percentages anywhere.
+- [ ] **Delete entry** is disabled with nothing selected, looks destructive, and
+      asks before removing one record.
+- [ ] Nowhere on the page is a score shown as a percentage, a "match", or a
+      confirmation of identity.
+
 ## Live and Translate
 
 - [ ] Each opens with its title and sentence, and has one obvious primary

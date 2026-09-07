@@ -31,6 +31,7 @@ from ..resources import (
     find_ffmpeg,
 )
 from ..settings import load_settings, save_settings
+from .comparison_log_tab import ComparisonLogTab
 from .live_tab import LiveTab
 from .speaker_compare_tab import SpeakerCompareTab
 from .speaker_profiles_tab import SpeakerProfilesTab
@@ -152,6 +153,15 @@ class WhisprApp:
                 get_analysis=self.transcribe.current_analysis,
             )
             self._tabs.append(self.speaker_compare)
+
+            # The record of what was actually run. It sits after the pages that
+            # produce it, and refreshes when one of them writes an entry.
+            history_root = self._add_page("history", "Comparison History")
+            self.comparison_log = ComparisonLogTab(
+                history_root, self.root, self.cancel_event, self.cancel
+            )
+            self._tabs.append(self.comparison_log)
+            self.speaker_compare.on_history_changed = self.comparison_log.refresh
 
         if show_live:
             live_root = self._add_page("live", "Live")
@@ -303,6 +313,9 @@ class WhisprApp:
             "   speaker to profile… (under the transcript) adds that speaker's\n"
             "   audio to a subject. It is held pending review until you approve\n"
             "   it on Speaker Profiles.\n"
+            "• Comparison History is the record of every comparison this copy\n"
+            "   has run: the recording, the speech measured, the score, and what\n"
+            "   the reference profile held at the time.\n"
             "• Compare Speakers measures how similar a speaker in a questioned\n"
             "   recording is to one of those references. The result is an\n"
             "   investigative lead for review — never an identification.\n"
