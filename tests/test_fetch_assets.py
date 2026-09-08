@@ -11,6 +11,49 @@ fetch_assets = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(fetch_assets)
 
 
+def test_every_model_the_application_offers_can_be_bundled():
+    """The dropdown and the bundler must agree on the model names.
+
+    They are two lists in two files that have to stay in step, and they drifted:
+    the application offered "turbo" while the bundler had no repository for it,
+    so a release build that asked for it failed - after downloading every model
+    named before it.
+    """
+    from whispr.transcription import MODEL_SIZES
+
+    missing = [name for name in MODEL_SIZES if name not in fetch_assets.MODEL_REPOS]
+    assert not missing, (
+        f"{missing} can be chosen in the application but cannot be bundled; "
+        "add them to MODEL_REPOS in packaging/fetch_assets.py"
+    )
+
+
+def test_unknown_model_is_refused_before_anything_is_downloaded(monkeypatch):
+    """A bad name fails in seconds, not after gigabytes."""
+    downloads = []
+
+    def _never(*args, **kwargs):
+        downloads.append(kwargs.get("repo_id"))
+
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "huggingface_hub",
+        type("m", (), {"snapshot_download": _never}),
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        fetch_assets.fetch_models(["base.en", "small", "not-a-model"])
+    assert "not-a-model" in str(excinfo.value)
+    assert downloads == []
+
+
+def test_turbo_resolves_to_the_repository_faster_whisper_itself_uses():
+    """A bundled model must be the weights a non-bundled run would have fetched."""
+    assert (
+        fetch_assets.MODEL_REPOS["turbo"]
+        == "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
+    )
+
+
 def test_resolve_embedding_alias():
     name, url = fetch_assets._resolve_embedding("titanet-large")
     assert name == "titanet-large"

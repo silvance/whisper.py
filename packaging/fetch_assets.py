@@ -7,7 +7,12 @@ needs network access.
 Usage::
 
     python packaging/fetch_assets.py ffmpeg
-    python packaging/fetch_assets.py models small,medium,large-v3
+    python packaging/fetch_assets.py models small,medium,turbo
+
+Model names are the ones the application itself offers (see
+``whispr.transcription.MODEL_SIZES``); ``turbo`` and ``large-v3`` are ~1.6 GB
+each, so a bundle carrying either will exceed a 2 GB GitHub release asset once
+anything else is added.
 
 Requires the build extras: ``pip install "silvance-whisper[bundle]"``.
 """
@@ -41,6 +46,9 @@ MODEL_REPOS = {
     "medium": "Systran/faster-whisper-medium",
     "medium.en": "Systran/faster-whisper-medium.en",
     "large-v3": "Systran/faster-whisper-large-v3",
+    # faster-whisper resolves "turbo" to this repository rather than a Systran
+    # one, so a bundled turbo is the same weights a non-bundled run would fetch.
+    "turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
 }
 
 # sherpa-onnx diarization models, downloaded from the official k2-fsa GitHub
@@ -134,11 +142,16 @@ def fetch_models(names: List[str]) -> None:
     """Download each named CTranslate2 model into ``whispr_assets/models/<name>``."""
     from huggingface_hub import snapshot_download
 
+    # Check the whole list first. Validating inside the loop meant a typo in the
+    # last name was only reported after every model before it had been fetched -
+    # gigabytes downloaded for a build that was always going to fail.
+    unknown = [name for name in names if name not in MODEL_REPOS]
+    if unknown:
+        raise SystemExit(
+            f"unknown model(s) {', '.join(repr(n) for n in unknown)}; "
+            f"choose from {', '.join(MODEL_REPOS)}"
+        )
     for name in names:
-        if name not in MODEL_REPOS:
-            raise SystemExit(
-                f"unknown model '{name}'; choose from {', '.join(MODEL_REPOS)}"
-            )
         out = ASSETS / "models" / name
         out.mkdir(parents=True, exist_ok=True)
         snapshot_download(

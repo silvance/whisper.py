@@ -25,7 +25,7 @@ on:
         options: [both, linux, windows]
         default: both
       models:
-        description: "Comma-separated models to bundle (e.g. base.en,small,medium,large-v3)"
+        description: "Comma-separated models to bundle: tiny, base, small, medium, large-v3, turbo, and the .en variants of tiny/base/small/medium (e.g. base.en,small,turbo). turbo and large-v3 are ~1.6 GB each."
         default: "base.en"
       diarizer:
         description: "Diarization backend to bundle (both = pyannote + sherpa, selectable at runtime; pyannote = best on hard audio; sherpa = smallest)"
