@@ -10,13 +10,22 @@ font change spacing, and that is exactly what this list is for.
 
 ## Before anything else: is this copy intact?
 
-- [ ] From a terminal in the extracted folder, `whispr --self-test`
-      (`whispr.exe --self-test` on Windows) prints the report and exits 0.
-- [ ] It names the build ID and commit, and lists the models actually bundled.
-- [ ] If it fails with a missing module (`No module named '_socket'` and the
-      like), the extraction is incomplete rather than the build being broken -
-      extract the archive again with 7-Zip rather than Windows Explorer, which
-      is unreliable on archives of several GB, and re-run the self-test.
+Do this first, on the machine that will actually run it, and before reading any
+traceback. A bundle damaged in transit fails at whichever file it reaches first,
+which can be a different file on each run.
+
+- [ ] From a terminal in the extracted folder, `whispr --verify`
+      (`whispr.exe --verify` on Windows) reports that the copy matches the build
+      and exits 0.
+- [ ] If it names missing, altered or unreadable files, the copy is the problem
+      and not the software. Extract the archive again with 7-Zip rather than
+      Windows Explorer, which is unreliable on archives of several GB; copy the
+      extracted folder to a local disk rather than running it from removable
+      media; and check whether a scanner has quarantined anything.
+- [ ] If it reports that there is no inventory to check against, the bundle
+      predates this check - rebuild before deploying.
+- [ ] `whispr --self-test` then prints the report and exits 0, naming the build
+      ID and commit and listing the models actually bundled.
 
 ## Startup
 

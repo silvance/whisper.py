@@ -19,12 +19,13 @@ from typing import Any, List, Optional
 # WhisprApp is resolved lazily by __getattr__ below, so it is not listed here:
 # naming it would make a static check demand a module-level import, which is the
 # one thing this module exists to avoid.
-__all__ = ["main", "self_test", "launch"]
+__all__ = ["main", "self_test", "verify_install", "launch"]
 
 USAGE = """Whispers - offline audio analysis
 
   whispr               open the application
   whispr --self-test   print what this copy can do, and exit
+  whispr --verify      check this copy against the build that made it
   whispr --help        show this message
 """
 
@@ -48,11 +49,34 @@ def self_test() -> int:
     return 0
 
 
+def verify_install() -> int:
+    """Check the installed files against the inventory the build recorded.
+
+    Answers the question a failing bundle actually poses: is the software wrong,
+    or did this copy of it arrive damaged? A copy that fails in a different
+    place on each run is the second, and this says so in a list of files rather
+    than in a traceback about whichever one was reached first.
+
+    Returns 1 when files are missing, altered or unreadable, and 2 when the
+    check could not be run at all - a copy that cannot be checked is not the
+    same as a copy that passed.
+    """
+    from .bundle_check import verify
+
+    result = verify()
+    print("\n".join(result.summary_lines()))
+    if not result.usable:
+        return 2
+    return 0 if result.intact else 1
+
+
 def main(argv: "Optional[List[str]]" = None) -> None:
-    """Run Whispers: the self-test if asked for it, otherwise the window."""
+    """Run Whispers: a check if asked for one, otherwise the window."""
     args = sys.argv[1:] if argv is None else list(argv)
     if "--self-test" in args:
         raise SystemExit(self_test())
+    if "--verify" in args:
+        raise SystemExit(verify_install())
     if "--help" in args or "-h" in args:
         print(USAGE)
         raise SystemExit(0)

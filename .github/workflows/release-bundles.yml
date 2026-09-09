@@ -193,6 +193,13 @@ jobs:
           --commit "${{ github.sha }}"
       - name: Build bundle
         run: pyinstaller --noconfirm packaging/whispr.spec
+      # Record what this build shipped, so the copy that reaches an air-gapped
+      # machine can be checked against it with `whispr --verify`. A bundle is
+      # thousands of files carried on removable media; when one goes missing the
+      # application fails at whichever piece it reaches first, which is a
+      # different piece on different runs and tells the operator nothing.
+      - name: Record bundle inventory
+        run: python packaging/write_inventory.py dist/whispr
       # Prove the executable actually starts before shipping it. PyInstaller
       # exiting 0 only means it wrote a directory; a bundle missing one stdlib
       # extension builds cleanly and then dies on the operator's desktop with a
@@ -200,11 +207,15 @@ jobs:
       # goes through that same startup and prints what this build can do.
       - name: Verify the bundle starts (Linux)
         if: runner.os == 'Linux'
-        run: ./dist/whispr/whispr --self-test
+        run: |
+          ./dist/whispr/whispr --self-test
+          ./dist/whispr/whispr --verify
       - name: Verify the bundle starts (Windows)
         if: runner.os == 'Windows'
         run: |
           & .\dist\whispr\whispr.exe --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\dist\whispr\whispr.exe --verify
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -232,7 +243,7 @@ jobs:
         run: |
           TAG="${{ steps.rel.outputs.tag }}"
           FILE=$(ls ${{ matrix.artifact }}.* | head -n1)
-          NOTES="Offline Whispers desktop bundle. Download the archive for your OS, unzip, and run whispr (whispr.exe on Windows) - no installation or network needed. Check the copy you extracted before relying on it: run \`whispr --self-test\` (\`whispr.exe --self-test\` on Windows) from a terminal, or use the in-app **System status** button. A partial extraction is the usual cause of a startup error, and the self-test is how you tell."
+          NOTES="Offline Whispers desktop bundle. Download the archive for your OS, unzip, and run whispr (whispr.exe on Windows) - no installation or network needed. Check the copy you extracted before relying on it: run \`whispr --verify\` (\`whispr.exe --verify\` on Windows) from a terminal. It compares every file against what this build shipped and names anything missing or altered - a copy damaged in transit is the usual cause of a startup error, and it can fail in a different place on each run. \`--self-test\` then prints what this copy can do, as does the in-app **System status** button."
           gh release create "$TAG" --repo "${{ github.repository }}" \
             --title "Whispers $TAG" --notes "$NOTES" "$FILE" \
           || gh release upload "$TAG" "$FILE" --clobber --repo "${{ github.repository }}"
