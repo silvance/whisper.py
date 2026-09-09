@@ -1,4 +1,6 @@
-from whispr import diagnostics
+import pytest
+
+from whispr import app, diagnostics
 from whispr.buildinfo import BuildInfo
 from whispr.diagnostics import Check, format_report, gather
 from whispr.hashing import sha256_file
@@ -229,3 +231,39 @@ def test_self_test_shows_the_thresholds_in_force(monkeypatch, tmp_path):
     assert "Recognition acceptance:" in report
     # Visible, with the caveat - not offered as a casual control.
     assert "not values calibrated" in report
+
+
+# -- headless self-test -----------------------------------------------------
+# `whispr --self-test` is what the release build runs against the frozen
+# executable to prove it starts. It must never need a display: a bundle that
+# only fails once a window opens is a bundle nobody checks.
+
+
+def test_self_test_prints_the_report_and_succeeds(capsys, monkeypatch):
+    launched = []
+    monkeypatch.setattr(app, "launch", lambda: launched.append(True))
+
+    with pytest.raises(SystemExit) as excinfo:
+        app.main(["--self-test"])
+    assert excinfo.value.code == 0
+    # No window was opened: this has to run on a build machine with no display.
+    assert launched == []
+    out = capsys.readouterr().out
+    assert "Whispers build self-test" in out
+
+
+def test_without_the_flag_the_gui_still_launches(monkeypatch):
+    launched = []
+    monkeypatch.setattr(app, "launch", lambda: launched.append(True))
+    app.main([])
+    assert launched == [True]
+
+
+def test_self_test_reports_a_reduced_build_rather_than_failing(monkeypatch):
+    """A build that leaves out translation is not ready for everything, and is
+    not broken for it - only a build that cannot run at all should fail CI."""
+    monkeypatch.setattr(diagnostics, "capabilities", lambda: [])
+    monkeypatch.setattr(app, "launch", lambda: None)
+    with pytest.raises(SystemExit) as excinfo:
+        app.main(["--self-test"])
+    assert excinfo.value.code == 0

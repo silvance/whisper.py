@@ -8,6 +8,16 @@ goes out, and after any change to `whispr/gui/`.
 Run it on the deployment machine if you can — Windows scaling and the platform
 font change spacing, and that is exactly what this list is for.
 
+## Before anything else: is this copy intact?
+
+- [ ] From a terminal in the extracted folder, `whispr --self-test`
+      (`whispr.exe --self-test` on Windows) prints the report and exits 0.
+- [ ] It names the build ID and commit, and lists the models actually bundled.
+- [ ] If it fails with a missing module (`No module named '_socket'` and the
+      like), the extraction is incomplete rather than the build being broken -
+      extract the archive again with 7-Zip rather than Windows Explorer, which
+      is unreliable on archives of several GB, and re-run the self-test.
+
 ## Startup
 
 - [ ] The window opens at a sensible size and can be resized down to its
