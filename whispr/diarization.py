@@ -141,6 +141,44 @@ def diarize(
     )
 
 
+def available_backends() -> List[str]:
+    """The diarization engines this build can actually run, preferred first.
+
+    An engine counts only when both halves are present: the library *and* the
+    models it needs, bundled. pyannote installed with no offline cache is not a
+    working diarizer on an air-gapped machine, and neither is sherpa-onnx with
+    no segmentation model beside it.
+    """
+    # Reached through the module rather than the names imported above, so a
+    # caller that redirects whispr.resources - a test, or a build pointed at a
+    # different asset root - sees the same answer here as everywhere else.
+    from . import resources
+
+    out: List[str] = []
+    if _pyannote_available() and resources.pyannote_cache_dir() is not None:
+        out.append("pyannote")
+    if (
+        _module_available("sherpa_onnx")
+        and resources.bundled_diarization_models() is not None
+    ):
+        out.append("sherpa")
+    return out
+
+
+def is_available() -> bool:
+    """True when speaker separation can run at all in this build."""
+    return bool(available_backends())
+
+
+def _module_available(name: str) -> bool:
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec(name) is not None
+    except ModuleNotFoundError:
+        return False
+
+
 def _pyannote_available() -> bool:
     import importlib.util
 
