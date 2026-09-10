@@ -425,10 +425,21 @@ class TranscribeTab:
         audio.pack(fill="x")
         ttk.Checkbutton(
             audio.body,
-            text="Skip silence (voice activity detection)",
+            text="Skip silence",
             variable=self.vad_var,
             style=Style.CHECK,
         ).pack(anchor="w")
+        ttk.Label(
+            audio.body,
+            text=(
+                "Passes over long gaps so a recording finishes sooner. On very "
+                "quiet or distant speech it can still cut a little; turn it off "
+                "if a recording matters more than the time it takes."
+            ),
+            style=Style.META,
+            wraplength=560,
+            justify="left",
+        ).pack(anchor="w", pady=(0, SPACE_XS))
         ttk.Checkbutton(
             audio.body,
             text="Convert video to audio first (ffmpeg)",
@@ -860,6 +871,35 @@ class TranscribeTab:
         """Put a result or a failure where it cannot be scrolled past."""
         self.root.after(0, lambda: self.banner.show(kind, message))
 
+    # How little of a recording has to reach the model before the operator is
+    # told. Long dead air is exactly what silence skipping is for, so this is
+    # deliberately not sensitive - it exists to catch the case where the filter
+    # ate the speech, not to comment on a quiet recording.
+    LOW_KEPT_FRACTION = 0.35
+
+    def _warn_if_much_was_skipped(self) -> None:
+        """Say so when silence skipping removed most of the recording.
+
+        The failure this guards against is silent by nature: audio the filter
+        discards never reaches the model, so a transcript missing half a
+        conversation looks exactly like a conversation that was half silence.
+        """
+        result = self._result
+        if result is None:
+            return
+        kept = result.kept_fraction
+        if kept is None or kept >= self.LOW_KEPT_FRACTION:
+            return
+        minutes = result.skipped_seconds / 60.0
+        message = (
+            f"Skip silence passed over {minutes:.1f} min of this recording — "
+            f"only {kept * 100:.0f}% of it was transcribed. If speech is "
+            "missing, turn off “Skip silence” in Advanced options and run it "
+            "again."
+        )
+        append_line(self.status, message)
+        self._announce("warning", message)
+
     def _describe_result(self) -> None:
         """The one-line account of what was produced, above the transcript."""
         result = self._result
@@ -873,6 +913,12 @@ class TranscribeTab:
             parts.append(f"language {result.language}")
         if result.duration:
             parts.append(f"{result.duration / 60:.1f} min")
+        kept = result.kept_fraction
+        if kept is not None and kept < 0.995:
+            # Silence skipping decides what the model never hears. An operator
+            # reading a transcript is entitled to know a quarter of the
+            # recording was dropped before it was written.
+            parts.append(f"{kept * 100:.0f}% listened to")
         speakers = {seg.speaker for seg in result.segments if seg.speaker}
         if speakers:
             parts.append(f"{len(speakers)} speaker(s)")
@@ -1060,6 +1106,7 @@ class TranscribeTab:
                 )
                 done += 1
             final_status = f"Finished {done} file(s)" if total > 1 else "Finished"
+            self._warn_if_much_was_skipped()
             self._announce(
                 "success",
                 f"Transcription complete — {done} recording(s)."

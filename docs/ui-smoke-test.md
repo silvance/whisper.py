@@ -73,6 +73,15 @@ which can be a different file on each run.
       run of words still reassigns speech.
 - [ ] A batch of several files still runs, and the queue summary appears with a
       **Clear list** action only when there is a queue.
+- [ ] **Skip silence** (Advanced options > Audio and output) carries a note
+      saying it can still cut very quiet speech and can be turned off.
+- [ ] On a recording with long gaps, the line above the transcript says what
+      share of it was listened to; on a clean recording it says nothing.
+- [ ] When silence skipping passes over most of a recording, an amber banner
+      says how many minutes went unheard and how to turn it off — and the same
+      line is in the Status tab.
+- [ ] Turning **Skip silence** off transcribes the whole recording and the
+      "% listened to" note disappears.
 
 ## Saving a corrected speaker to a subject
 
