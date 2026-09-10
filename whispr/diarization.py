@@ -16,7 +16,7 @@ import os
 import wave
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
 
 from .resources import bundled_diarization_models, pyannote_cache_dir
 from .thresholds import DIARIZATION_CLUSTERING_THRESHOLD
@@ -225,8 +225,11 @@ def _diarize_pyannote(
     Loads from a bundled offline HF cache (``whispr_assets/pyannote``) when
     present; otherwise from the normal HF cache using ``HF_TOKEN``.
 
-    pyannote runs inference as a single call, so cancellation is only honoured at
-    the phase boundaries here (before loading and before inference), not mid-pass.
+    pyannote runs inference as a single call; where the installed version accepts
+    a progress hook, that call reports its steps through one - which is both how
+    the bar advances during the pass and how cancellation is honoured inside it.
+    Without hook support it stays a single opaque call, cancellable only at the
+    phase boundaries either side.
     """
     if cancelled is not None and cancelled():
         raise CancelledError("Diarization cancelled.")
@@ -291,7 +294,9 @@ def _diarize_pyannote(
         raise CancelledError("Diarization cancelled.")
     if progress is not None:
         progress("Identifying speakers (pyannote)...")
-    params = {"num_speakers": num_speakers} if num_speakers else {}
+    params: "dict[str, Any]" = {"num_speakers": num_speakers} if num_speakers else {}
+    if _accepts_hook(pipeline):
+        params["hook"] = _pyannote_hook(progress, on_progress, cancelled)
     output = pipeline(str(wav_path), **params)
     annotation = _as_annotation(output)
 
@@ -303,6 +308,81 @@ def _diarize_pyannote(
     if on_progress is not None:
         on_progress(1.0)
     return segments
+
+
+# How much of a pyannote pass each step accounts for, so the bar advances
+# through the run instead of jumping from nothing to done at the end. The names
+# are pyannote's own and could change between versions: a step this build does
+# not recognise moves the label but holds the bar, which is honest about not
+# knowing rather than inventing a number.
+_PYANNOTE_STEPS = {
+    "segmentation": (0.0, 0.45),
+    "embeddings": (0.45, 0.95),
+}
+
+
+def _pyannote_hook(
+    progress: Optional[ProgressCallback],
+    on_progress: Optional[Callable[[float], None]],
+    cancelled: Optional[CancelCallback],
+):
+    """Build the callback pyannote reports its progress through.
+
+    pyannote runs its pipeline as one call, so without this the whole pass is a
+    single opaque wait - on a long recording, minutes during which the interface
+    can only say that something is happening. The hook is also the only place
+    cancellation can be honoured mid-pass rather than at the phase boundaries
+    either side of it.
+    """
+    fraction = 0.0
+    current_step = ""
+
+    def hook(
+        step_name: str,
+        step_artifact: Any = None,
+        file: Any = None,
+        total: Optional[int] = None,
+        completed: Optional[int] = None,
+    ) -> None:
+        nonlocal fraction, current_step
+        if cancelled is not None and cancelled():
+            raise CancelledError("Diarization cancelled.")
+        if step_name != current_step:
+            current_step = step_name
+            if progress is not None:
+                progress(f"Identifying speakers: {step_name}")
+        band = _PYANNOTE_STEPS.get(step_name)
+        if band is None:
+            moved = fraction
+        elif total:
+            low, high = band
+            moved = low + (high - low) * min(1.0, max(0, completed or 0) / total)
+        else:
+            moved = band[0]
+        # Never backwards: steps overlap and report unevenly, and a bar that
+        # retreats reads as something having gone wrong.
+        fraction = max(fraction, float(moved))
+        if on_progress is not None:
+            on_progress(fraction)
+
+    return hook
+
+
+def _accepts_hook(pipeline: Any) -> bool:
+    """Whether this pyannote build takes a progress hook.
+
+    Checked rather than attempted: calling with an unsupported keyword raises
+    TypeError, which is indistinguishable from a TypeError raised by a genuine
+    fault inside the pipeline.
+    """
+    import inspect
+
+    try:
+        return "hook" in inspect.signature(pipeline.apply).parameters
+    except (AttributeError, TypeError, ValueError):
+        # No apply, or one that cannot be introspected: assume no hook rather
+        # than fail the diarization over the question.
+        return False
 
 
 def _as_annotation(output):

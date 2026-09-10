@@ -1,5 +1,6 @@
 import pytest
 
+from whispr import diarization
 from whispr.diarization import SpeakerSegment, assign_speakers, diarize
 from whispr.transcription import Segment, Word
 
@@ -176,3 +177,88 @@ def test_diarize_sherpa_backend_forced(tmp_path, monkeypatch):
     wav.write_bytes(b"\x00")
     with pytest.raises(RuntimeError, match="sherpa-onnx is not installed"):
         diarize(wav, backend="sherpa")
+
+
+# -- progress through a pyannote pass ---------------------------------------
+# pyannote runs as one call. Without a hook the whole pass is an opaque wait,
+# which on a long recording is minutes of an interface that cannot say more than
+# "working". These cover the hook that reports it.
+
+
+def _hook(progress=None, on_progress=None, cancelled=None):
+    return diarization._pyannote_hook(progress, on_progress, cancelled)
+
+
+def test_progress_advances_through_a_step():
+    seen = []
+    hook = _hook(on_progress=seen.append)
+    hook("segmentation", total=10, completed=0)
+    hook("segmentation", total=10, completed=5)
+    hook("segmentation", total=10, completed=10)
+    assert seen == [0.0, pytest.approx(0.225), pytest.approx(0.45)]
+
+
+def test_progress_carries_on_into_the_next_step():
+    seen = []
+    hook = _hook(on_progress=seen.append)
+    hook("segmentation", total=4, completed=4)
+    hook("embeddings", total=4, completed=2)
+    assert seen[-1] == pytest.approx(0.7)
+
+
+def test_progress_never_goes_backwards():
+    """Steps overlap and report unevenly; a bar that retreats reads as a fault."""
+    seen = []
+    hook = _hook(on_progress=seen.append)
+    hook("embeddings", total=10, completed=10)
+    hook("segmentation", total=10, completed=1)
+    assert seen == [pytest.approx(0.95), pytest.approx(0.95)]
+
+
+def test_an_unknown_step_holds_the_bar_and_says_so():
+    """Better to admit the step is not understood than to invent a number."""
+    seen = []
+    said = []
+    hook = _hook(progress=said.append, on_progress=seen.append)
+    hook("segmentation", total=2, completed=2)
+    hook("some_future_step", total=100, completed=50)
+    assert seen[-1] == pytest.approx(0.45)
+    assert any("some_future_step" in message for message in said)
+
+
+def test_each_step_is_named_once_not_on_every_call():
+    said = []
+    hook = _hook(progress=said.append)
+    for done in range(4):
+        hook("segmentation", total=4, completed=done)
+    assert len(said) == 1
+
+
+def test_a_step_with_no_total_still_marks_where_it_started():
+    seen = []
+    hook = _hook(on_progress=seen.append)
+    hook("embeddings")
+    assert seen == [pytest.approx(0.45)]
+
+
+def test_cancelling_stops_the_pass_rather_than_waiting_for_it_to_finish():
+    hook = _hook(cancelled=lambda: True)
+    with pytest.raises(diarization.CancelledError):
+        hook("segmentation", total=10, completed=1)
+
+
+def test_a_pipeline_without_hook_support_is_detected_not_attempted():
+    """Calling with an unsupported keyword raises TypeError, which cannot be
+    told apart from a TypeError raised by a real fault inside the pipeline."""
+
+    class WithHook:
+        def apply(self, file, num_speakers=None, hook=None):
+            return None
+
+    class WithoutHook:
+        def apply(self, file, num_speakers=None):
+            return None
+
+    assert diarization._accepts_hook(WithHook()) is True
+    assert diarization._accepts_hook(WithoutHook()) is False
+    assert diarization._accepts_hook(object()) is False

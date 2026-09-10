@@ -878,6 +878,32 @@ class TranscribeTab:
             parts.append(f"{len(speakers)} speaker(s)")
         self.result_summary_var.set("  ·  ".join(parts))
 
+    def _begin_phase(self, message: str) -> None:
+        """Start a phase whose length is not yet known.
+
+        The bar goes back to moving and the label says what is starting. Without
+        this, the bar left over from the phase before sits at 100% while the next
+        one runs, which reads as finished rather than as busy.
+        """
+
+        def _do() -> None:
+            self.progress_bar.stop()
+            self.progress_bar.configure(mode="indeterminate")
+            self.progress_bar.start(12)
+            self.progress_label_var.set(message)
+
+        self.root.after(0, _do)
+
+    def _step(self, message: str) -> None:
+        """A named step: the Status tab records it, the line under the bar shows it.
+
+        Loading a model is a minute or more with nothing else to see. Sending
+        these only to the Status tab left the visible line saying whatever the
+        phase before had set, which on a long load reads as stuck.
+        """
+        append_line(self.status, message)
+        self.root.after(0, lambda: self.progress_label_var.set(message))
+
     def _set_progress(self, fraction: float, message: str) -> None:
         """Show real progress on a determinate bar (fraction is 0..1)."""
         pct = max(0.0, min(1.0, fraction)) * 100.0
@@ -1150,7 +1176,7 @@ class TranscribeTab:
                     vad_filter=self.vad_var.get(),
                     word_timestamps=need_words,
                     initial_prompt=self.vocab_var.get().strip() or None,
-                    progress=lambda msg: append_line(self.status, msg),
+                    progress=self._step,
                     on_progress=lambda f: self._set_progress(f, transcribe_label),
                     cancelled=self._cancel_event.is_set,
                 )
@@ -1255,13 +1281,15 @@ class TranscribeTab:
                 source, progress=lambda msg: append_line(self.status, msg)
             )
             diar_temp = diar_wav
+        # The bar is sitting at 100% from the transcription that just finished.
+        self._begin_phase("Identifying speakers…")
         try:
             speaker_segments = diarize(
                 diar_wav,
                 backend=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
                 num_speakers=self._parse_num_speakers(),
                 threshold=self._parse_threshold(),
-                progress=lambda msg: append_line(self.status, msg),
+                progress=self._step,
                 on_progress=lambda f: self._set_progress(f, "Identifying speakers"),
                 cancelled=self._cancel_event.is_set,
             )
