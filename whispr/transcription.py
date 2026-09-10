@@ -79,6 +79,18 @@ MODEL_SIZES = (
     "turbo",
 )
 
+# What a fresh install starts on, and the order it falls back through when the
+# build does not carry that model.
+#
+# medium, because the recordings this is pointed at are covert and often muffled
+# or distant, where a larger model is the difference between a usable transcript
+# and a guess - and an operator who never opens a settings panel should get the
+# one that copes. It is multilingual, which the .en models are not: the same
+# operators work in the languages this build ships translation packs for. It is
+# slower per minute of audio than base.en, and that is the trade being made.
+DEFAULT_MODEL = "medium"
+MODEL_PREFERENCE = ("medium", "small", "base.en", "base")
+
 
 @dataclass
 class Word:

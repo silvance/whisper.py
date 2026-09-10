@@ -1,6 +1,6 @@
 import pytest
 
-from whispr import app, diagnostics
+from whispr import app, diagnostics, diarization
 from whispr.buildinfo import BuildInfo
 from whispr.diagnostics import Check, format_report, gather
 from whispr.hashing import sha256_file
@@ -51,6 +51,10 @@ def _all_present(monkeypatch, tmp_path, *, embedding_name="titanet-large"):
     embedding = tmp_path / "embedding.onnx"
     embedding.write_bytes(b"embedding-model-bytes")
     monkeypatch.setattr(diagnostics, "_installed", lambda module: True)
+    # The diarizer decides for itself whether it has an engine, so a "complete
+    # build" has to look complete from there too.
+    monkeypatch.setattr(diarization, "_pyannote_available", lambda: True)
+    monkeypatch.setattr(diarization, "_module_available", lambda name: True)
     monkeypatch.setattr(diagnostics.resources, "find_ffmpeg", lambda: ffmpeg)
     monkeypatch.setattr(diagnostics.resources, "bundled_models", lambda: ["base.en"])
     monkeypatch.setattr(diagnostics.resources, "pyannote_cache_dir", lambda: tmp_path)

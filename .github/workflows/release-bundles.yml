@@ -25,8 +25,8 @@ on:
         options: [both, linux, windows]
         default: both
       models:
-        description: "Comma-separated models to bundle: tiny, base, small, medium, large-v3, turbo, and the .en variants of tiny/base/small/medium (e.g. base.en,small,turbo). turbo and large-v3 are ~1.6 GB each."
-        default: "base.en"
+        description: "Comma-separated models to bundle: tiny, base, small, medium, large-v3, turbo, and the .en variants of tiny/base/small/medium (e.g. base.en,small,turbo). The application starts on medium, so a bundle without it falls back to whatever it does carry. turbo and large-v3 are ~1.6 GB each; medium is ~1.5 GB."
+        default: "base.en,medium"
       diarizer:
         description: "Diarization backend to bundle (both = pyannote + sherpa, selectable at runtime; pyannote = best on hard audio; sherpa = smallest)"
         type: choice
@@ -166,7 +166,7 @@ jobs:
       - name: Fetch ffmpeg
         run: python packaging/fetch_assets.py ffmpeg
       - name: Fetch models
-        run: python packaging/fetch_assets.py models ${{ github.event.inputs.models || 'base.en,small,medium,large-v3' }}
+        run: python packaging/fetch_assets.py models ${{ github.event.inputs.models || 'base.en,medium' }}
       - name: Fetch speaker embedding model (voiceprints + comparison)
         run: python packaging/fetch_assets.py embedding ${{ env.EMBEDDING }}
       - name: Fetch diarization segmentation model (sherpa-onnx)

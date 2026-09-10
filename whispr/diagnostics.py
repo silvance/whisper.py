@@ -239,15 +239,12 @@ def _can_transcribe() -> Capability:
 
 
 def _can_diarize() -> Capability:
-    pyannote = _installed("pyannote.audio") and (
-        resources.pyannote_cache_dir() is not None
-    )
-    sherpa = _installed("sherpa_onnx") and (
-        resources.bundled_diarization_models() is not None
-    )
-    engines = [
-        name for name, ready in (("pyannote", pyannote), ("sherpa", sherpa)) if ready
-    ]
+    # Asked of the diarizer itself, so the report and the application's own
+    # default for "Identify who is speaking" cannot disagree about whether this
+    # build can separate speakers.
+    from .diarization import available_backends
+
+    engines = available_backends()
     return Capability(
         "Can separate speakers",
         bool(engines),

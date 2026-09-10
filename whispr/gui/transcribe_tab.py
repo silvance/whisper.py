@@ -29,6 +29,7 @@ from ..acceleration import (
 )
 from ..acceleration import resolve as resolve_device
 from ..diarization import assign_speakers, diarize
+from ..diarization import is_available as diarization_available
 from ..enrollment import enroll_from_media, enroll_from_wav, spans_by_speaker_name
 from ..export import transcript_to_docx
 from ..playback import PlaybackError, SegmentPlayer, playback_available
@@ -61,6 +62,8 @@ from ..speaker_profiles import (
 from ..thresholds import active as active_thresholds
 from ..transcription import (
     AUDIO_EXTENSIONS,
+    DEFAULT_MODEL,
+    MODEL_PREFERENCE,
     MODEL_SIZES,
     CancelledError,
     TranscriptionResult,
@@ -182,12 +185,12 @@ class TranscribeTab:
         self._on_cancel = on_cancel
         self._dnd_ok = dnd_ok
 
-        # Bundled (offline) models take priority so the app works air-gapped.
-        # Prefer the fast English base.en, then small, else the first bundled.
+        # Bundled (offline) models take priority so the app works air-gapped;
+        # the order preferred is DEFAULT_MODEL first, and why is stated there.
         self._bundled_models = bundled_models()
-        default_model = "base.en"
+        default_model = DEFAULT_MODEL
         if self._bundled_models:
-            for preferred in ("base.en", "small"):
+            for preferred in MODEL_PREFERENCE:
                 if preferred in self._bundled_models:
                     default_model = preferred
                     break
@@ -211,7 +214,12 @@ class TranscribeTab:
         # baseline; a GPU only makes the same work finish sooner.
         self.device_var = tk.StringVar(value=_device_label(DEFAULT_MODE))
         self.convert_video_var = tk.BooleanVar(value=True)
-        self.diarize_var = tk.BooleanVar(value=False)
+        # On by default wherever this build can actually do it. Nearly every
+        # recording this is pointed at has more than one voice in it, and who
+        # said what is half the answer - an operator should not have to know to
+        # ask for it. Left off when no engine is bundled, so the first run of a
+        # transcribe-only build cannot fail on a box it was never given.
+        self.diarize_var = tk.BooleanVar(value=diarization_available())
         self.engine_var = tk.StringVar(value=ENGINE_LABELS[0])
         self.num_speakers_var = tk.StringVar(value="")
         # Optional per-speaker names, created to match the speaker count and
