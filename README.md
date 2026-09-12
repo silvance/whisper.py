@@ -607,7 +607,20 @@ To change a version deliberately, on a branch:
 python packaging/check_lock.py --write   # re-pin to what is installed
 ```
 
-read the diff, build a bundle, test it, then merge. For the model weights, delete
+read the diff, build a bundle, test it, then merge.
+
+**One gap, and how to close it.** The lock pins what could be resolved without a
+build machine. `pyannote.audio` brings its own tree — lightning, torchmetrics,
+speechbrain and the rest — and those are not yet pinned, so they can still move
+under a rebuild of a diarizing bundle. Every release run records what it actually
+installed and uploads it as `pip-freeze.txt` beside the asset lock; pour that into
+the lock on a branch:
+
+```bash
+python packaging/check_lock.py --write --from-freeze pip-freeze.txt --add-all
+```
+
+Do it from the run that produced the bundle you tested, read the diff, and merge. For the model weights, delete
 the entry you want to move (or the whole `assets.lock.json`), run a build, and
 commit the lock it uploads as `<artifact>-assets-lock`. An update nobody chose is
 what this prevents; an update somebody chose is one commit.
