@@ -55,8 +55,10 @@ from ..provenance import (
 )
 from ..reports import write_analysis_report
 from ..resources import bundled_embedding_model, bundled_models
+from ..run_summary import SkippedRun, completion, much_was_skipped, per_file_note
 from ..speaker_count import UNKNOWN as SPEAKERS_UNKNOWN
 from ..speaker_count import UNSET as SPEAKERS_UNSET
+from ..speaker_names import preset_names
 from ..speaker_profiles import (
     SAMPLE_LEARNED,
     ProfileError,
@@ -265,6 +267,8 @@ class TranscribeTab:
         self._diarized_count = 0
         # Speaker tags changed by hand since that run - what redoing it spends.
         self._speaker_edits = 0
+        # Recordings this run's silence filter mostly passed over, in order.
+        self._skipped_much: "List[SkippedRun]" = []
         # Traceability for the displayed result: source hash, models, settings.
         self._result_provenance: Optional[AnalysisProvenance] = None
 
@@ -1026,34 +1030,30 @@ class TranscribeTab:
         """Put a result or a failure where it cannot be scrolled past."""
         self.root.after(0, lambda: self.banner.show(kind, message))
 
-    # How little of a recording has to reach the model before the operator is
-    # told. Long dead air is exactly what silence skipping is for, so this is
-    # deliberately not sensitive - it exists to catch the case where the filter
-    # ate the speech, not to comment on a quiet recording.
-    LOW_KEPT_FRACTION = 0.35
-
-    def _warn_if_much_was_skipped(self) -> None:
-        """Say so when silence skipping removed most of the recording.
+    def _note_if_much_was_skipped(
+        self, result: TranscriptionResult, source: Path
+    ) -> None:
+        """Record a recording the silence filter mostly passed over.
 
         The failure this guards against is silent by nature: audio the filter
         discards never reaches the model, so a transcript missing half a
         conversation looks exactly like a conversation that was half silence.
+
+        Called for every file, not just the one that ends up on screen. In a
+        batch only the last result is displayed, so a gutted first file would
+        otherwise finish with no sign that anything was missing from it.
         """
-        result = self._result
-        if result is None:
-            return
         kept = result.kept_fraction
-        if kept is None or kept >= self.LOW_KEPT_FRACTION:
+        if not much_was_skipped(kept):
             return
-        minutes = result.skipped_seconds / 60.0
-        message = (
-            f"Skip silence passed over {minutes:.1f} min of this recording — "
-            f"only {kept * 100:.0f}% of it was transcribed. If speech is "
-            "missing, turn off “Skip silence” in Advanced options and run it "
-            "again."
-        )
-        append_line(self.status, message)
-        self._announce("warning", message)
+        assert kept is not None  # much_was_skipped ruled out None
+        run = SkippedRun(source.name, result.skipped_seconds / 60.0, kept)
+        self._skipped_much.append(run)
+        append_line(self.status, per_file_note(run))
+
+    def _completion_message(self, done: int, total: int) -> "Tuple[str, str]":
+        """The one banner a finished run leaves behind, and its kind."""
+        return completion(done, total, self._skipped_much)
 
     def _describe_result(self) -> None:
         """The one-line account of what was produced, above the transcript."""
@@ -1243,6 +1243,7 @@ class TranscribeTab:
         # Drop any prior run's kept audio so a correction can only ever enrol
         # against audio from this run's diarized file(s).
         self._clear_session_wav()
+        self._skipped_much = []
         try:
             self.transcript_view.set_result(None, {})
             # The summary names a recording. Left standing, it names the
@@ -1283,13 +1284,10 @@ class TranscribeTab:
                 )
                 done += 1
             final_status = f"Finished {done} file(s)" if total > 1 else "Finished"
-            self._warn_if_much_was_skipped()
-            self._announce(
-                "success",
-                f"Transcription complete — {done} recording(s)."
-                if total > 1
-                else "Transcription complete.",
-            )
+            kind, message = self._completion_message(done, total)
+            if kind == "warning":
+                append_line(self.status, message)
+            self._announce(kind, message)
             self.root.after(0, self._describe_result)
         except CancelledError:
             append_line(self.status, "Cancelled.")
@@ -1467,6 +1465,8 @@ class TranscribeTab:
                 self._speaker_edits = 0
                 self.transcript_view.set_result(result, names)
                 self._update_redo_state()
+
+            self._note_if_much_was_skipped(result, src)
 
             if save_dir is not None:
                 self._save_outputs(result, src, save_dir, names)
@@ -1681,7 +1681,7 @@ class TranscribeTab:
             # The hand corrections were made against the old split and are gone
             # with it; the operator was told so before this started.
             self._speaker_edits = 0
-            names = self._preset_names_for(result)
+            names = self._preset_names_for(result, typed_names=False)
             self._speaker_names = names
             self.transcript_view.set_result(result, names)
             self._record_redo_provenance(requested)
@@ -1872,6 +1872,15 @@ class TranscribeTab:
         # enrolment must not attach its corrections to a stale recording.
         self._clear_session_wav()
         self._recognized_names = {}
+        # Nor may the speaker split be redone: the words on screen came out of a
+        # file, not out of this session, and the audio behind them is not here.
+        # The button is disabled by _can_redo_speakers either way; this stops it
+        # sitting there enabled, offering something that would only refuse.
+        self._undiarized_segments = None
+        self._diarized_count = 0
+        self._speaker_edits = 0
+        self._speaker_choice_used = SPEAKERS_UNSET
+        self._update_redo_state()
         self.transcript_view.set_result(result, self._speaker_names)
         self.progress_label_var.set(f"Opened {Path(path).name}")
 
@@ -1949,29 +1958,21 @@ class TranscribeTab:
         seconds = max(0, int(seconds))
         return f"{seconds // 60}:{seconds % 60:02d}"
 
-    def _preset_names_for(self, result: TranscriptionResult) -> Dict[str, str]:
+    def _preset_names_for(
+        self, result: TranscriptionResult, *, typed_names: bool = True
+    ) -> Dict[str, str]:
         """Build a speaker-id -> display-name map for this result.
 
-        Voices recognised from the active profile are applied first (their ids
-        already carry the person's name). Any remaining, unrecognised speakers are
-        matched to the Speaker N fields in label order (SPEAKER_00 -> "Speaker 1",
-        ...); the labelling the diarizer assigns is arbitrary, so the operator may
-        still need to swap two names - one click per [speaker] tag.
+        ``typed_names`` is False when re-splitting an existing transcript: see
+        :mod:`whispr.speaker_names` for why a typed name may not travel across
+        a new split and a recognised one may.
         """
-        ids = sorted({seg.speaker for seg in result.segments if seg.speaker})
-        # Recognised ids (voice::Name) already map to a display name; keep only
-        # those present in this result.
-        names: Dict[str, str] = {
-            sid: self._recognized_names[sid]
-            for sid in ids
-            if sid in self._recognized_names
-        }
-        unrecognised = [sid for sid in ids if sid not in names]
-        for sid, var in zip(unrecognised, self.speaker_name_vars):
-            name = var.get().strip()
-            if name:
-                names[sid] = name
-        return names
+        return preset_names(
+            (seg.speaker or "" for seg in result.segments),
+            self._recognized_names,
+            [var.get() for var in self.speaker_name_vars],
+            use_typed=typed_names,
+        )
 
     # -- Voiceprint recognition / enrolment --------------------------------
 

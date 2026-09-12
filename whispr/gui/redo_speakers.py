@@ -85,16 +85,20 @@ def ask_redo_speakers(
     )
     combo.pack(anchor="w", pady=(SPACE_XS, SPACE_MD))
 
+    # Said plainly, because it is the one thing this costs: the new split
+    # numbers its speakers from scratch, so "Speaker 1" afterwards need not be
+    # the person "Speaker 1" was before, and no name is carried across.
     warning = (
-        "The words stay exactly as transcribed. Only the speaker tags are "
-        "worked out again."
+        "Speakers are numbered again from scratch, so any names have to be put "
+        "back afterwards. The words stay exactly as transcribed."
     )
     if corrections:
         tags = "tag" if corrections == 1 else "tags"
         warning = (
             f"The {corrections} speaker {tags} you corrected by hand will be "
-            "replaced, along with any names you gave them. The words stay "
-            "exactly as transcribed."
+            "replaced, and speakers are numbered again from scratch, so any "
+            "names have to be put back afterwards. The words stay exactly as "
+            "transcribed."
         )
     ttk.Label(
         frame,
