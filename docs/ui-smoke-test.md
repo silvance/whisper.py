@@ -57,7 +57,8 @@ which can be a different file on each run.
       keeps the availability note underneath correct.
 - [ ] **Advanced options** opens and closes, and contains hardware, silence
       skipping, the speaker method, sensitivity, expected words, conversion,
-      subtitles, formatting and the operation profile.
+      subtitles, formatting and the operation profile. The number of speakers is
+      *not* in there — a line in Speaker separation says where it went.
 - [ ] **Running:** the primary button is disabled, Cancel is enabled, the
       progress bar moves, and the line beneath it names the current step in
       words. The settings put themselves away.
@@ -82,6 +83,24 @@ which can be a different file on each run.
       line is in the Status tab.
 - [ ] Turning **Skip silence** off transcribes the whole recording and the
       "% listened to" note disappears.
+
+### How many people are speaking
+
+- [ ] With **Identify who is speaking** ticked, the question sits directly under
+      it in Options, reading "Choose…" on a first launch, with a note about what
+      "Not sure" costs.
+- [ ] Selecting **Transcribe recording** without answering does not start the
+      run: the settings reopen, an amber banner asks the question, the line
+      under the progress bar says what it is waiting for, and the dropdown takes
+      focus.
+- [ ] Answering it takes the banner down and returns the line to Idle; the same
+      button then starts the run.
+- [ ] Choosing a number shows that many **Speaker names** fields in Advanced
+      options; "Not sure" shows none.
+- [ ] Unticking **Identify who is speaking** removes the question entirely, and
+      the run starts without it.
+- [ ] The answer is remembered across a relaunch and travels with an operation
+      profile. An operator upgrading from a build that never asked is asked once.
 
 ## Saving a corrected speaker to a subject
 

@@ -19,6 +19,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Callable, Dict, List, Optional, Tuple
 
+from .. import speaker_count
 from ..acceleration import (
     DEFAULT_MODE,
     MODE_LABELS,
@@ -53,6 +54,7 @@ from ..provenance import (
 )
 from ..reports import write_analysis_report
 from ..resources import bundled_embedding_model, bundled_models
+from ..speaker_count import UNSET as SPEAKERS_UNSET
 from ..speaker_profiles import (
     SAMPLE_LEARNED,
     ProfileError,
@@ -221,7 +223,15 @@ class TranscribeTab:
         # transcribe-only build cannot fail on a box it was never given.
         self.diarize_var = tk.BooleanVar(value=diarization_available())
         self.engine_var = tk.StringVar(value=ENGINE_LABELS[0])
+        # The count handed to the diarizer ("" = work it out). Written by the
+        # dropdown below, and the value a profile and a run record.
         self.num_speakers_var = tk.StringVar(value="")
+        # What the operator answered. Starts unanswered on purpose: a run with
+        # "Identify who is speaking" on does not start until this says something.
+        self.speaker_count_var = tk.StringVar(value=SPEAKERS_UNSET)
+        # Whether a Run was turned away for want of that answer, so the notice
+        # comes down as soon as it is given.
+        self._awaiting_speaker_count = False
         # Optional per-speaker names, created to match the speaker count and
         # applied to the diarized transcript (Speaker 1 -> first speaker, etc.).
         self.speaker_name_vars: List[tk.StringVar] = []
@@ -391,15 +401,17 @@ class TranscribeTab:
             style=Style.META,
         ).grid(row=4, column=0, columnspan=2, sticky="w", padx=(SPACE_XL, 0))
 
+        self._build_speaker_count_row(body, row=5)
+
         ttk.Checkbutton(
             body,
             text="Save a copy to a folder",
             variable=self.write_output_var,
             command=self._update_output_state,
             style=Style.CHECK,
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(SPACE_MD, 0))
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(SPACE_MD, 0))
         output_row = ttk.Frame(body, style=Style.CARD_INNER)
-        output_row.grid(row=6, column=0, columnspan=2, sticky="ew", padx=(SPACE_XL, 0))
+        output_row.grid(row=7, column=0, columnspan=2, sticky="ew", padx=(SPACE_XL, 0))
         output_row.columnconfigure(0, weight=1)
         self.output_dir_entry = ttk.Entry(output_row, textvariable=self.output_dir_var)
         self.output_dir_entry.grid(row=0, column=0, sticky="ew")
@@ -407,6 +419,56 @@ class TranscribeTab:
             output_row, "Choose folder…", self.choose_output_dir
         )
         self.output_dir_button.grid(row=0, column=1, padx=(SPACE_SM, 0))
+
+    def _build_speaker_count_row(self, parent: tk.Misc, *, row: int) -> None:
+        """Ask how many people are on the recording, before anything runs.
+
+        This used to be a blank box in Advanced options, which meant that in
+        practice it was always blank. Left to itself the engine over-splits a
+        long, poor-quality call - a two-handed phone call came back as five
+        speakers - and the only remedy was to transcribe the whole thing again.
+        Asking costs one click; not asking cost an afternoon.
+        """
+        # Kept so the question can be taken away entirely when there is nothing
+        # to separate - a greyed-out control still reads as something you were
+        # supposed to fill in.
+        self._speaker_count_row = holder = ttk.Frame(parent, style=Style.CARD_INNER)
+        holder.grid(
+            row=row,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            padx=(SPACE_XL, 0),
+            pady=(SPACE_SM, 0),
+        )
+        frame = ttk.Frame(holder, style=Style.CARD_INNER)
+        frame.pack(anchor="w", fill="x")
+        ttk.Label(
+            frame, text="How many people are speaking?", style=Style.FIELD_LABEL
+        ).pack(side="left", padx=(0, SPACE_MD))
+        self.speaker_count_combo = ttk.Combobox(
+            frame,
+            textvariable=self.speaker_count_var,
+            values=speaker_count.choices(),
+            state="readonly",
+            width=22,
+        )
+        self.speaker_count_combo.pack(side="left")
+        self.speaker_count_combo.bind(
+            "<<ComboboxSelected>>", lambda _e: self._on_speaker_count_selected()
+        )
+        self.speaker_count_hint = ttk.Label(
+            holder,
+            text=(
+                "Say how many voices to expect and they stay apart. “Not sure” "
+                "lets the tool decide, which on a long or muffled recording can "
+                "split one person into several."
+            ),
+            style=Style.META,
+            wraplength=560,
+            justify="left",
+        )
+        self.speaker_count_hint.pack(anchor="w", pady=(SPACE_XS, 0))
 
     # -- Advanced ----------------------------------------------------------
 
@@ -539,13 +601,11 @@ class TranscribeTab:
         self.engine_combo.grid(row=0, column=1, sticky="w", pady=SPACE_XS)
 
         ttk.Label(
-            frame, text="How many people (blank = work it out)", style=Style.FIELD_LABEL
-        ).grid(row=1, column=0, sticky="w", padx=(0, SPACE_MD), pady=SPACE_XS)
-        self.num_speakers_entry = ttk.Entry(
-            frame, textvariable=self.num_speakers_var, width=8
-        )
-        self.num_speakers_entry.grid(row=1, column=1, sticky="w", pady=SPACE_XS)
-        # Entering a count reveals a name field per speaker (filled in below).
+            frame,
+            text="How many people are speaking is asked in Options, above.",
+            style=Style.META,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=SPACE_XS)
+        # Choosing a count reveals a name field per speaker (filled in below).
         self.num_speakers_var.trace_add("write", self._on_num_speakers_changed)
 
         ttk.Label(
@@ -801,11 +861,40 @@ class TranscribeTab:
     def _update_speaker_state(self) -> None:
         enabled = self.diarize_var.get()
         state = "normal" if enabled else "disabled"
-        self.num_speakers_entry.configure(state=state)
         self.sensitivity_entry.configure(state=state)
         # Comboboxes use "readonly" (selectable but not free-text) when enabled.
         self.engine_combo.configure(state="readonly" if enabled else "disabled")
+        self.speaker_count_combo.configure(state="readonly" if enabled else "disabled")
+        if enabled:
+            self._speaker_count_row.grid()
+        else:
+            self._speaker_count_row.grid_remove()
         self._rebuild_speaker_name_fields()
+
+    def _on_speaker_count_choice(self) -> None:
+        """Push the answer into the count the run and a profile actually use."""
+        self.num_speakers_var.set(
+            speaker_count.to_setting(self.speaker_count_var.get())
+        )
+
+    def _on_speaker_count_selected(self) -> None:
+        """The operator answered. Take down the notice that asked."""
+        self._on_speaker_count_choice()
+        if self._awaiting_speaker_count and self._speaker_count_answered():
+            self._awaiting_speaker_count = False
+            self.banner.hide()
+            self.progress_label_var.set("Idle")
+
+    def _set_speaker_count(self, label: str) -> None:
+        """Show ``label`` and keep the stored count in step with it."""
+        self.speaker_count_var.set(label)
+        self._on_speaker_count_choice()
+
+    def _speaker_count_answered(self) -> bool:
+        """True when the run may start: diarization is off, or a count is chosen."""
+        if not self.diarize_var.get():
+            return True
+        return speaker_count.is_answered(self.speaker_count_var.get())
 
     def _on_num_speakers_changed(self, *_args: object) -> None:
         self._rebuild_speaker_name_fields()
@@ -1047,10 +1136,32 @@ class TranscribeTab:
     # -- Run ---------------------------------------------------------------
 
     def run_in_thread(self) -> None:
+        # One question has to be answered before a long job starts, because the
+        # cost of getting it wrong is only visible once the job has finished.
+        if not self._speaker_count_answered():
+            self._ask_for_speaker_count()
+            return
         # Collapse the settings so the transcript and progress get the space.
         self._collapse_all_settings()
         self._cancel_event.clear()
         threading.Thread(target=self._run, daemon=True).start()
+
+    def _ask_for_speaker_count(self) -> None:
+        """Stop, show the question, and put the operator in front of it."""
+        message = (
+            "How many people are speaking? Choose a number under Options, or "
+            "“Not sure” to let the tool work it out. Getting this right before "
+            "a long recording saves transcribing it twice."
+        )
+        self._show_settings(True)
+        self._announce("warning", message)
+        append_line(self.status, message)
+        self.progress_label_var.set("Waiting on the number of speakers")
+        self._awaiting_speaker_count = True
+        try:
+            self.speaker_count_combo.focus_set()
+        except tk.TclError:  # pragma: no cover - focus is a courtesy, not the gate
+            pass
 
     def _collect_jobs(self) -> List[Path]:
         """The files to transcribe: the batch queue, else the single input file."""
@@ -1290,15 +1401,8 @@ class TranscribeTab:
                     pass
 
     def _parse_num_speakers(self) -> Optional[int]:
-        raw = self.num_speakers_var.get().strip()
-        if not raw:
-            return None
-        try:
-            value = int(raw)
-        except ValueError:
-            append_line(self.status, f"Ignoring invalid speaker count: {raw!r}")
-            return None
-        return value if value > 0 else None
+        """The count to hand the diarizer, or None to let it work one out."""
+        return speaker_count.parse(self.num_speakers_var.get())
 
     def _parse_threshold(self) -> float:
         raw = self.sensitivity_var.get().strip()
@@ -2097,6 +2201,21 @@ class TranscribeTab:
 
     # -- Persisted preferences ---------------------------------------------
 
+    def _restore_speaker_count(self, data: Dict[str, object]) -> None:
+        """Work out whether stored settings actually answer the question.
+
+        A saved answer is an answer. A stored count without one - settings or a
+        profile written by a build that had no such question - counts too, since
+        a number can only have been typed deliberately. A blank from one of
+        those builds is the case this exists for: it meant "nobody chose", and
+        it is asked again rather than quietly run as "not sure".
+        """
+        stored = str(data.get("speaker_count") or "")
+        if speaker_count.is_answered(stored):
+            self._set_speaker_count(stored)
+            return
+        self._set_speaker_count(speaker_count.from_setting(data.get("num_speakers")))
+
     def _settings_vars(self) -> "Dict[str, tk.Variable]":
         """The settings persisted across launches (recording-specific fields like
         the input file, batch queue and custom words are intentionally excluded)."""
@@ -2112,7 +2231,11 @@ class TranscribeTab:
             "highlight_conf": self.highlight_conf_var,
             "diarize": self.diarize_var,
             "engine": self.engine_var,
+            # The count, and the answer it came from. Both are stored: the count
+            # is what a run and a profile use, and the answer is what tells a
+            # later launch that the question was put and answered.
             "num_speakers": self.num_speakers_var,
+            "speaker_count": self.speaker_count_var,
             "sensitivity": self.sensitivity_var,
             "write_output": self.write_output_var,
             "output_dir": self.output_dir_var,
@@ -2140,6 +2263,7 @@ class TranscribeTab:
         # otherwise sit in the dropdown and resolve to Auto silently.
         if self.device_var.get() not in _DEVICE_MODES:
             self.device_var.set(_device_label(DEFAULT_MODE))
+        self._restore_speaker_count(data)
         if "learn_voices" in data:
             try:
                 self.learn_var.set(bool(data["learn_voices"]))
