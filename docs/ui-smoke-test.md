@@ -102,6 +102,32 @@ which can be a different file on each run.
 - [ ] The answer is remembered across a relaunch and travels with an operation
       profile. An operator upgrading from a build that never asked is asked once.
 
+### Redoing the speaker split
+
+- [ ] **Redo speaker separation…** sits under the export row. Before any run it
+      is greyed out and says it becomes available after a run with speaker
+      identification on.
+- [ ] After a diarized run it is enabled and the line beside it names how many
+      speakers were found.
+- [ ] It is greyed out again while a run is in progress.
+- [ ] The dialog names the recording, the answer the last run used and the count
+      it came back with, and offers every count *except* "Choose…".
+- [ ] With speaker tags corrected by hand, the dialog says in amber how many will
+      be replaced; with none, it says only that the words stay as transcribed.
+- [ ] **Cancel** changes nothing.
+- [ ] **Redo separation** re-splits without transcribing again — it finishes in a
+      fraction of the original run's time, the progress bar names the speaker
+      step, and a green banner says how many speakers came back.
+- [ ] The words are identical to before; only the speaker tags have changed. Any
+      names given to the old speakers are gone.
+- [ ] With an output folder in use, the saved .txt (and .srt) are rewritten to
+      match what is on screen.
+- [ ] **Analysis report…** afterwards names the count the redo used, not the
+      original run's.
+- [ ] After a plain transcribe-only run (speaker identification off), the button
+      stays greyed out.
+- [ ] Starting a new transcription greys it out again until that run finishes.
+
 ## Saving a corrected speaker to a subject
 
 - [ ] After a diarized run, **Save speaker to profile…** sits under the export
