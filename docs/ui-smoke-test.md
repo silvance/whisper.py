@@ -78,9 +78,15 @@ which can be a different file on each run.
       saying it can still cut very quiet speech and can be turned off.
 - [ ] On a recording with long gaps, the line above the transcript says what
       share of it was listened to; on a clean recording it says nothing.
-- [ ] When silence skipping passes over most of a recording, an amber banner
-      says how many minutes went unheard and how to turn it off — and the same
-      line is in the Status tab.
+- [ ] When silence skipping passes over most of a recording, the banner left at
+      the end of the run is amber, names the recording, says how many minutes
+      went unheard and how to turn it off — and the same line is in the Status
+      tab. It is *not* replaced a moment later by a green "complete" banner:
+      there is only ever one banner, and it carries both.
+- [ ] In a **batch**, a recording that lost most of its audio is reported even
+      when it is not the one on screen: run a gutted file first and a clean one
+      last, and the end-of-run banner still names the first. Several affected
+      files are listed together.
 - [ ] Turning **Skip silence** off transcribes the whole recording and the
       "% listened to" note disappears.
 
@@ -118,8 +124,14 @@ which can be a different file on each run.
 - [ ] **Redo separation** re-splits without transcribing again — it finishes in a
       fraction of the original run's time, the progress bar names the speaker
       step, and a green banner says how many speakers came back.
-- [ ] The words are identical to before; only the speaker tags have changed. Any
-      names given to the old speakers are gone.
+- [ ] The words are identical to before; only the speaker tags have changed.
+- [ ] **Names do not travel.** Type "Smith" into Speaker 1 (Advanced options),
+      run, then redo with a different count: no speaker in the new transcript
+      comes back named Smith. The typed fields themselves are left alone — they
+      are settings for the next run — and the dialog says names have to be put
+      back.
+- [ ] A speaker recognised from a voiceprint *is* named again after a redo: that
+      name is measured against the new turns rather than carried over.
 - [ ] With an output folder in use, the saved .txt (and .srt) are rewritten to
       match what is on screen.
 - [ ] **Analysis report…** afterwards names the count the redo used, not the
@@ -127,6 +139,8 @@ which can be a different file on each run.
 - [ ] After a plain transcribe-only run (speaker identification off), the button
       stays greyed out.
 - [ ] Starting a new transcription greys it out again until that run finishes.
+- [ ] **Open project…** greys it out immediately: that transcript came from a
+      file and the audio behind it is not in this session.
 
 ### The transcript in its own window
 

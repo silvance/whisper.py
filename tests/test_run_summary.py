@@ -1,0 +1,97 @@
+"""What a finished run says, and about which recordings.
+
+Two failures these hold shut, both found by review of live code rather than by
+a test that was missing:
+
+* a batch reported only the last file, so a gutted first file finished silently;
+* the warning was announced a line before the success banner, which replaced it,
+  so the warning reached nobody at all.
+"""
+
+import pytest
+
+from whispr.run_summary import (
+    LOW_KEPT_FRACTION,
+    SkippedRun,
+    completion,
+    much_was_skipped,
+    per_file_note,
+)
+
+
+def test_an_unfiltered_run_is_never_flagged():
+    """No filter, no loss to report - not a loss of 100%."""
+    assert not much_was_skipped(None)
+
+
+@pytest.mark.parametrize("kept", [0.0, 0.19, 0.34])
+def test_losing_most_of_a_recording_is_flagged(kept):
+    assert much_was_skipped(kept)
+
+
+@pytest.mark.parametrize("kept", [LOW_KEPT_FRACTION, 0.5, 0.9, 1.0])
+def test_a_merely_quiet_recording_is_not(kept):
+    """Long dead air is what silence skipping is for; this must stay quiet."""
+    assert not much_was_skipped(kept)
+
+
+def test_a_clean_run_says_only_that_it_finished():
+    kind, message = completion(1, 1, [])
+    assert kind == "success"
+    assert message == "Transcription complete."
+
+
+def test_a_clean_batch_counts_the_files():
+    kind, message = completion(4, 4, [])
+    assert kind == "success"
+    assert "4 recording(s)" in message
+
+
+def test_a_lossy_run_still_says_it_finished():
+    """The run did finish. Dropping that would read as a failure, which it isn't."""
+    kind, message = completion(1, 1, [SkippedRun("carpark.m4a", 9.7, 0.19)])
+    assert kind == "warning"
+    assert message.startswith("Transcription complete")
+
+
+def test_a_lossy_run_names_the_recording_and_what_to_do():
+    _, message = completion(1, 1, [SkippedRun("carpark.m4a", 9.7, 0.19)])
+    assert "carpark.m4a" in message
+    assert "9.7 min" in message
+    assert "19%" in message
+    assert "Skip silence" in message
+
+
+def test_a_batch_names_every_recording_that_lost_audio():
+    """The bug this exists for: only the last file used to be checked."""
+    runs = [
+        SkippedRun("first.m4a", 40.0, 0.11),
+        SkippedRun("third.m4a", 12.5, 0.30),
+    ]
+    kind, message = completion(3, 3, runs)
+    assert kind == "warning"
+    assert "first.m4a" in message
+    assert "third.m4a" in message
+    assert "2 recordings" in message
+
+
+def test_a_batch_where_only_the_first_file_suffered_still_warns():
+    """The displayed result is the last one; the warning must not follow it."""
+    kind, message = completion(3, 3, [SkippedRun("first.m4a", 40.0, 0.11)])
+    assert kind == "warning"
+    assert "first.m4a" in message
+
+
+def test_there_is_exactly_one_banner_to_show():
+    """Completion and the caveat are one message; a second would replace it."""
+    for skipped in ([], [SkippedRun("a.m4a", 9.0, 0.2)]):
+        kind, message = completion(1, 1, skipped)
+        assert kind in {"success", "warning"}
+        assert message
+
+
+def test_the_status_line_names_the_file_it_is_about():
+    """In a batch an unnamed line could be about any of them."""
+    line = per_file_note(SkippedRun("carpark.m4a", 9.7, 0.19))
+    assert line.startswith("carpark.m4a:")
+    assert "9.7 min" in line and "19%" in line
