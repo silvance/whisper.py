@@ -1,0 +1,6 @@
+{
+  "files": {},
+  "huggingface": {},
+  "note": "Empty until the first build after the freeze. That build records what it resolved and uploads this file as the <artifact>-assets-lock artifact; commit it, and every build after that fetches exactly these weights or fails. See whispr/asset_lock.py and packaging/fetch_assets.py.",
+  "version": 1
+}
