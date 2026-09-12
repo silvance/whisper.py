@@ -88,6 +88,44 @@ MODEL_SIZES = (
 # one that copes. It is multilingual, which the .en models are not: the same
 # operators work in the languages this build ships translation packs for. It is
 # slower per minute of audio than base.en, and that is the trade being made.
+# Silence skipping, tuned for the audio this is actually pointed at.
+#
+# Silero decides speech with hysteresis: a region is *entered* at `threshold`
+# and only left below `neg_threshold`. faster-whisper's defaults are 0.5 and
+# 0.35, which suit clean speech and quietly destroy covert recordings. On
+# muffled or distant audio the speech probability sits around 0.3-0.5, so once
+# a genuine pause ends a region, the quieter speech after it never reaches 0.5
+# to start a new one - and is discarded, with nothing on screen to say so. That
+# is the field report this exists to answer: a pause, then words gone until
+# somebody spoke up.
+#
+# Entry is therefore low, and the gap to the exit threshold is kept narrow so a
+# region still ends when the audio really does go quiet. The cost of being
+# wrong in this direction is some noise transcribed; the cost of being wrong in
+# the other is evidence missing from a transcript with no indication it was
+# ever there.
+VAD_THRESHOLD = 0.25
+VAD_NEG_THRESHOLD = 0.15
+# How long the audio must stay quiet before a speech region is closed. Pauses
+# in conversation are routinely longer than a second; ending a region on one
+# invites exactly the failure above.
+VAD_MIN_SILENCE_MS = 2000
+# Kept either side of a region. The onset of a word is the quietest part of it
+# and the first thing a detector clips, so this is more generous than the 400 ms
+# default.
+VAD_SPEECH_PAD_MS = 600
+
+
+def vad_options() -> "Dict[str, Any]":
+    """The silence-skipping settings passed to faster-whisper."""
+    return {
+        "threshold": VAD_THRESHOLD,
+        "neg_threshold": VAD_NEG_THRESHOLD,
+        "min_silence_duration_ms": VAD_MIN_SILENCE_MS,
+        "speech_pad_ms": VAD_SPEECH_PAD_MS,
+    }
+
+
 DEFAULT_MODEL = "medium"
 MODEL_PREFERENCE = ("medium", "small", "base.en", "base")
 
@@ -153,6 +191,24 @@ class TranscriptionResult:
     language_probability: float
     duration: float
     segments: List[Segment] = field(default_factory=list)
+    # Seconds of audio actually transcribed. Equal to ``duration`` when silence
+    # skipping is off; less when it is on, and the difference is what was
+    # thrown away before the model ever saw it.
+    duration_after_vad: Optional[float] = None
+
+    @property
+    def skipped_seconds(self) -> float:
+        """Audio the silence filter removed. 0.0 when it was not used."""
+        if self.duration_after_vad is None:
+            return 0.0
+        return max(0.0, self.duration - self.duration_after_vad)
+
+    @property
+    def kept_fraction(self) -> Optional[float]:
+        """Share of the recording that reached the model (None when unfiltered)."""
+        if self.duration_after_vad is None or self.duration <= 0:
+            return None
+        return max(0.0, min(1.0, self.duration_after_vad / self.duration))
 
     @property
     def has_speakers(self) -> bool:
@@ -402,6 +458,7 @@ def transcribe_audio(
         language=language,
         beam_size=beam_size,
         vad_filter=vad_filter,
+        vad_parameters=vad_options() if vad_filter else None,
         # Word timestamps add an alignment pass; only compute them when needed
         # (diarization uses them for word-level speaker assignment).
         word_timestamps=word_timestamps,
@@ -446,5 +503,8 @@ def transcribe_audio(
         language=info.language,
         language_probability=info.language_probability,
         duration=info.duration,
+        duration_after_vad=(
+            getattr(info, "duration_after_vad", None) if vad_filter else None
+        ),
         segments=segments,
     )

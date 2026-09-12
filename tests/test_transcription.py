@@ -191,3 +191,134 @@ def test_transcribe_audio_without_backend(tmp_path):
     media.write_bytes(b"\x00")  # file must exist so we reach the import guard
     with pytest.raises(RuntimeError, match="faster-whisper is not installed"):
         transcribe_audio(media)
+
+
+# -- silence skipping -------------------------------------------------------
+# Field report: with "Skip silence" on, a pause was followed by speech being
+# dropped until somebody spoke up. Silero enters a speech region at `threshold`
+# but only leaves below `neg_threshold`, so on muffled audio - where the speech
+# probability sits around 0.3-0.5 - a genuine pause ends the region and the
+# quieter speech after it never reaches faster-whisper's default 0.5 to start a
+# new one. These pin the settings that answer that, and the reporting that
+# makes the loss visible when it still happens.
+
+
+def test_speech_is_entered_below_faster_whispers_default():
+    """0.5 is tuned for clean speech and discards muffled speech after a pause."""
+    assert transcription.VAD_THRESHOLD < 0.5
+    assert transcription.vad_options()["threshold"] == transcription.VAD_THRESHOLD
+
+
+def test_leaving_speech_is_harder_than_entering_it():
+    """Hysteresis has to stay in the right direction, or regions never close."""
+    assert transcription.VAD_NEG_THRESHOLD < transcription.VAD_THRESHOLD
+
+
+def test_a_pause_longer_than_a_conversation_beat_is_needed_to_close_a_region():
+    assert transcription.VAD_MIN_SILENCE_MS >= 2000
+
+
+def test_word_onsets_are_padded_more_than_the_default():
+    """The start of a word is its quietest part, and the first thing clipped."""
+    assert transcription.VAD_SPEECH_PAD_MS > 400
+
+
+def test_every_tuned_value_reaches_faster_whisper():
+    options = transcription.vad_options()
+    assert options == {
+        "threshold": transcription.VAD_THRESHOLD,
+        "neg_threshold": transcription.VAD_NEG_THRESHOLD,
+        "min_silence_duration_ms": transcription.VAD_MIN_SILENCE_MS,
+        "speech_pad_ms": transcription.VAD_SPEECH_PAD_MS,
+    }
+
+
+# -- reporting what was skipped --------------------------------------------
+
+
+def _result(duration, after_vad):
+    return transcription.TranscriptionResult(
+        text="",
+        language="en",
+        language_probability=1.0,
+        duration=duration,
+        duration_after_vad=after_vad,
+    )
+
+
+def test_a_recording_that_was_heard_whole_reports_nothing_skipped():
+    result = _result(600.0, 600.0)
+    assert result.skipped_seconds == 0.0
+    assert result.kept_fraction == pytest.approx(1.0)
+
+
+def test_what_the_filter_removed_is_measurable():
+    result = _result(600.0, 150.0)
+    assert result.skipped_seconds == pytest.approx(450.0)
+    assert result.kept_fraction == pytest.approx(0.25)
+
+
+def test_an_unfiltered_run_reports_no_fraction_rather_than_a_full_one():
+    """Silence skipping off is not the same as it having kept everything."""
+    result = _result(600.0, None)
+    assert result.kept_fraction is None
+    assert result.skipped_seconds == 0.0
+
+
+def test_a_zero_length_recording_does_not_divide_by_zero():
+    assert _result(0.0, 0.0).kept_fraction is None
+
+
+# -- the settings have to survive the trip to the model ---------------------
+
+
+class _FakeInfo:
+    language = "en"
+    language_probability = 1.0
+    duration = 600.0
+    duration_after_vad = 120.0
+
+
+class _FakeModel:
+    """Records what transcribe() was handed, and returns one empty segment."""
+
+    def __init__(self):
+        self.kwargs = None
+
+    def transcribe(self, path, **kwargs):
+        self.kwargs = kwargs
+        return iter(()), _FakeInfo()
+
+
+def _run(monkeypatch, tmp_path, **overrides):
+    model = _FakeModel()
+    monkeypatch.setattr(transcription, "_load_model", lambda *a, **k: model)
+    audio = tmp_path / "clip.wav"
+    audio.write_bytes(b"\x00")
+    result = transcription.transcribe_audio(audio, **overrides)
+    return model, result
+
+
+def test_the_tuned_settings_are_handed_to_the_model(monkeypatch, tmp_path):
+    model, _ = _run(monkeypatch, tmp_path, vad_filter=True)
+    assert model.kwargs["vad_filter"] is True
+    assert model.kwargs["vad_parameters"] == transcription.vad_options()
+
+
+def test_no_settings_are_sent_when_silence_skipping_is_off(monkeypatch, tmp_path):
+    model, _ = _run(monkeypatch, tmp_path, vad_filter=False)
+    assert model.kwargs["vad_filter"] is False
+    assert model.kwargs["vad_parameters"] is None
+
+
+def test_how_much_was_skipped_comes_back_on_the_result(monkeypatch, tmp_path):
+    _, result = _run(monkeypatch, tmp_path, vad_filter=True)
+    assert result.duration_after_vad == pytest.approx(120.0)
+    assert result.kept_fraction == pytest.approx(0.2)
+
+
+def test_an_unfiltered_run_does_not_claim_a_filtered_duration(monkeypatch, tmp_path):
+    """The model still reports duration_after_vad; it means nothing here."""
+    _, result = _run(monkeypatch, tmp_path, vad_filter=False)
+    assert result.duration_after_vad is None
+    assert result.kept_fraction is None
