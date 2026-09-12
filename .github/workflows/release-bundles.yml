@@ -170,6 +170,13 @@ jobs:
       # be the software that was tested, so it fails here rather than shipping.
       - name: Check the dependency lock
         run: python packaging/check_lock.py
+      # Everything this build resolved, including the parts the lock does not
+      # name yet - pyannote 3.1.1 brings its own tree, and that tree can move
+      # under a rebuild exactly as anything else can. Extend the lock from this
+      # on a branch with:
+      #   python packaging/check_lock.py --write --from-freeze pip-freeze.txt --add-all
+      - name: Record everything this build installed
+        run: python -m pip freeze > pip-freeze.txt
       - name: Fetch ffmpeg
         run: python packaging/fetch_assets.py ffmpeg
       - name: Fetch models
@@ -239,7 +246,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.artifact }}-assets-lock
-          path: packaging/assets.lock.json
+          path: |
+            packaging/assets.lock.json
+            pip-freeze.txt
           if-no-files-found: warn
           retention-days: 14
 

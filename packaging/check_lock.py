@@ -99,6 +99,25 @@ def main(argv: "Optional[List[str]]" = None) -> int:
         action="store_true",
         help="re-pin the lock to the versions currently installed",
     )
+    parser.add_argument(
+        "--from-freeze",
+        metavar="PATH",
+        default=None,
+        help=(
+            "with --write, take the versions from a pip freeze produced by a "
+            "real build rather than from this machine - the way to pin what a "
+            "Windows bundle actually resolved"
+        ),
+    )
+    parser.add_argument(
+        "--add-all",
+        action="store_true",
+        help=(
+            "with --write, also pin packages that are installed but neither "
+            "tracked nor already locked - use it to close a gap such as a "
+            "dependency's own tree"
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.write:
@@ -107,12 +126,27 @@ def main(argv: "Optional[List[str]]" = None) -> int:
             if LOCKFILE.is_file()
             else {}
         )
-        found = installed_versions()
-        for name in list(pins) + [canonical(n) for n in TRACKED_PACKAGES]:
+        if args.from_freeze:
+            found = parse_lock(Path(args.from_freeze).read_text(encoding="utf-8"))
+        else:
+            found = installed_versions()
+        before = dict(pins)
+        wanted = set(pins) | {canonical(n) for n in TRACKED_PACKAGES}
+        if args.add_all:
+            wanted |= set(found)
+        for name in sorted(wanted):
             if name in found:
                 pins[name] = found[name]
         write_lock(pins)
+        added = sorted(set(pins) - set(before))
+        changed = sorted(n for n in before if n in pins and before[n] != pins[n])
         print(f"lock -> {LOCKFILE} ({len(pins)} pins)")
+        for name in added:
+            print(f"  + {name}=={pins[name]}")
+        for name in changed:
+            print(f"  ~ {name}: {before[name]} -> {pins[name]}")
+        if not added and not changed:
+            print("  (no change)")
         return 0
 
     if not LOCKFILE.is_file():

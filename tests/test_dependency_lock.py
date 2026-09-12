@@ -145,3 +145,37 @@ def test_a_summary_names_everything_pinned():
     lines = summary(lock)
     assert any("pyannote/segmentation-3.0 @ abc123" == line for line in lines)
     assert any("https://example/model.onnx" in line for line in lines)
+
+
+# -- Extending the lock from a real build ----------------------------------
+#
+# The lock was seeded from a resolution that could be done here. Some of it
+# could not be: pyannote 3.1.1 brings its own tree, and resolving it needs the
+# build machine. So a build records everything it installed, and the lock is
+# extended from that - which means a pip freeze has to read as a lock.
+
+
+def test_a_pip_freeze_reads_as_a_lock():
+    """Same shape, so one can be poured into the other with no conversion."""
+    freeze = "lightning==2.1.4\nasteroid-filterbanks==0.4.0\n-e git+ssh://x#egg=y\n"
+    assert parse_lock(freeze) == {
+        "lightning": "2.1.4",
+        "asteroid-filterbanks": "0.4.0",
+    }
+
+
+def test_extending_a_lock_keeps_what_was_already_pinned():
+    """Adding pyannote's tree must not quietly move faster-whisper."""
+    existing = {"faster-whisper": "1.2.1"}
+    from_build = {"lightning": "2.1.4", "faster-whisper": "1.2.1"}
+    merged = dict(existing)
+    for name in sorted(set(existing) | set(from_build)):
+        if name in from_build:
+            merged[name] = from_build[name]
+    assert merged["faster-whisper"] == "1.2.1"
+    assert merged["lightning"] == "2.1.4"
+
+
+def test_an_unpinned_dependency_tree_is_not_reported_as_drift():
+    """Until it is pinned it cannot fail a build - which is why it is a gap."""
+    assert drift({"faster-whisper": "1.2.1"}, {"lightning": "2.1.4"}) == []
