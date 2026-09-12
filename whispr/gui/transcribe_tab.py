@@ -8,6 +8,7 @@ owns the settings UI and drives the background run.
 
 from __future__ import annotations
 
+import copy
 import os
 import shutil
 import tempfile
@@ -54,6 +55,7 @@ from ..provenance import (
 )
 from ..reports import write_analysis_report
 from ..resources import bundled_embedding_model, bundled_models
+from ..speaker_count import UNKNOWN as SPEAKERS_UNKNOWN
 from ..speaker_count import UNSET as SPEAKERS_UNSET
 from ..speaker_profiles import (
     SAMPLE_LEARNED,
@@ -68,6 +70,7 @@ from ..transcription import (
     MODEL_PREFERENCE,
     MODEL_SIZES,
     CancelledError,
+    Segment,
     TranscriptionResult,
     convert_to_wav,
     is_video,
@@ -76,6 +79,7 @@ from ..transcription import (
 from ..voiceprints import SpeakerEmbedder, enroll_spans, recognize
 from . import speaker_compare
 from .errors import friendly_error
+from .redo_speakers import ask_redo_speakers
 from .save_speaker import SaveSpeakerChoice, ask_save_speaker
 from .theme import (
     SPACE_LG,
@@ -251,6 +255,15 @@ class TranscribeTab:
         self._result_source: Optional[Path] = None
         self._result_outdir: Optional[Path] = None
         self._speaker_names: Dict[str, str] = {}
+        # The transcript as the model produced it, before a speaker was put to
+        # any of it. Redoing the split works from this, never from the last
+        # split's output, so a second attempt is not built on the first.
+        self._undiarized_segments: Optional[List[Segment]] = None
+        # What the last diarized run was told, and what it came back with.
+        self._speaker_choice_used = SPEAKERS_UNSET
+        self._diarized_count = 0
+        # Speaker tags changed by hand since that run - what redoing it spends.
+        self._speaker_edits = 0
         # Traceability for the displayed result: source hash, models, settings.
         self._result_provenance: Optional[AnalysisProvenance] = None
 
@@ -801,6 +814,27 @@ class TranscribeTab:
                 style=Style.META,
             ).pack(anchor="w", pady=(SPACE_XS, 0))
 
+        # Its own row, and disabled until there is a diarized result to redo:
+        # this is the cheap half of a run offered on its own, and it wants to
+        # be found in the moment somebody reads "5 speakers" on a two-hander.
+        redo_row = ttk.Frame(results.body, style=Style.CARD_INNER)
+        redo_row.pack(fill="x", pady=(SPACE_MD, 0))
+        self.redo_button = secondary_button(
+            redo_row,
+            "Redo speaker separation…",
+            self._redo_speakers,
+        )
+        self.redo_button.pack(side="left")
+        self.redo_hint_var = tk.StringVar(value="")
+        ttk.Label(
+            redo_row,
+            textvariable=self.redo_hint_var,
+            style=Style.META,
+            wraplength=520,
+            justify="left",
+        ).pack(side="left", padx=(SPACE_MD, 0))
+        self._update_redo_state()
+
         # Its own row: this one does not write a file, it adds to a subject's
         # reference voice - and it is the point of having corrected the tags.
         # Only offered where there is a Speaker Profiles page to save into: a
@@ -939,6 +973,7 @@ class TranscribeTab:
         def _do() -> None:
             if busy:
                 self.run_button.configure(state="disabled")
+                self.redo_button.configure(state="disabled")
                 self.cancel_button.configure(state="normal")
                 # Indeterminate while we don't yet have a measurable fraction
                 # (setup, ffmpeg conversion, model loading).
@@ -953,6 +988,9 @@ class TranscribeTab:
                 self.progress_label_var.set(message or "Ready")
                 self.run_button.configure(state="normal")
                 self.cancel_button.configure(state="disabled")
+                # Whether the redo comes back depends on what the run left
+                # behind, so let that decide rather than enabling it here.
+                self._update_redo_state()
 
         self.root.after(0, _do)
 
@@ -1374,12 +1412,19 @@ class TranscribeTab:
             )
 
             if self.diarize_var.get():
+                # Kept as transcribed, before any speaker is attached to it, so
+                # the split can be done again from the same words rather than
+                # from the output of the last split. Only for the result that
+                # will be on screen - a batch keeps the last one.
+                undiarized = copy.deepcopy(result.segments) if set_view else None
                 self._diarize_into(result, src, media_path, media_is_normalized)
                 provenance.diarization = DiarizationProvenance.from_bundle(
                     engine=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
                     expected_speaker_count=self._parse_num_speakers(),
                     clustering_threshold=self._parse_threshold(),
                 )
+            else:
+                undiarized = None
 
             names = self._preset_names_for(result)
             if set_view:
@@ -1389,7 +1434,11 @@ class TranscribeTab:
                 self._result_outdir = save_dir
                 self._speaker_names = names
                 self._result_provenance = provenance
+                self._undiarized_segments = undiarized
+                self._speaker_choice_used = self.speaker_count_var.get()
+                self._speaker_edits = 0
                 self.transcript_view.set_result(result, names)
+                self._update_redo_state()
 
             if save_dir is not None:
                 self._save_outputs(result, src, save_dir, names)
@@ -1445,13 +1494,17 @@ class TranscribeTab:
                 cancelled=self._cancel_event.is_set,
             )
             count = len({seg.speaker for seg in speaker_segments})
+            self._diarized_count = count
             append_line(self.status, f"Identified {count} speaker(s).")
-            # Recognise enrolled voices (relabel turns to known speakers) and keep
-            # a copy of the audio so post-run corrections can teach new voices.
+            # Recognise enrolled voices (relabel turns to known speakers).
             self._recognized_names = {}
             if self._profile is not None and self.learn_var.get():
                 speaker_segments = self._recognize_speakers(speaker_segments, diar_wav)
-                self._set_session_wav(diar_wav)
+            # Keep a 16 kHz copy of the audio for the rest of the session, so a
+            # post-run correction can teach a voice - and so the speaker split
+            # can be redone without transcribing the recording a second time.
+            # Cleared at the start of the next run and when the app closes.
+            self._set_session_wav(diar_wav)
             result.segments = assign_speakers(result.segments, speaker_segments)
         finally:
             if diar_temp is not None:
@@ -1486,8 +1539,153 @@ class TranscribeTab:
 
     def _save_outputs_if_possible(self) -> None:
         """Re-save after a transcript edit, when an output folder is in use."""
+        # Every call is a speaker tag changed by hand (the transcript view only
+        # signals for reassignments and renames), which is what a redo costs.
+        self._speaker_edits += 1
+        self._update_redo_state()
         if self._result is not None and self._result_source and self._result_outdir:
             self._save_outputs(self._result, self._result_source, self._result_outdir)
+
+    # -- Redoing the speaker split -----------------------------------------
+
+    def _can_redo_speakers(self) -> bool:
+        """True when the split can be redone without transcribing again.
+
+        Needs the words as transcribed and the audio they came from; both are
+        kept for the session by a diarized run and dropped when the next one
+        starts, so this is false before the first run and after a plain
+        transcribe-only one.
+        """
+        if self._result is None or not self._undiarized_segments:
+            return False
+        wav = self._session_wav
+        return wav is not None and wav.exists()
+
+    def _update_redo_state(self) -> None:
+        def _do() -> None:
+            if self._can_redo_speakers():
+                self.redo_button.configure(state="normal")
+                people = "speaker" if self._diarized_count == 1 else "speakers"
+                self.redo_hint_var.set(
+                    f"Found {self._diarized_count} {people}. Wrong? Split it "
+                    "again with a different number — the recording is not "
+                    "transcribed again."
+                )
+            else:
+                self.redo_button.configure(state="disabled")
+                self.redo_hint_var.set(
+                    "Available after a run with “Identify who is speaking” on."
+                )
+
+        self.root.after(0, _do)
+
+    def _redo_speakers(self) -> None:
+        """Ask for a different speaker count and split the transcript again."""
+        if not self._can_redo_speakers():
+            self._announce(
+                "warning",
+                "There is nothing to redo yet. Run a transcription with "
+                "“Identify who is speaking” on first.",
+            )
+            return
+        source = self._result_source
+        choice = ask_redo_speakers(
+            self.root,
+            current=self._speaker_choice_used,
+            found=self._diarized_count,
+            corrections=self._speaker_edits,
+            recording=source.name if source else "",
+        )
+        if choice is None:  # cancelled; "" is a real answer ("work it out")
+            return
+        self._cancel_event.clear()
+        threading.Thread(
+            target=self._redo_speakers_worker, args=(choice,), daemon=True
+        ).start()
+
+    def _redo_speakers_worker(self, count_setting: str) -> None:
+        """Re-diarize the kept audio and re-split the transcript as transcribed."""
+        self._set_busy(True, "Identifying speakers…")
+        final_status = "Finished"
+        try:
+            result = self._result
+            wav = self._session_wav
+            base = self._undiarized_segments
+            if result is None or wav is None or not base:
+                raise RuntimeError(
+                    "The audio from that run is no longer available. Transcribe "
+                    "the recording again to change the number of speakers."
+                )
+            requested = speaker_count.parse(count_setting)
+            # Bring the settings into line with what was just asked for, so the
+            # next run starts from it. Tk variables belong to the UI thread -
+            # writing num_speakers_var rebuilds the speaker-name fields.
+            answered = (
+                speaker_count.from_setting(count_setting)
+                if count_setting
+                else SPEAKERS_UNKNOWN
+            )
+            self.root.after(0, lambda: self._set_speaker_count(answered))
+            append_line(
+                self.status,
+                "Redoing speaker separation"
+                + (f" with {requested} speaker(s)" if requested else "")
+                + " — the recording is not being transcribed again.",
+            )
+            self._begin_phase("Identifying speakers…")
+            speaker_segments = diarize(
+                wav,
+                backend=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
+                num_speakers=requested,
+                threshold=self._parse_threshold(),
+                progress=self._step,
+                on_progress=lambda f: self._set_progress(f, "Identifying speakers"),
+                cancelled=self._cancel_event.is_set,
+            )
+            found = len({seg.speaker for seg in speaker_segments})
+            self._recognized_names = {}
+            if self._profile is not None and self.learn_var.get():
+                speaker_segments = self._recognize_speakers(speaker_segments, wav)
+            # From the words as transcribed, never from the last split's output.
+            result.segments = assign_speakers(copy.deepcopy(base), speaker_segments)
+            self._diarized_count = found
+            self._speaker_choice_used = answered
+            # The hand corrections were made against the old split and are gone
+            # with it; the operator was told so before this started.
+            self._speaker_edits = 0
+            names = self._preset_names_for(result)
+            self._speaker_names = names
+            self.transcript_view.set_result(result, names)
+            self._record_redo_provenance(requested)
+            if self._result_source and self._result_outdir:
+                self._save_outputs(result, self._result_source, self._result_outdir)
+            people = "speaker" if found == 1 else "speakers"
+            message = f"Split again into {found} {people}."
+            append_line(self.status, message)
+            self._announce("success", message)
+            final_status = message
+        except CancelledError:
+            final_status = "Cancelled"
+            append_line(self.status, "Cancelled.")
+            self._announce("warning", "Cancelled. The transcript is unchanged.")
+        except Exception as exc:  # noqa: BLE001 - reported to the operator
+            final_status = "Failed"
+            append_line(self.status, traceback.format_exc())
+            self._announce("error", friendly_error(exc))
+        finally:
+            self._set_busy(False, final_status)
+            self._update_redo_state()
+
+    def _record_redo_provenance(self, requested: Optional[int]) -> None:
+        """Keep the analysis report honest about which split it is describing."""
+        provenance = self._result_provenance
+        if provenance is None:
+            return
+        provenance.diarization = DiarizationProvenance.from_bundle(
+            engine=ENGINE_CHOICES.get(self.engine_var.get(), "auto"),
+            expected_speaker_count=requested,
+            clustering_threshold=self._parse_threshold(),
+        )
 
     def _rerender_transcript(self) -> None:
         self.transcript_view.render()
