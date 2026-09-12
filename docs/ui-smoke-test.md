@@ -128,6 +128,26 @@ which can be a different file on each run.
       stays greyed out.
 - [ ] Starting a new transcription greys it out again until that run finishes.
 
+### The transcript in its own window
+
+- [ ] **Open in its own window** sits at the top right of the Transcript card.
+      Selecting it gives the transcript a real window — titled, resizable,
+      maximisable, and movable to a second screen.
+- [ ] Everything came with it: both tabs, Find, the export buttons and the redo
+      button. The button now reads **Put it back on this page**.
+- [ ] The page shows a stand-in card with **Bring it back here** and **Show me
+      that window**; the second raises the window when it is behind something.
+- [ ] A transcription run started from the main window still fills the popped-out
+      transcript and Status tabs as it goes.
+- [ ] Closing the window with its X puts the panel back on the page rather than
+      destroying it.
+- [ ] Round-trip it twice: the transcript, scroll position and speaker tags are
+      unchanged, and clicking a speaker tag still reassigns speech.
+- [ ] The same button is on the **Live** tab's transcript card, and a live feed
+      keeps writing into it while it is popped out.
+- [ ] On a smaller screen the window opens fully on-screen, with its buttons
+      reachable.
+
 ## Saving a corrected speaker to a subject
 
 - [ ] After a diarized run, **Save speaker to profile…** sits under the export

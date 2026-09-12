@@ -18,6 +18,7 @@ from ..live import DEFAULT_SEGMENT_SECONDS, LiveTranscriber, test_connection
 from ..resources import bundled_models
 from ..transcription import MODEL_SIZES
 from .errors import friendly_error
+from .popout import PanelWindow
 from .theme import SPACE_LG, SPACE_SM, SPACE_XS, Style, theme
 from .widgets import (
     Card,
@@ -193,8 +194,20 @@ class LiveTab:
         ).pack(anchor="w", pady=(SPACE_SM, 0))
 
         # --- Live transcript ----------------------------------------------
-        transcript_card = Card(container, "Live transcript")
-        transcript_card.pack(fill="both", expand=True, pady=(SPACE_LG, 0))
+        # Watching a feed come in is the case for a second screen even more
+        # than reading a finished transcript is, so this panel pops out too.
+        self._panel = PanelWindow(
+            container,
+            title="Live transcript",
+            window_title="Whispers — Live transcript",
+            note=(
+                "The live transcript is open in its own window — resize or "
+                "maximise it on whichever screen suits. It keeps running."
+            ),
+            pack_options={"fill": "both", "expand": True, "pady": (SPACE_LG, 0)},
+            on_error=self._popout_failed,
+        )
+        transcript_card = self._panel.card
         self.transcript = ScrolledText(
             transcript_card.body, wrap="word", state="disabled", height=16
         )
@@ -208,9 +221,14 @@ class LiveTab:
         subtle_button(actions, "Clear", self._clear).pack(
             side="left", padx=(SPACE_SM, 0)
         )
+        self._panel.toggle_button(actions).pack(side="right")
 
         self._update_save_state()
         bind_wheel(canvas, container)
+
+    def _popout_failed(self, detail: str) -> None:
+        """Tk refused to give the panel a window. Say so where the eye is."""
+        self.status_var.set(f"Could not move the live transcript window: {detail}")
 
     # -- Save-to-file state ------------------------------------------------
 

@@ -79,6 +79,7 @@ from ..transcription import (
 from ..voiceprints import SpeakerEmbedder, enroll_spans, recognize
 from . import speaker_compare
 from .errors import friendly_error
+from .popout import PanelWindow
 from .redo_speakers import ask_redo_speakers
 from .save_speaker import SaveSpeakerChoice, ask_save_speaker
 from .theme import (
@@ -738,15 +739,31 @@ class TranscribeTab:
 
     def _build_results(self, parent: tk.Misc) -> None:
         """The transcript is the product; after a run it gets the page."""
-        results = Card(parent, "Transcript")
-        results.pack(fill="both", expand=True, pady=(SPACE_XL, 0))
-        self.banner.insert_before(results)
+        self._panel = PanelWindow(
+            parent,
+            title="Transcript",
+            window_title="Whispers — Transcript",
+            note=(
+                "The transcript is open in its own window — resize or maximise "
+                "it on whichever screen suits."
+            ),
+            pack_options={"fill": "both", "expand": True, "pady": (SPACE_XL, 0)},
+            on_error=self._popout_failed,
+        )
+        results = self._panel.card
+        self.banner.insert_before(self._panel.host)
         self._results_card = results
 
         self.result_summary_var = tk.StringVar(value="")
+        summary_row = ttk.Frame(results.body, style=Style.CARD_INNER)
+        summary_row.pack(fill="x")
         ttk.Label(
-            results.body, textvariable=self.result_summary_var, style=Style.MUTED
-        ).pack(anchor="w")
+            summary_row, textvariable=self.result_summary_var, style=Style.MUTED
+        ).pack(side="left")
+        # Inside the card on purpose: popped out, the button travels with the
+        # transcript, so the way back is on the window the operator is looking at.
+        self.popout_button = self._panel.toggle_button(summary_row)
+        self.popout_button.pack(side="right")
 
         self._output_tabs = ttk.Notebook(results.body)
         tabs = self._output_tabs
@@ -857,6 +874,17 @@ class TranscribeTab:
                 wraplength=520,
                 justify="left",
             ).pack(side="left", padx=(SPACE_MD, 0))
+
+    # -- The transcript in a window of its own ------------------------------
+
+    def _popout_failed(self, detail: str) -> None:
+        """Tk refused to give the panel a window. Say so, and carry on."""
+        append_line(self.status, f"Could not move the transcript window: {detail}")
+        self._announce(
+            "warning",
+            "This system would not give the transcript its own window. It "
+            "stays on the page.",
+        )
 
     # -- Cancellation ------------------------------------------------------
 
