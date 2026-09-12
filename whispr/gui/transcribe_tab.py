@@ -269,6 +269,8 @@ class TranscribeTab:
         self._speaker_edits = 0
         # Recordings this run's silence filter mostly passed over, in order.
         self._skipped_much: "List[SkippedRun]" = []
+        # Queued recordings that were not there when the run reached them.
+        self._missing_files: "List[str]" = []
         # Traceability for the displayed result: source hash, models, settings.
         self._result_provenance: Optional[AnalysisProvenance] = None
 
@@ -769,6 +771,20 @@ class TranscribeTab:
         self.popout_button = self._panel.toggle_button(summary_row)
         self.popout_button.pack(side="right")
 
+        # The completion caveat again, inside the card. The banner lives on the
+        # page, and the card can be off on another screen - an operator watching
+        # the transcript for the whole run would otherwise never learn that most
+        # of the recording was passed over. Same failure as a warning replaced
+        # by a success banner, arrived at a different way.
+        self.result_caveat_var = tk.StringVar(value="")
+        self._result_caveat = ttk.Label(
+            results.body,
+            textvariable=self.result_caveat_var,
+            style=Style.WARNING,
+            wraplength=760,
+            justify="left",
+        )
+
         self._output_tabs = ttk.Notebook(results.body)
         tabs = self._output_tabs
         tabs.pack(fill="both", expand=True, pady=(SPACE_SM, 0))
@@ -1030,6 +1046,20 @@ class TranscribeTab:
         """Put a result or a failure where it cannot be scrolled past."""
         self.root.after(0, lambda: self.banner.show(kind, message))
 
+    def _set_result_caveat(self, message: str) -> None:
+        """Carry a completion warning into the transcript card itself."""
+
+        def _do() -> None:
+            self.result_caveat_var.set(message)
+            if message:
+                self._result_caveat.pack(
+                    anchor="w", pady=(SPACE_XS, 0), before=self._output_tabs
+                )
+            else:
+                self._result_caveat.pack_forget()
+
+        self.root.after(0, _do)
+
     def _note_if_much_was_skipped(
         self, result: TranscriptionResult, source: Path
     ) -> None:
@@ -1053,7 +1083,7 @@ class TranscribeTab:
 
     def _completion_message(self, done: int, total: int) -> "Tuple[str, str]":
         """The one banner a finished run leaves behind, and its kind."""
-        return completion(done, total, self._skipped_much)
+        return completion(done, total, self._skipped_much, self._missing_files)
 
     def _describe_result(self) -> None:
         """The one-line account of what was produced, above the transcript."""
@@ -1244,6 +1274,8 @@ class TranscribeTab:
         # against audio from this run's diarized file(s).
         self._clear_session_wav()
         self._skipped_much = []
+        self._missing_files = []
+        self._set_result_caveat("")
         try:
             self.transcript_view.set_result(None, {})
             # The summary names a recording. Left standing, it names the
@@ -1267,6 +1299,9 @@ class TranscribeTab:
                 if self._cancel_event.is_set():
                     raise CancelledError("Transcription cancelled.")
                 if not src.exists():
+                    # Recorded, not just logged: a file that was never opened
+                    # must not be able to finish behind a green "complete".
+                    self._missing_files.append(src.name)
                     append_line(self.status, f"Skipped (file not found): {src}")
                     continue
                 prefix = f"({index}/{total}) " if total > 1 else ""
@@ -1283,11 +1318,15 @@ class TranscribeTab:
                     src, task, save_dir, prefix, set_view=(index == total)
                 )
                 done += 1
-            final_status = f"Finished {done} file(s)" if total > 1 else "Finished"
+            if self._missing_files:
+                final_status = f"Finished {done} of {total} — file(s) not found"
+            else:
+                final_status = f"Finished {done} file(s)" if total > 1 else "Finished"
             kind, message = self._completion_message(done, total)
             if kind == "warning":
                 append_line(self.status, message)
             self._announce(kind, message)
+            self._set_result_caveat(message if kind == "warning" else "")
             self.root.after(0, self._describe_result)
         except CancelledError:
             append_line(self.status, "Cancelled.")
@@ -1645,15 +1684,16 @@ class TranscribeTab:
                     "the recording again to change the number of speakers."
                 )
             requested = speaker_count.parse(count_setting)
-            # Bring the settings into line with what was just asked for, so the
-            # next run starts from it. Tk variables belong to the UI thread -
-            # writing num_speakers_var rebuilds the speaker-name fields.
+            # What the settings will say *if this works*. Not applied yet: a
+            # cancelled or failed redo leaves the old transcript on screen, and
+            # Options claiming a count that produced none of it would be a lie -
+            # one that also rebuilds the Speaker 1..N fields under the operator,
+            # so a five-speaker transcript could lose fields three to five.
             answered = (
                 speaker_count.from_setting(count_setting)
                 if count_setting
                 else SPEAKERS_UNKNOWN
             )
-            self.root.after(0, lambda: self._set_speaker_count(answered))
             append_line(
                 self.status,
                 "Redoing speaker separation"
@@ -1678,6 +1718,10 @@ class TranscribeTab:
             result.segments = assign_speakers(copy.deepcopy(base), speaker_segments)
             self._diarized_count = found
             self._speaker_choice_used = answered
+            # Committed: the new split is the transcript now, so the settings
+            # may follow it. Tk variables belong to the UI thread - writing
+            # num_speakers_var rebuilds the speaker-name fields.
+            self.root.after(0, lambda: self._set_speaker_count(answered))
             # The hand corrections were made against the old split and are gone
             # with it; the operator was told so before this started.
             self._speaker_edits = 0
@@ -1881,6 +1925,8 @@ class TranscribeTab:
         self._speaker_edits = 0
         self._speaker_choice_used = SPEAKERS_UNSET
         self._update_redo_state()
+        # That caveat was about the run this transcript did not come from.
+        self._set_result_caveat("")
         self.transcript_view.set_result(result, self._speaker_names)
         self.progress_label_var.set(f"Opened {Path(path).name}")
 

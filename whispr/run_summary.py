@@ -43,9 +43,37 @@ def per_file_note(run: SkippedRun) -> str:
 
 
 def completion(
-    done: int, total: int, skipped: "Sequence[SkippedRun]"
+    done: int,
+    total: int,
+    skipped: "Sequence[SkippedRun]",
+    missing: "Sequence[str]" = (),
 ) -> "Tuple[str, str]":
-    """The banner a finished run leaves behind: its kind, and its words."""
+    """The banner a finished run leaves behind: its kind, and its words.
+
+    A run that could not find its recordings did not succeed, whatever the
+    count says. "Transcription complete." over a file that was never opened is
+    the worst thing this banner could say, so a missing file makes it amber and
+    names what was not done.
+    """
+    if missing:
+        names = ", ".join(missing)
+        if done == 0:
+            return (
+                "warning",
+                "Nothing was transcribed — "
+                + (
+                    f"{names} could not be found."
+                    if len(missing) == 1
+                    else f"none of these could be found: {names}."
+                ),
+            )
+        was = "was" if len(missing) == 1 else "were"
+        return (
+            "warning",
+            f"Transcribed {done} of {total} recordings — {names} {was} not "
+            "found. Check the file(s) are still where they were when you added "
+            "them.",
+        )
     if not skipped:
         message = (
             f"Transcription complete — {done} recording(s)."

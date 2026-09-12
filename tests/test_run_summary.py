@@ -95,3 +95,49 @@ def test_the_status_line_names_the_file_it_is_about():
     line = per_file_note(SkippedRun("carpark.m4a", 9.7, 0.19))
     assert line.startswith("carpark.m4a:")
     assert "9.7 min" in line and "19%" in line
+
+
+# -- Recordings that were not there ---------------------------------------
+#
+# A file that was never opened must not be able to finish behind a green
+# "complete". The single-file case was the worst of it: one missing recording
+# and the banner read "Transcription complete." with nothing transcribed.
+
+
+def test_one_missing_file_is_not_a_complete_transcription():
+    kind, message = completion(0, 1, [], ["carpark.m4a"])
+    assert kind == "warning"
+    assert "Nothing was transcribed" in message
+    assert "carpark.m4a" in message
+    assert "complete" not in message.lower()
+
+
+def test_a_whole_batch_of_missing_files_says_nothing_was_done():
+    kind, message = completion(0, 3, [], ["a.m4a", "b.m4a", "c.m4a"])
+    assert kind == "warning"
+    assert "Nothing was transcribed" in message
+    for name in ("a.m4a", "b.m4a", "c.m4a"):
+        assert name in message
+
+
+def test_a_partly_missing_batch_says_how_many_of_how_many():
+    kind, message = completion(4, 5, [], ["fifth.m4a"])
+    assert kind == "warning"
+    assert "4 of 5" in message
+    assert "fifth.m4a" in message
+
+
+def test_a_missing_file_outranks_a_silence_caveat():
+    """Both are true; not finding the recording is the one to lead with."""
+    kind, message = completion(
+        1, 2, [SkippedRun("first.m4a", 9.0, 0.2)], ["second.m4a"]
+    )
+    assert kind == "warning"
+    assert "second.m4a" in message
+
+
+def test_a_run_with_nothing_missing_is_unaffected():
+    assert completion(2, 2, [], []) == (
+        "success",
+        "Transcription complete — 2 recording(s).",
+    )

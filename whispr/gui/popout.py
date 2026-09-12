@@ -65,7 +65,18 @@ class Popout:
         self.dock() if self._out else self.pop()
 
     def pop(self) -> None:
-        """Hand the panel to the window manager as a window of its own."""
+        """Hand the panel to the window manager as a window of its own.
+
+        Two calls have to succeed together or not at all: ``wm manage``, which
+        takes the panel out of the page, and the close protocol, without which
+        the window's X would *destroy* the panel and take the transcript with
+        it. If the second fails the first is undone, so the promise made to the
+        operator - "it stays on the page" - is one this can keep.
+
+        Everything after those two is cosmetic. A window manager that refuses a
+        title or a size still gave us a window, and refusing to use it over
+        that would be the wrong trade.
+        """
         if self._out:
             self.focus()
             return
@@ -73,12 +84,9 @@ class Popout:
         path = str(self._widget)
         try:
             tk_.call("wm", "manage", path)
-            tk_.call("wm", "title", path, self._title)
-            width, height = self._min_size.split("x")
-            tk_.call("wm", "minsize", path, int(width), int(height))
-            tk_.call("wm", "geometry", path, self._geometry())
-            # Closing the window puts the panel back rather than destroying it;
-            # a panel destroyed here would take the transcript with it.
+        except tk.TclError as exc:  # pragma: no cover - platform dependent
+            raise PopoutError(str(exc)) from exc
+        try:
             tk_.call(
                 "wm",
                 "protocol",
@@ -87,9 +95,27 @@ class Popout:
                 self._root.register(self.dock),
             )
         except tk.TclError as exc:  # pragma: no cover - platform dependent
+            self._roll_back(path)
             raise PopoutError(str(exc)) from exc
+        for call in (
+            ("wm", "title", path, self._title),
+            ("wm", "minsize", path, *(int(n) for n in self._min_size.split("x"))),
+            ("wm", "geometry", path, self._geometry()),
+        ):
+            try:
+                tk_.call(*call)
+            except tk.TclError:  # pragma: no cover - cosmetic; the window stands
+                pass
         self._out = True
         self._changed()
+
+    def _roll_back(self, path: str) -> None:
+        """Undo a half-finished pop, so the panel is somewhere rather than nowhere."""
+        try:
+            self._root.tk.call("wm", "forget", path)
+            self._restore()
+        except tk.TclError:  # pragma: no cover - nothing further we can do
+            pass
 
     def dock(self) -> None:
         """Put the panel back where it came from."""
