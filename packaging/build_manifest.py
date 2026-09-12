@@ -7,13 +7,13 @@ which dependency versions went in, and the SHA-256 of every bundled model.
 Without this file the application reports its build identity as "unknown" rather
 than guessing - see :mod:`whispr.buildinfo`.
 
-This makes a build **auditable**, not reproducible. It records what was actually
-assembled, so a result traces back to a specific bundle and two bundles can be
-compared; it does not guarantee that rebuilding the same commit later produces
-the same bundle, because dependencies are capped at a major version rather than
-pinned exactly and the model downloads do not name a revision. Freeze the bundle
-you tested and keep its hash; bit-for-bit rebuilds would need a lock file, pinned
-model revisions and committed expected asset hashes.
+This makes a build **auditable**: it records what was actually assembled, so a
+result traces back to a specific bundle and two bundles can be compared. What a
+build is *allowed* to be is decided elsewhere - ``packaging/lockfile.txt`` pins
+the dependency versions and ``packaging/assets.lock.json`` pins the model
+revisions and asset digests, both enforced during the build. The two together
+are what let a rebuild of a commit be the same software; this file is what lets
+a transcript be traced back to the build that produced it.
 
 Usage::
 
@@ -34,31 +34,16 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from whispr.dependencies import TRACKED_PACKAGES as TRACKED_DEPENDENCIES  # noqa: E402
 from whispr.hashing import sha256_file_or_none  # noqa: E402
 
 ASSETS = Path("whispr_assets")
 MANIFEST = ASSETS / "build_manifest.json"
 
-# Production dependencies whose versions materially affect behaviour and so are
-# worth recording with the build.
-TRACKED_PACKAGES = (
-    "silvance-whisper",
-    "faster-whisper",
-    "ctranslate2",
-    "sherpa-onnx",
-    "onnxruntime",
-    "pyannote.audio",
-    "torch",
-    "torchaudio",
-    "numpy",
-    "ttkbootstrap",
-    "python-docx",
-    "argostranslate",
-    "pytesseract",
-    "pypdfium2",
-    "pillow",
-    "pyinstaller",
-)
+# Recorded with every build. The same list the dependency lock pins, plus the
+# application itself - the manifest says what a build was, the lock says what it
+# was allowed to be (see whispr/dependencies.py and packaging/check_lock.py).
+TRACKED_PACKAGES = ("silvance-whisper",) + TRACKED_DEPENDENCIES
 
 
 def _package_versions() -> Dict[str, str]:

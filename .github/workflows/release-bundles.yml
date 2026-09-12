@@ -114,20 +114,22 @@ jobs:
           python -m pip install --upgrade pip
           # Always-present GUI runtime stack + build tools. faster-whisper/
           # ctranslate2 do the transcription; sherpa-onnx is the fallback diarizer.
-          # Version bounds mirror pyproject's [gui]/[bundle] extras so a rebuild
-          # cannot silently pick up a breaking major release. The exact resolved
-          # versions are recorded in the build manifest below.
+          # The ranges say what the application supports; packaging/lockfile.txt
+          # says which version this bundle actually gets, so the copy that was
+          # field-tested and a rebuild of the same commit are the same software.
+          # Changing a pinned version is a deliberate act on a branch - see
+          # packaging/check_lock.py - never something a rebuild does by itself.
           # Keep each pip install on ONE line: this step has no `shell:`, so it
           # runs under PowerShell on the Windows runner, where a trailing "\" is
           # not a line continuation and the next line is parsed as a new
           # statement beginning with a string.
-          pip install "faster-whisper>=1.2,<2" "ctranslate2>=4.8,<5" "onnxruntime>=1.17,<2" "sherpa-onnx>=1.13,<2" "ttkbootstrap>=1.10,<2"
+          pip install -c packaging/lockfile.txt "faster-whisper>=1.2,<2" "ctranslate2>=4.8,<5" "onnxruntime>=1.17,<2" "sherpa-onnx>=1.13,<2" "ttkbootstrap>=1.10,<2"
           # huggingface_hub <1.0: pyannote 3.1.1 forwards the (removed-in-1.0)
           # use_auth_token kwarg into hf_hub_download; 0.x still accepts it.
-          pip install "pyinstaller>=6.22,<7" "imageio-ffmpeg>=0.5,<1" "huggingface_hub<1.0"
+          pip install -c packaging/lockfile.txt "pyinstaller>=6.22,<7" "imageio-ffmpeg>=0.5,<1" "huggingface_hub<1.0"
           # Small UX add-ons bundled when present: Word export, source-language
           # auto-detect, and file drag-and-drop.
-          pip install "python-docx>=1.1,<2" "langdetect>=1.0,<2" "tkinterdnd2>=0.4,<0.5"
+          pip install -c packaging/lockfile.txt "python-docx>=1.1,<2" "langdetect>=1.0,<2" "tkinterdnd2>=0.4,<0.5"
       - name: Install pyannote diarizer (CPU PyTorch)
         if: env.DIARIZER != 'sherpa'
         # Install CPU-only torch from PyTorch's CPU index FIRST so pyannote.audio
@@ -140,13 +142,13 @@ jobs:
         # are the matching versions whose torchaudio backend pyannote 3.1.1 uses.
         # numpy is pinned <2 because pyannote 3.1.1 uses np.NaN, removed in NumPy 2.
         run: |
-          pip install torch==2.2.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cpu
-          pip install "pyannote.audio==3.1.1" soundfile "numpy<2"
+          pip install -c packaging/lockfile.txt torch==2.2.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cpu
+          pip install -c packaging/lockfile.txt "pyannote.audio==3.1.1" soundfile "numpy<2"
       - name: Install translation engine (Argos Translate)
         if: env.TRANSLATE_LANGS != ''
         # numpy<2 keeps a single numpy across the bundle (matches the pyannote pin
         # and stanza's expectations).
-        run: pip install "argostranslate>=1.9,<2" "numpy<2"
+        run: pip install -c packaging/lockfile.txt "argostranslate>=1.9,<2" "numpy<2"
       - name: Install Tesseract OCR engine (Linux)
         if: env.OCR_LANGS != '' && runner.os == 'Linux'
         run: |
@@ -158,11 +160,16 @@ jobs:
         run: choco install --no-progress -y tesseract
       - name: Install OCR Python deps
         if: env.OCR_LANGS != ''
-        run: pip install pytesseract pypdfium2 pillow "numpy<2"
+        run: pip install -c packaging/lockfile.txt pytesseract pypdfium2 pillow "numpy<2"
       - name: Install whispr package
         # --no-deps: the GUI doesn't need the whisper engine's torch dep; pyannote
         # (when selected) already provided CPU torch above.
         run: pip install --no-deps .
+      # Everything is installed by now, including the optional engines this build
+      # selected. A version that drifted from the lock means the bundle would not
+      # be the software that was tested, so it fails here rather than shipping.
+      - name: Check the dependency lock
+        run: python packaging/check_lock.py
       - name: Fetch ffmpeg
         run: python packaging/fetch_assets.py ffmpeg
       - name: Fetch models
@@ -223,6 +230,17 @@ jobs:
           name: ${{ matrix.artifact }}
           path: dist/whispr
           if-no-files-found: error
+          retention-days: 14
+      # The weights this build resolved. When packaging/assets.lock.json was
+      # empty (the first build after a freeze), this is the file to commit: from
+      # then on every build fetches exactly these revisions, and one that cannot
+      # fails instead of quietly shipping different weights.
+      - name: Upload the asset lock this build resolved
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.artifact }}-assets-lock
+          path: packaging/assets.lock.json
+          if-no-files-found: warn
           retention-days: 14
 
       # --- Publish a downloadable GitHub Release (only when a tag is resolved) ---

@@ -31,9 +31,74 @@ from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from whispr import asset_lock  # noqa: E402
 from whispr.hashing import sha256_file_or_none  # noqa: E402
 
 ASSETS = Path("whispr_assets")
+
+# Which weights this build is allowed to contain. Committed from the build that
+# was tested; enforced on every build after it. See whispr/asset_lock.py.
+LOCKFILE = Path(__file__).resolve().parent / "assets.lock.json"
+
+
+def load_lock() -> "Dict[str, object]":
+    """The committed asset lock, or an empty one before the first build."""
+    if not LOCKFILE.is_file():
+        return asset_lock.empty()
+    try:
+        data = json.loads(LOCKFILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"{LOCKFILE} is unreadable: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SystemExit(f"{LOCKFILE} is not an object")
+    return data
+
+
+LOCK = load_lock()
+_lock_changed = False
+
+
+def save_lock() -> None:
+    """Write the lock back when this build pinned something new."""
+    if not _lock_changed:
+        return
+    LOCKFILE.write_text(
+        json.dumps(LOCK, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(f"asset lock -> {LOCKFILE}")
+
+
+def _pin_repo(repo_id: str, revision: str) -> None:
+    global _lock_changed
+    if asset_lock.record_revision(LOCK, repo_id, revision):
+        _lock_changed = True
+        print(f"  pinned {repo_id} @ {revision}")
+
+
+def _hub_revision(repo_id: str, token: "Optional[str]" = None) -> "Optional[str]":
+    """The commit the hub currently has for ``repo_id``, if it will say."""
+    try:
+        from huggingface_hub import model_info
+
+        return str(model_info(repo_id, token=token).sha)
+    except Exception:  # noqa: BLE001 - pinning is best-effort, fetching is not
+        return None
+
+
+def _verify_or_pin_file(url: str, path: Path) -> None:
+    """Check a downloaded file against the lock, or pin it if nothing is pinned."""
+    global _lock_changed
+    digest = sha256_file_or_none(path)
+    expected = asset_lock.digest_for(LOCK, url)
+    complaint = asset_lock.mismatch(expected, digest, url)
+    if complaint:
+        raise SystemExit(complaint)
+    if digest and not expected:
+        if asset_lock.record_file(LOCK, url, digest, path.stat().st_size):
+            _lock_changed = True
+            print(f"  pinned {url} sha256:{digest[:12]}")
+
 
 # faster-whisper's official CTranslate2 model repositories on the Hugging Face Hub.
 MODEL_REPOS = {
@@ -154,12 +219,22 @@ def fetch_models(names: List[str]) -> None:
     for name in names:
         out = ASSETS / "models" / name
         out.mkdir(parents=True, exist_ok=True)
+        repo = MODEL_REPOS[name]
+        # A repo id names a moving target; a revision names weights. Whatever
+        # the tested build resolved is what every later build gets.
+        revision = asset_lock.revision_for(LOCK, repo)
         snapshot_download(
-            repo_id=MODEL_REPOS[name],
+            repo_id=repo,
+            revision=revision,
             local_dir=str(out),
             allow_patterns=["*.bin", "*.json", "*.txt"],
         )
-        print(f"model {name} -> {out}")
+        if revision is None:
+            resolved = _hub_revision(repo)
+            if resolved:
+                _pin_repo(repo, resolved)
+        print(f"model {name} -> {out}" + (f" @ {revision}" if revision else ""))
+    save_lock()
 
 
 # pyannote.audio 3.1.1's speaker-diarization-3.1 pipeline and the two gated models
@@ -201,8 +276,16 @@ def fetch_pyannote() -> None:
     cache.mkdir(parents=True, exist_ok=True)
     for repo in PYANNOTE_REPOS:
         print(f"downloading {repo}")
-        path = snapshot_download(repo_id=repo, cache_dir=str(cache), token=token)
-        print(f"pyannote {repo} -> {path}")
+        revision = asset_lock.revision_for(LOCK, repo)
+        path = snapshot_download(
+            repo_id=repo, revision=revision, cache_dir=str(cache), token=token
+        )
+        if revision is None:
+            resolved = _hub_revision(repo, token=token)
+            if resolved:
+                _pin_repo(repo, resolved)
+        print(f"pyannote {repo} -> {path}" + (f" @ {revision}" if revision else ""))
+    save_lock()
 
 
 def _resolve_embedding(embedding: str) -> "tuple[str, str]":
@@ -259,6 +342,10 @@ def fetch_embedding(embedding: str = DEFAULT_EMBEDDING) -> None:
     embedding_dest = out / "embedding.onnx"
     print(f"downloading embedding '{name}' from {url}")
     urllib.request.urlretrieve(url, embedding_dest)
+    # A plain URL with no revision is whatever is being served today. The digest
+    # is what makes "the same model" a checkable claim rather than a hope.
+    _verify_or_pin_file(url, embedding_dest)
+    save_lock()
     (out / "embedding_model.txt").write_text(name + "\n", encoding="utf-8")
     meta = embedding_metadata(name, url, embedding_dest)
     (out / "embedding_model.json").write_text(
@@ -278,6 +365,8 @@ def fetch_segmentation() -> None:
         archive = Path(tmp) / "segmentation.tar.bz2"
         print(f"downloading {DIARIZATION_SEGMENTATION_URL}")
         urllib.request.urlretrieve(DIARIZATION_SEGMENTATION_URL, archive)
+        _verify_or_pin_file(DIARIZATION_SEGMENTATION_URL, archive)
+        save_lock()
         with tarfile.open(archive, "r:bz2") as tar:
             member = next(
                 (m for m in tar.getmembers() if m.name.endswith("model.onnx")), None

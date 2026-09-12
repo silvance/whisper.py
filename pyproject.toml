@@ -34,9 +34,11 @@ optional-dependencies.dev = [ "mypy", "pytest", "pytest-cov", "ruff", "scipy" ]
 # tkinter ships with CPython; faster-whisper (CTranslate2) is the CPU backend.
 # python-docx (Word export), langdetect (auto source-language) and tkinterdnd2
 # (file drag-and-drop) are small UX add-ons used when present.
-# Versions are capped at the current major so a rebuild cannot silently pick up a
-# breaking release; the exact resolved versions of every build are recorded in
-# whispr_assets/build_manifest.json, which is what makes a bundle reproducible.
+# The caps say what the application supports. They are not what makes a bundle
+# reproducible - packaging/lockfile.txt is, by pinning the exact version an
+# operational build uses, and packaging/check_lock.py by failing a build that
+# drifts from it. The manifest in whispr_assets/build_manifest.json records what
+# a build was; the lock decides what it is allowed to be.
 optional-dependencies.gui = [
   "faster-whisper>=1.2,<2",
   "ctranslate2>=4.8,<5",

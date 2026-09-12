@@ -584,17 +584,37 @@ assets the build contains — transcription, both diarizers, translation packs, 
 the speaker-embedding model and its SHA-256, the decision thresholds in force, and
 the processing hardware. Run it before copying a bundle to an air-gapped machine.
 
-**Auditable, not yet reproducible.** `packaging/build_manifest.py` writes
-`whispr_assets/build_manifest.json` with the build id, git commit, timestamp,
-platform, resolved dependency versions and a SHA-256 for every bundled model, so
-a result can always be traced back to the exact bundle that produced it — and two
-bundles can be compared file by file. That is *auditing*, not reproducibility:
-dependencies are capped at a major version rather than pinned exactly, and the
-Hugging Face downloads do not name a revision, so rebuilding the same commit in
-six months may legitimately produce a different bundle. **For an operation, freeze
-the bundle you tested and record its SHA-256** rather than rebuilding. Making
-rebuilds bit-for-bit repeatable needs a lock/constraints file, pinned model
-revisions, and expected asset hashes committed to the repository.
+**Auditable, and pinned.** Two files do two different jobs.
+
+`packaging/build_manifest.py` writes `whispr_assets/build_manifest.json` with the
+build id, git commit, timestamp, platform, resolved dependency versions and a
+SHA-256 for every bundled model, so a result can always be traced back to the
+exact bundle that produced it — and two bundles can be compared file by file.
+That is **auditing**: what a build *was*.
+
+`packaging/lockfile.txt` and `packaging/assets.lock.json` decide what a build is
+**allowed to be**. The first pins every dependency whose version can change how
+the application behaves; the second pins the Hugging Face revision of every
+bundled model and the SHA-256 of every plain-URL download. `packaging/check_lock.py`
+runs in the release workflow after the installs and fails the build on any drift,
+and `packaging/fetch_assets.py` refuses weights that do not match the lock. The
+point is not to have the newest versions — it is that the bundle your operators
+tested and a rebuild of the same commit six months later are the same software.
+
+To change a version deliberately, on a branch:
+
+```bash
+python packaging/check_lock.py --write   # re-pin to what is installed
+```
+
+read the diff, build a bundle, test it, then merge. For the model weights, delete
+the entry you want to move (or the whole `assets.lock.json`), run a build, and
+commit the lock it uploads as `<artifact>-assets-lock`. An update nobody chose is
+what this prevents; an update somebody chose is one commit.
+
+Freezing the bundle you tested and recording its SHA-256 is still worth doing —
+`whispr --verify` checks a copy against `bundle-inventory.json` — but it is no
+longer the only defence against a rebuild drifting.
 
 Bundling **pyannote** (i.e. `both` or `pyannote`) uses gated Hugging Face models,
 so the build needs a token. Add a repository secret named **`HF_TOKEN`** (Settings

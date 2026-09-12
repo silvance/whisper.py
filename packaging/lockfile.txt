@@ -1,0 +1,53 @@
+# Operational dependency lock for the Whispers offline bundle.
+#
+# Every version here was resolved on the build platform (Python 3.11) and then
+# fielded. A bundle built against these versions is the bundle that was tested;
+# one built against anything else is not, however similar it looks.
+#
+# This is a pip *constraints* file: it does not install anything, it decides
+# which version is used for whatever the release workflow does install. So a
+# build that never installs the translation engine is unaffected by the pins
+# for it.
+#
+# To change a version deliberately:
+#
+#     python packaging/check_lock.py --write
+#
+# on a branch, read the diff, build a bundle, test it, then merge. Nothing else
+# in the pipeline may change these, and a build whose installed versions drift
+# from this file fails rather than shipping.
+#
+# Generated and checked by packaging/check_lock.py.
+
+altgraph==0.17.5
+argostranslate==1.11.0
+av==18.1.0
+ctranslate2==4.8.2
+faster-whisper==1.2.1
+filelock==3.32.6
+flatbuffers==25.12.19
+fsspec==2026.7.0
+hf-xet==1.6.0
+huggingface-hub==0.36.2
+imageio-ffmpeg==0.6.0
+langdetect==1.0.9
+lxml==6.1.3
+numpy==1.26.4
+onnxruntime==1.30.0
+pillow==12.3.0
+protobuf==7.36.1
+pyannote-audio==3.1.1
+pyinstaller==6.22.2
+pyinstaller-hooks-contrib==2026.7
+pypdfium2==5.13.0
+pytesseract==0.3.13
+python-docx==1.2.0
+sherpa-onnx==1.13.8
+sherpa-onnx-core==1.13.8
+soundfile==0.14.0
+tkinterdnd2==0.4.4.1
+tokenizers==0.23.2
+torch==2.2.2
+torchaudio==2.2.2
+tqdm==4.70.1
+ttkbootstrap==1.20.4
