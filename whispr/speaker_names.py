@@ -19,7 +19,23 @@ had preserved their work rather than guessed.
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, Mapping, Sequence
+import re
+from typing import Dict, Iterable, Mapping, Optional, Sequence
+
+# The diarizers label their clusters SPEAKER_00, SPEAKER_01, ... - pyannote by
+# convention, sherpa-onnx by construction. That number is what the Speaker 1..N
+# fields are numbered against.
+_CLUSTER = re.compile(r"^SPEAKER_(\d+)$")
+
+
+def cluster_index(speaker_id: str) -> "Optional[int]":
+    """The diarizer's own number for a cluster, or None if it has no number.
+
+    A recognised voice (``voice::Name``) has no cluster number: it is a person,
+    not a position, and nothing typed into a positional field belongs to it.
+    """
+    match = _CLUSTER.match(speaker_id)
+    return int(match.group(1)) if match else None
 
 
 def preset_names(
@@ -31,17 +47,31 @@ def preset_names(
 ) -> "Dict[str, str]":
     """Map speaker id -> display name for one result.
 
-    Recognised voices are applied first; whatever is left over is matched to
-    the typed Speaker N fields in label order. ``use_typed`` is False when the
-    split is being redone, and then only the recognised names apply.
+    Recognised voices are applied first. Whatever is left takes its name from
+    the Speaker 1..N field with *its own* number - SPEAKER_00 from the first
+    field, SPEAKER_01 from the second - and not from the next unused field.
+
+    That distinction is the whole of this function. If recognition claims
+    SPEAKER_00 and leaves SPEAKER_01 anonymous, taking "the next unused field"
+    would put the name typed for the first speaker onto the second one. The
+    operator typed "Alice" against a position, so Alice belongs to that
+    position or to nobody.
+
+    ``use_typed`` is False when the split is being redone: those fields were
+    typed against a split that no longer exists, and the new one numbers its
+    speakers from scratch, so only the recognised names apply.
     """
     ids = sorted({sid for sid in speaker_ids if sid})
     names: Dict[str, str] = {sid: recognized[sid] for sid in ids if sid in recognized}
     if not use_typed:
         return names
-    unrecognised = [sid for sid in ids if sid not in names]
-    for sid, name in zip(unrecognised, typed):
-        cleaned = name.strip()
+    for sid in ids:
+        if sid in names:
+            continue
+        index = cluster_index(sid)
+        if index is None or index >= len(typed):
+            continue
+        cleaned = typed[index].strip()
         if cleaned:
             names[sid] = cleaned
     return names

@@ -87,6 +87,13 @@ which can be a different file on each run.
       when it is not the one on screen: run a gutted file first and a clean one
       last, and the end-of-run banner still names the first. Several affected
       files are listed together.
+- [ ] The completion caveat is repeated **inside the Transcript card**, in
+      amber, above the tabs — so it is still visible when the transcript is in
+      its own window. It clears on the next run and on Open project.
+- [ ] **A recording that is not there:** queue a file, delete or move it, then
+      run. The banner is amber and says nothing was transcribed and which file
+      was not found — never a green "Transcription complete." In a batch of
+      five with one missing, it reads "Transcribed 4 of 5" and names the fifth.
 - [ ] Turning **Skip silence** off transcribes the whole recording and the
       "% listened to" note disappears.
 
@@ -120,7 +127,10 @@ which can be a different file on each run.
       it came back with, and offers every count *except* "Choose…".
 - [ ] With speaker tags corrected by hand, the dialog says in amber how many will
       be replaced; with none, it says only that the words stay as transcribed.
-- [ ] **Cancel** changes nothing.
+- [ ] **Cancel** changes nothing — including the count in Options and the
+      **Speaker names** fields, which stay as they were. The same is true if the
+      redo fails: a transcript still showing five speakers must never sit under
+      an Options box claiming two.
 - [ ] **Redo separation** re-splits without transcribing again — it finishes in a
       fraction of the original run's time, the progress bar names the speaker
       step, and a green banner says how many speakers came back.
@@ -132,6 +142,9 @@ which can be a different file on each run.
       back.
 - [ ] A speaker recognised from a voiceprint *is* named again after a redo: that
       name is measured against the new turns rather than carried over.
+- [ ] With **Speaker 1 = Alice, Speaker 2 = Bob** typed in and a profile that
+      recognises the first speaker by voice, Bob still lands on the second
+      speaker — the typed names do not shift up to fill the gap.
 - [ ] With an output folder in use, the saved .txt (and .srt) are rewritten to
       match what is on screen.
 - [ ] **Analysis report…** afterwards names the count the redo used, not the
@@ -157,6 +170,9 @@ which can be a different file on each run.
       destroying it.
 - [ ] Round-trip it twice: the transcript, scroll position and speaker tags are
       unchanged, and clicking a speaker tag still reassigns speech.
+- [ ] If this system refuses to give the panel a window at all, the warning says
+      so and the transcript is still on the page — never floating loose with no
+      way back to it.
 - [ ] The same button is on the **Live** tab's transcript card, and a live feed
       keeps writing into it while it is popped out.
 - [ ] On a smaller screen the window opens fully on-screen, with its buttons
