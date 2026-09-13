@@ -609,18 +609,20 @@ python packaging/check_lock.py --write   # re-pin to what is installed
 
 read the diff, build a bundle, test it, then merge.
 
-**One gap, and how to close it.** The lock pins what could be resolved without a
-build machine. `pyannote.audio` brings its own tree — lightning, torchmetrics,
-speechbrain and the rest — and those are not yet pinned, so they can still move
-under a rebuild of a diarizing bundle. Every release run records what it actually
-installed and uploads it as `pip-freeze.txt` beside the asset lock; pour that into
-the lock on a branch:
+**Keeping it complete.** The lock covers the whole installed set — 144 packages,
+including `pyannote.audio`'s own tree (lightning, torchmetrics, speechbrain and
+the rest), which can only be resolved by a real build. Every release run records
+what it actually installed and uploads it as `pip-freeze.txt` beside the asset
+lock, so the lock can be brought back in step from the run that produced the
+bundle you tested:
 
 ```bash
 python packaging/check_lock.py --write --from-freeze pip-freeze.txt --add-all
 ```
 
-Do it from the run that produced the bundle you tested, read the diff, and merge. For the model weights, delete
+Read the diff — it prints what it added and what it moved — then merge.
+`pip-freeze.txt` itself is not committed; it is only the source the pins come
+from. For the model weights, delete
 the entry you want to move (or the whole `assets.lock.json`), run a build, and
 commit the lock it uploads as `<artifact>-assets-lock`. An update nobody chose is
 what this prevents; an update somebody chose is one commit.

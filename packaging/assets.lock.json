@@ -1,6 +1,21 @@
 {
-  "files": {},
-  "huggingface": {},
-  "note": "Empty until the first build after the freeze. That build records what it resolved and uploads this file as the <artifact>-assets-lock artifact; commit it, and every build after that fetches exactly these weights or fails. See whispr/asset_lock.py and packaging/fetch_assets.py.",
+  "files": {
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_large.onnx": {
+      "sha256": "d51abcf31717ef28162f26acb9d44dd4127c3d44c9b8624f699f3425daca8e77",
+      "size": 101405493
+    },
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2": {
+      "sha256": "24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488",
+      "size": 6958444
+    }
+  },
+  "huggingface": {
+    "Systran/faster-whisper-base.en": "3d3d5dee26484f91867d81cb899cfcf72b96be6c",
+    "Systran/faster-whisper-medium": "08e178d48790749d25932bbc082711ddcfdfbc4f",
+    "pyannote/segmentation-3.0": "e66f3d3b9eb0873085418a7b813d3b369bf160bb",
+    "pyannote/speaker-diarization-3.1": "84fd25912480287da0247647c3d2b4853cb3ee5d",
+    "pyannote/wespeaker-voxceleb-resnet34-LM": "837717ddb9ff5507820346191109dc79c958d614"
+  },
+  "note": "Written by the build that produced the pilot bundle, and enforced on every build after it: each model repository is fetched at the commit named here, and each plain-URL download must match its digest. A build that would fetch different weights fails instead of shipping. To move one deliberately, delete its entry on a branch, run a build, and commit the lock it uploads.",
   "version": 1
 }
