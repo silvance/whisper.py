@@ -22,6 +22,9 @@ from whispr.dependencies import (
     drift,
     format_lock,
     parse_lock,
+    same_version,
+    split_local,
+    variants,
 )
 
 # -- The dependency lock ---------------------------------------------------
@@ -179,3 +182,47 @@ def test_extending_a_lock_keeps_what_was_already_pinned():
 def test_an_unpinned_dependency_tree_is_not_reported_as_drift():
     """Until it is pinned it cannot fail a build - which is why it is a gap."""
     assert drift({"faster-whisper": "1.2.1"}, {"lightning": "2.1.4"}) == []
+
+
+# -- Build variants --------------------------------------------------------
+#
+# The first real build this lock ran against failed, and the lock was wrong,
+# not the build: the PyTorch CPU index serves 2.2.2+cpu, pip's "==2.2.2" is
+# satisfied by it, and a string comparison is not. A checker that disagrees
+# with the tool it is checking fails builds that are correct, which is the
+# fastest way to have the check turned off.
+
+
+def test_a_local_label_still_satisfies_an_unqualified_pin():
+    """Exactly what the release build hit."""
+    assert same_version("2.2.2", "2.2.2+cpu")
+    assert drift({"torch": "2.2.2"}, {"torch": "2.2.2+cpu"}) == []
+
+
+def test_a_pin_that_names_a_variant_means_it():
+    """CPU torch and CUDA torch are different software, and can be told apart."""
+    assert same_version("2.2.2+cpu", "2.2.2+cpu")
+    assert not same_version("2.2.2+cpu", "2.2.2+cu121")
+    assert not same_version("2.2.2+cpu", "2.2.2")
+    assert drift({"torch": "2.2.2+cpu"}, {"torch": "2.2.2+cu121"}) != []
+
+
+def test_a_different_version_is_still_drift_whatever_the_label():
+    assert not same_version("2.2.2", "2.3.0+cpu")
+    assert drift({"torch": "2.2.2"}, {"torch": "2.3.0+cpu"}) != []
+
+
+def test_a_variant_is_reported_even_though_it_passes():
+    """A CUDA build under an unqualified pin must at least be visible."""
+    notes = variants({"torch": "2.2.2"}, {"torch": "2.2.2+cu121"})
+    assert notes == ["torch: 2.2.2 installed as 2.2.2+cu121"]
+
+
+def test_an_exact_match_is_not_reported_as_a_variant():
+    assert variants({"torch": "2.2.2"}, {"torch": "2.2.2"}) == []
+    assert variants({"torch": "2.2.2+cpu"}, {"torch": "2.2.2+cpu"}) == []
+
+
+def test_splitting_a_version_keeps_both_halves():
+    assert split_local("2.2.2+cpu") == ("2.2.2", "cpu")
+    assert split_local("4.8.2") == ("4.8.2", "")

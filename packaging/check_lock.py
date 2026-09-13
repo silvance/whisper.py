@@ -36,6 +36,8 @@ from whispr.dependencies import (  # noqa: E402
     drift,
     format_lock,
     parse_lock,
+    split_local,
+    variants,
 )
 
 LOCKFILE = Path(__file__).resolve().parent / "lockfile.txt"
@@ -87,9 +89,15 @@ def installed_versions(names: "Optional[List[str]]" = None) -> "Dict[str, str]":
     return out
 
 
-def write_lock(pins: "Dict[str, str]", path: Path = LOCKFILE) -> None:
-    """Write the lock file, one pin per line, sorted."""
-    path.write_text(format_lock(pins, HEADER), encoding="utf-8")
+def write_lock(pins: "Dict[str, str]", path: "Optional[Path]" = None) -> None:
+    """Write the lock file, one pin per line, sorted.
+
+    ``path`` is resolved when this is called, not when it was defined: a default
+    of ``LOCKFILE`` binds the module attribute once, so pointing the module at
+    another file - a test, a dry run - would still write the real lock. It did,
+    once, to this file.
+    """
+    (path or LOCKFILE).write_text(format_lock(pins, HEADER), encoding="utf-8")
 
 
 def main(argv: "Optional[List[str]]" = None) -> int:
@@ -135,8 +143,16 @@ def main(argv: "Optional[List[str]]" = None) -> int:
         if args.add_all:
             wanted |= set(found)
         for name in sorted(wanted):
-            if name in found:
-                pins[name] = found[name]
+            if name not in found:
+                continue
+            public, local = split_local(found[name])
+            # Record the version, not the build of it. Writing "2.2.2+cpu"
+            # would hard-require the PyTorch CPU index, and a bundle that skips
+            # pyannote installs torch from PyPI where no such version exists -
+            # the lock would break a build it was meant to protect. A variant
+            # pin is a deliberate thing to type by hand.
+            _, was_local = split_local(pins.get(name, ""))
+            pins[name] = found[name] if was_local else public
         write_lock(pins)
         added = sorted(set(pins) - set(before))
         changed = sorted(n for n in before if n in pins and before[n] != pins[n])
@@ -169,8 +185,13 @@ def main(argv: "Optional[List[str]]" = None) -> int:
         return 1
     checked = sum(1 for name in pins if name in installed)
     print(
-        f"dependency lock: {checked} of {len(pins)} pinned packages installed, all matching"
+        f"dependency lock: {checked} of {len(pins)} pinned packages installed, "
+        "all matching"
     )
+    # Satisfied, but worth seeing: a CPU torch and a CUDA torch of one version
+    # are different software, and a pin naming no local label allows both.
+    for note in variants(pins, installed):
+        print(f"  build variant: {note}")
     return 0
 
 
