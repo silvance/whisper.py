@@ -24,7 +24,7 @@ the build that was tested - see ``packaging/check_lock.py --from-freeze``.
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 # Production dependencies whose versions materially affect behaviour, and so
 # must be pinned rather than merely recorded. Transcription and diarization
@@ -78,6 +78,56 @@ def parse_lock(text: str) -> "Dict[str, str]":
     return pins
 
 
+def split_local(version: str) -> "Tuple[str, str]":
+    """A version as (public, local): ``2.2.2+cpu`` -> ``("2.2.2", "cpu")``.
+
+    The bit after the ``+`` is PEP 440's local version label. PyTorch uses it to
+    say which build of a version this is - ``+cpu`` against ``+cu121`` - so it
+    names a variant, not a version.
+    """
+    public, _, local = version.partition("+")
+    return public, local
+
+
+def same_version(pinned: str, installed: str) -> bool:
+    """Whether an installed version satisfies a pin, as pip reads ``==``.
+
+    ``torch==2.2.2`` in a constraints file is satisfied by ``2.2.2+cpu`` - pip
+    ignores the local label unless the specifier names one - so a checker that
+    compares the strings disagrees with the tool it is checking. That is exactly
+    what failed the first real build this lock ran against: the install was
+    correct and the comparison was not.
+
+    A pin that *does* name a local label means it: ``torch==2.2.2+cpu`` is not
+    satisfied by a CUDA build of the same version, which for this project is a
+    distinction worth being able to draw.
+    """
+    pinned_public, pinned_local = split_local(pinned)
+    installed_public, installed_local = split_local(installed)
+    if pinned_public != installed_public:
+        return False
+    return not pinned_local or pinned_local == installed_local
+
+
+def variants(pins: "Dict[str, str]", installed: "Dict[str, str]") -> "List[str]":
+    """Packages installed as a build variant of what was pinned.
+
+    Not drift - the pin is satisfied - but worth printing, because "torch 2.2.2"
+    and "torch 2.2.2 built for CUDA" are different software and the lock as
+    written does not tell them apart.
+    """
+    notes: List[str] = []
+    for name, pinned in sorted(pins.items()):
+        actual = installed.get(name)
+        if actual is None or not same_version(pinned, actual):
+            continue
+        _, pinned_local = split_local(pinned)
+        _, actual_local = split_local(actual)
+        if actual_local and not pinned_local:
+            notes.append(f"{name}: {pinned} installed as {actual}")
+    return notes
+
+
 def format_lock(pins: "Dict[str, str]", header: str = "") -> str:
     """The lock file's text: a header, then one pin per line, sorted."""
     body = "".join(f"{name}=={version}\n" for name, version in sorted(pins.items()))
@@ -100,7 +150,7 @@ def drift(
     problems: List[str] = []
     for name, pinned in sorted(pins.items()):
         actual = installed.get(name)
-        if actual is not None and actual != pinned:
+        if actual is not None and not same_version(pinned, actual):
             problems.append(f"{name}: locked {pinned}, installed {actual}")
     for raw in names:
         name = canonical(raw)
