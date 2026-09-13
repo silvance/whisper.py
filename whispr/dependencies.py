@@ -15,11 +15,11 @@ behind it.
 The comparison lives here rather than in the build script so it can be tested
 without a build.
 
-What the lock does *not* yet cover: ``pyannote.audio`` brings its own dependency
-tree, and resolving that needs the build machine rather than a checkout. Those
-packages can still move under a rebuild of a diarizing bundle. Every release run
-uploads what it installed as ``pip-freeze.txt`` so the lock can be extended from
-the build that was tested - see ``packaging/check_lock.py --from-freeze``.
+The lock covers the whole installed set, including ``pyannote.audio``'s own
+dependency tree, which can only be resolved by a real build rather than from a
+checkout. Every release run uploads what it installed as ``pip-freeze.txt`` so
+the lock can be brought back in step with the build that was tested - see
+``packaging/check_lock.py --from-freeze``.
 """
 
 from __future__ import annotations
