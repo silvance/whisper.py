@@ -282,6 +282,33 @@ which can be a different file on each run.
       with the Close button focused.
 - [ ] System status still leads with READY / NOT READY.
 - [ ] Compare voices… (from the operation profile card) is themed and readable.
+- [ ] Every dialog is dark like the rest of the application. A pale grey box
+      with plain grey buttons is one that was missed.
+- [ ] Every dialog closes on **Escape** and on its window X, and cancelling
+      leaves the run exactly as it was.
+
+### On more than one screen
+
+Worth its own pass, because the failure is invisible on a single monitor and
+looks like the application has frozen on two. Do this with the main window on
+the secondary screen, and again with it on a monitor placed to the *left* of
+the primary one if the office has such a setup.
+
+- [ ] Move the Whispers window to the second screen. Add a recording on the
+      Speaker Profiles page: **Which speech is the subject?** opens on that
+      screen, over the window — not on the primary screen, and not behind
+      whatever else is open there.
+- [ ] The same for every other question: **Which speaker is the subject?**,
+      **Which speaker is the questioned speaker?**, **Redo speaker
+      separation**, **Save speaker to profile**, Help and System status.
+- [ ] File pickers (Choose recording, Export…, Import…, Save transcript) open
+      on the same screen as the window too.
+- [ ] Send the transcript to its own window (**Open in its own window**): the
+      new window appears over the application, not on the primary screen.
+- [ ] Move that transcript window to the other screen, click inside it, then
+      use a button on it that asks a question (**Redo speaker separation**,
+      **Save speaker to profile…**, an export). The question opens on the
+      screen the transcript is on, because that is where the work is.
 
 ## Scrolling
 

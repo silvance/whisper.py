@@ -37,8 +37,9 @@ from ..speaker_profiles import (
 )
 from ..transcription import AUDIO_EXTENSIONS
 from ..voiceprints import SpeakerEmbedder
+from .dialogs import active_window, present
 from .errors import friendly_error
-from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, Style, palette
+from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, Style, palette
 from .widgets import (
     Card,
     EmptyState,
@@ -355,7 +356,7 @@ class SpeakerProfilesTab:
 
     def _new_subject(self) -> None:
         name = simpledialog.askstring(
-            "New subject", "Subject / display name:", parent=self.root
+            "New subject", "Subject / display name:", parent=active_window(self.root)
         )
         if not name or not name.strip():
             return
@@ -377,7 +378,7 @@ class SpeakerProfilesTab:
         if not messagebox.askyesno(
             "Delete subject",
             f"Delete '{profile.display_name}' and its enrolled voice samples?",
-            parent=self.root,
+            parent=active_window(self.root),
         ):
             return
         delete_speaker_profile(profile)
@@ -396,6 +397,7 @@ class SpeakerProfilesTab:
             defaultextension=SPEAKER_PROFILE_SUFFIX,
             initialfile=f"{profile.display_name}{SPEAKER_PROFILE_SUFFIX}",
             filetypes=[("Whispers speaker profile", f"*{SPEAKER_PROFILE_SUFFIX}")],
+            parent=active_window(self.root),
         )
         if not path:
             return
@@ -409,6 +411,7 @@ class SpeakerProfilesTab:
         path = filedialog.askopenfilename(
             title="Import speaker profile",
             filetypes=[("Whispers profile", "*.json"), ("All files", "*.*")],
+            parent=active_window(self.root),
         )
         if not path:
             return
@@ -462,7 +465,7 @@ class SpeakerProfilesTab:
             "'Selected subject' after review.",
         ]
         messagebox.showwarning(
-            "Imported with changes", "\n".join(lines), parent=self.root
+            "Imported with changes", "\n".join(lines), parent=active_window(self.root)
         )
         self.banner.show(
             "warning",
@@ -500,7 +503,9 @@ class SpeakerProfilesTab:
             return True
         except ProfileError as exc:
             # Losing operational work silently is not acceptable; surface it.
-            messagebox.showerror("Could not save", str(exc), parent=self.root)
+            messagebox.showerror(
+                "Could not save", str(exc), parent=active_window(self.root)
+            )
             self._status(friendly_error(exc))
             return False
 
@@ -515,6 +520,7 @@ class SpeakerProfilesTab:
         path = filedialog.askopenfilename(
             title="Historical recording containing this subject",
             filetypes=[("Audio/Video", patterns), ("All files", "*.*")],
+            parent=active_window(self.root),
         )
         if not path:
             return
@@ -539,49 +545,46 @@ class SpeakerProfilesTab:
         """Ask which speech in the recording belongs to the subject."""
         win = tk.Toplevel(self.root)
         win.title("Which speech is the subject?")
-        win.transient(self.root)  # type: ignore[call-overload]
-        win.grab_set()
+        win.configure(background=palette().surface)
+        win.resizable(False, False)
         mode_var = tk.StringVar(value=MODE_WHOLE)
         ranges_var = tk.StringVar(value="")
         chosen: dict = {"value": None}
 
-        frame = ttk.Frame(win, padding=12)
+        frame = ttk.Frame(win, padding=SPACE_XL, style=Style.CARD)
         frame.pack(fill="both", expand=True)
-        ttk.Radiobutton(
-            frame,
-            text="The whole recording is this subject",
-            variable=mode_var,
-            value=MODE_WHOLE,
-        ).pack(anchor="w")
-        ttk.Radiobutton(
-            frame,
-            text="Several people — separate speakers and let me pick",
-            variable=mode_var,
-            value=MODE_DIARIZE,
-        ).pack(anchor="w")
-        ttk.Radiobutton(
-            frame,
-            text="I'll give the time ranges",
-            variable=mode_var,
-            value=MODE_RANGES,
-        ).pack(anchor="w")
-        ttk.Entry(frame, textvariable=ranges_var, width=44).pack(
-            anchor="w", padx=(24, 0), pady=(2, 0)
-        )
         ttk.Label(
-            frame,
-            text="e.g. 0:10-0:45, 1:20-2:00",
-            font=("", 8),
-        ).pack(anchor="w", padx=(24, 0))
+            frame, text="Which speech is the subject?", style=Style.SECTION_TITLE
+        ).pack(anchor="w", pady=(0, SPACE_SM))
+        for text, value in (
+            ("The whole recording is this subject", MODE_WHOLE),
+            ("Several people — separate speakers and let me pick", MODE_DIARIZE),
+            ("I'll give the time ranges", MODE_RANGES),
+        ):
+            ttk.Radiobutton(
+                frame,
+                text=text,
+                variable=mode_var,
+                value=value,
+                style=Style.RADIO,
+            ).pack(anchor="w")
+        ttk.Entry(frame, textvariable=ranges_var, width=44).pack(
+            anchor="w", padx=(SPACE_XL, 0), pady=(SPACE_XS, 0)
+        )
+        ttk.Label(frame, text="e.g. 0:10-0:45, 1:20-2:00", style=Style.META).pack(
+            anchor="w", padx=(SPACE_XL, 0)
+        )
 
         def _ok() -> None:
             chosen["value"] = (mode_var.get(), ranges_var.get())
             win.destroy()
 
-        row = ttk.Frame(frame)
-        row.pack(fill="x", pady=(10, 0))
-        ttk.Button(row, text="Cancel", command=win.destroy).pack(side="right")
-        ttk.Button(row, text="Continue", command=_ok).pack(side="right", padx=(0, 6))
+        row = ttk.Frame(frame, style=Style.CARD_INNER)
+        row.pack(fill="x", pady=(SPACE_MD, 0))
+        secondary_button(row, "Cancel", win.destroy).pack(side="right")
+        primary_button(row, "Continue", _ok).pack(side="right", padx=(0, SPACE_SM))
+        win.bind("<Return>", lambda _e: _ok())
+        present(win, self.root, modal=True)
         win.wait_window()
         return chosen["value"]
 
@@ -670,13 +673,16 @@ class SpeakerProfilesTab:
         """Modal picker listing each detected speaker by how long they talk."""
         win = tk.Toplevel(self.root)
         win.title("Which speaker is the subject?")
-        win.transient(self.root)  # type: ignore[call-overload]
-        win.grab_set()
+        win.configure(background=palette().surface)
+        win.resizable(False, False)
         labels = [f"{name} — {seconds:.0f}s of speech" for name, seconds in totals]
         var = tk.StringVar(value=labels[0])
         chosen: dict = {"value": None}
-        frame = ttk.Frame(win, padding=12)
+        frame = ttk.Frame(win, padding=SPACE_XL, style=Style.CARD)
         frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame, text="Which speaker is the subject?", style=Style.SECTION_TITLE
+        ).pack(anchor="w")
         ttk.Label(
             frame,
             text=(
@@ -684,23 +690,28 @@ class SpeakerProfilesTab:
                 "usually the subject of a targeted recording, but listen first "
                 "if you are unsure."
             ),
+            style=Style.MUTED,
             wraplength=380,
             justify="left",
-        ).pack(anchor="w", pady=(0, 8))
-        ttk.Combobox(
+        ).pack(anchor="w", pady=(SPACE_XS, SPACE_SM))
+        combo = ttk.Combobox(
             frame, textvariable=var, values=labels, state="readonly", width=42
-        ).pack(anchor="w")
+        )
+        combo.pack(anchor="w")
 
         def _ok() -> None:
             chosen["value"] = totals[labels.index(var.get())][0]
             win.destroy()
 
-        row = ttk.Frame(frame)
-        row.pack(fill="x", pady=(10, 0))
-        ttk.Button(row, text="Cancel", command=win.destroy).pack(side="right")
-        ttk.Button(row, text="Use this speaker", command=_ok).pack(
-            side="right", padx=(0, 6)
+        row = ttk.Frame(frame, style=Style.CARD_INNER)
+        row.pack(fill="x", pady=(SPACE_MD, 0))
+        secondary_button(row, "Cancel", win.destroy).pack(side="right")
+        primary_button(row, "Use this speaker", _ok).pack(
+            side="right", padx=(0, SPACE_SM)
         )
+        win.bind("<Return>", lambda _e: _ok())
+        present(win, self.root, modal=True)
+        combo.focus_set()
         win.wait_window()
         return chosen["value"]
 

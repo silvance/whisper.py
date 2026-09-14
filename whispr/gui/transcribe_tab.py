@@ -80,6 +80,7 @@ from ..transcription import (
 )
 from ..voiceprints import SpeakerEmbedder, enroll_spans, recognize
 from . import speaker_compare
+from .dialogs import active_window
 from .errors import friendly_error
 from .popout import PanelWindow
 from .redo_speakers import ask_redo_speakers
@@ -1152,18 +1153,22 @@ class TranscribeTab:
     def choose_file(self) -> None:
         patterns = " ".join(f"*{ext}" for ext in AUDIO_EXTENSIONS)
         path = filedialog.askopenfilename(
-            filetypes=[("Audio/Video", patterns), ("All files", "*.*")]
+            filetypes=[("Audio/Video", patterns), ("All files", "*.*")],
+            parent=active_window(self.root),
         )
         if path:
             self.input_file_var.set(path)
 
     def choose_output_dir(self) -> None:
-        path = filedialog.askdirectory()
+        path = filedialog.askdirectory(parent=active_window(self.root))
         if path:
             self.output_dir_var.set(path)
 
     def choose_model_dir(self) -> None:
-        path = filedialog.askdirectory(title="Select a CTranslate2 model directory")
+        path = filedialog.askdirectory(
+            title="Select a CTranslate2 model directory",
+            parent=active_window(self.root),
+        )
         if path:
             self.model_var.set(path)
 
@@ -1803,6 +1808,7 @@ class TranscribeTab:
             defaultextension=".docx",
             initialfile=default,
             filetypes=[("Word document", "*.docx")],
+            parent=active_window(self.root),
         )
         if not path:
             return
@@ -1842,6 +1848,7 @@ class TranscribeTab:
                 ("Word document", "*.docx"),
                 ("Text file", "*.txt"),
             ],
+            parent=active_window(self.root),
         )
         if not path:
             return
@@ -1871,6 +1878,7 @@ class TranscribeTab:
                 ("Whispers project", f"*{PROJECT_SUFFIX}"),
                 ("All files", "*.*"),
             ],
+            parent=active_window(self.root),
         )
         if not path:
             return
@@ -1894,6 +1902,7 @@ class TranscribeTab:
                 ("Whispers project", f"*{PROJECT_SUFFIX}"),
                 ("All files", "*.*"),
             ],
+            parent=active_window(self.root),
         )
         if not path:
             return
@@ -1945,7 +1954,8 @@ class TranscribeTab:
     def _add_batch_files(self) -> None:
         patterns = " ".join(f"*{ext}" for ext in AUDIO_EXTENSIONS)
         paths = filedialog.askopenfilenames(
-            filetypes=[("Audio/Video", patterns), ("All files", "*.*")]
+            filetypes=[("Audio/Video", patterns), ("All files", "*.*")],
+            parent=active_window(self.root),
         )
         self._add_batch_paths([Path(p) for p in paths if p])
 
@@ -2343,7 +2353,9 @@ class TranscribeTab:
 
     def _new_profile(self) -> None:
         name = simpledialog.askstring(
-            "New profile", "Name this operation/profile:", parent=self.root
+            "New profile",
+            "Name this operation/profile:",
+            parent=active_window(self.root),
         )
         if not name or not name.strip():
             return
@@ -2389,6 +2401,7 @@ class TranscribeTab:
                 ("Whispers profile", f"*{PROFILE_SUFFIX}"),
                 ("All files", "*.*"),
             ],
+            parent=active_window(self.root),
         )
         if not path:
             return
@@ -2408,6 +2421,7 @@ class TranscribeTab:
                 ("Whispers profile", f"*{PROFILE_SUFFIX}"),
                 ("All files", "*.*"),
             ],
+            parent=active_window(self.root),
         )
         if not path:
             return
@@ -2421,7 +2435,7 @@ class TranscribeTab:
             "Import profile",
             f"A profile named '{profile.name}' already exists here. Overwrite it "
             "with the imported one?",
-            parent=self.root,
+            parent=active_window(self.root),
         ):
             return
         save_profile(profile)

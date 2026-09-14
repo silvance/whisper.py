@@ -24,6 +24,7 @@ from ..transcription import (
     is_low_confidence_segment,
     is_low_confidence_word,
 )
+from .dialogs import active_window
 from .theme import palette
 
 # Foreground colour for low-confidence text when highlighting is enabled.
@@ -653,7 +654,7 @@ class TranscriptView:
             "Rename speaker",
             f"New name for {current}:",
             initialvalue=current,
-            parent=self.root,
+            parent=active_window(self.root),
         )
         if not new_name or not new_name.strip():
             return

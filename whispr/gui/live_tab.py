@@ -17,6 +17,7 @@ from typing import IO, Callable, Optional
 from ..live import DEFAULT_SEGMENT_SECONDS, LiveTranscriber, test_connection
 from ..resources import bundled_models
 from ..transcription import MODEL_SIZES
+from .dialogs import active_window
 from .errors import friendly_error
 from .popout import PanelWindow
 from .theme import SPACE_LG, SPACE_SM, SPACE_XS, Style, theme
@@ -243,6 +244,7 @@ class LiveTab:
             defaultextension=".txt",
             initialfile="live-transcript.txt",
             filetypes=[("Text file", "*.txt"), ("All files", "*.*")],
+            parent=active_window(self.root),
         )
         if path:
             self.save_path_var.set(path)
