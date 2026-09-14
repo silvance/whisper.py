@@ -28,7 +28,7 @@ import importlib.util
 from dataclasses import dataclass
 from typing import List
 
-from . import resources, thresholds
+from . import hub_cache, resources, thresholds
 from .acceleration import describe_hardware
 from .buildinfo import build_info
 from .hashing import short
@@ -42,6 +42,30 @@ class Check:
     label: str
     ok: bool
     detail: str
+
+
+def _pyannote_cache_check() -> Check:
+    """Whether the bundled pyannote cache can actually be read, not just found.
+
+    This used to report "bundled" on the strength of the directory existing.
+    A cache can be complete and still unreadable offline - see
+    :mod:`whispr.hub_cache` - and when that happened the report said the models
+    were there right up until the moment an operator tried to use them.
+    """
+    cache = resources.pyannote_cache_dir()
+    if cache is None:
+        return Check("Diarization: pyannote model cache", False, "not bundled")
+    hub = cache / "hub"
+    if not hub.is_dir():
+        return Check("Diarization: pyannote model cache", False, "bundled but empty")
+    problems = hub_cache.unreadable(hub, hub_cache.PYANNOTE_REPOS)
+    if problems:
+        return Check(
+            "Diarization: pyannote model cache",
+            False,
+            "bundled but unreadable offline - " + "; ".join(problems),
+        )
+    return Check("Diarization: pyannote model cache", True, "bundled and readable")
 
 
 def _installed(module: str) -> bool:
@@ -95,13 +119,7 @@ def gather() -> List[Check]:
             "installed" if pyannote else "not installed",
         )
     )
-    checks.append(
-        Check(
-            "Diarization: pyannote model cache",
-            resources.pyannote_cache_dir() is not None,
-            "bundled" if resources.pyannote_cache_dir() else "not bundled",
-        )
-    )
+    checks.append(_pyannote_cache_check())
     sherpa = _installed("sherpa_onnx")
     checks.append(
         Check(

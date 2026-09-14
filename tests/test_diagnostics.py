@@ -271,3 +271,54 @@ def test_self_test_reports_a_reduced_build_rather_than_failing(monkeypatch):
     with pytest.raises(SystemExit) as excinfo:
         app.main(["--self-test"])
     assert excinfo.value.code == 0
+
+
+# -- The bundled pyannote cache ----------------------------------------------
+#
+# This row used to be answered by the presence of a directory. A cache can hold
+# every weight and still be unreadable offline, and when that happened the
+# self-test said the models were bundled right up to the moment an operator
+# tried to use them. What it reports now is whether they can be read.
+
+
+def _cache(tmp_path, monkeypatch, *, ref=True):
+    from whispr import hub_cache
+
+    hub = tmp_path / "hub"
+    for repo in hub_cache.PYANNOTE_REPOS:
+        snapshot = hub_cache.repo_folder(hub, repo) / "snapshots" / ("a" * 40)
+        snapshot.mkdir(parents=True)
+        (snapshot / "config.yaml").write_text("x", encoding="utf-8")
+        if ref:
+            hub_cache.write_ref(hub, repo, "a" * 40)
+    monkeypatch.setattr(diagnostics.resources, "pyannote_cache_dir", lambda: tmp_path)
+    return hub
+
+
+def test_a_readable_cache_is_reported_as_readable(tmp_path, monkeypatch):
+    _cache(tmp_path, monkeypatch)
+    check = diagnostics._pyannote_cache_check()
+    assert check.ok and check.detail == "bundled and readable"
+
+
+def test_a_cache_that_cannot_be_read_offline_is_not_reported_as_bundled(
+    tmp_path, monkeypatch
+):
+    """The regression: present, complete, and useless."""
+    _cache(tmp_path, monkeypatch, ref=False)
+    check = diagnostics._pyannote_cache_check()
+    assert not check.ok
+    assert "unreadable offline" in check.detail
+    assert "refs/main" in check.detail
+
+
+def test_no_cache_at_all_still_says_not_bundled(tmp_path, monkeypatch):
+    monkeypatch.setattr(diagnostics.resources, "pyannote_cache_dir", lambda: None)
+    check = diagnostics._pyannote_cache_check()
+    assert not check.ok and check.detail == "not bundled"
+
+
+def test_an_empty_cache_directory_says_so(tmp_path, monkeypatch):
+    monkeypatch.setattr(diagnostics.resources, "pyannote_cache_dir", lambda: tmp_path)
+    check = diagnostics._pyannote_cache_check()
+    assert not check.ok and check.detail == "bundled but empty"
