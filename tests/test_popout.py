@@ -59,3 +59,43 @@ def test_the_button_says_something_different_each_way_round():
     """One button, two jobs - it has to read as a different offer each time."""
     assert POPOUT_LABEL != DOCK_LABEL
     assert POPOUT_LABEL and DOCK_LABEL
+
+
+# -- Which screen it opens on ---------------------------------------------
+#
+# The whole feature is "put the transcript on my other monitor". Sizing it
+# against the screen Tk reports is right; *positioning* it there is not, since
+# on Windows that is the primary monitor whichever one the application is on.
+
+
+def test_the_window_opens_over_the_application_not_over_screen_one():
+    from whispr.dialog_placement import Rect
+
+    main = Rect(2560, 200, 1400, 900)
+    width, height, x, y = _parse(fit_geometry("1100x780", 2560, 1440, main))
+    assert x >= main.x
+    assert (width, height) == (1100, 780)
+
+
+def test_a_main_window_on_a_left_hand_monitor_keeps_its_negative_coordinates():
+    from whispr.dialog_placement import Rect
+
+    main = Rect(-1920, 0, 1400, 900)
+    _, _, x, _ = _parse(fit_geometry("1100x780", 2560, 1440, main))
+    assert x < 0
+
+
+def test_the_screen_is_still_the_ceiling_on_size():
+    """A window bigger than the screen is unusable wherever it is centred."""
+    from whispr.dialog_placement import Rect
+
+    main = Rect(0, 0, 3000, 2000)
+    width, height, _, _ = _parse(fit_geometry("1100x780", 1024, 768, main))
+    assert width <= 1024 - 80 and height <= 768 - 120
+
+
+def test_without_a_main_window_it_falls_back_to_the_screen():
+    """Nothing to centre on is not a reason to refuse to open."""
+    width, height, x, y = _parse(fit_geometry("1100x780", 2560, 1440))
+    assert (width, height) == (1100, 780)
+    assert x > 0 and y > 0

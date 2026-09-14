@@ -23,6 +23,7 @@ from tkinter import ttk
 from typing import Callable, Optional
 
 from ..panel_window import DOCK_LABEL, POPOUT_LABEL, fit_geometry
+from .dialogs import rect_of
 
 
 class PopoutError(RuntimeError):
@@ -148,6 +149,7 @@ class Popout:
                 self._size,
                 self._root.winfo_screenwidth(),
                 self._root.winfo_screenheight(),
+                rect_of(self._root),
             )
         except tk.TclError:  # pragma: no cover - no display
             return self._size

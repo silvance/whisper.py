@@ -29,6 +29,7 @@ from ..comparison_log import (
 )
 from ..speaker_profiles import ProfileError, list_speaker_profiles
 from ..thresholds import BAND_HIGH, BAND_INSUFFICIENT, DISCLAIMER
+from .dialogs import active_window
 from .errors import friendly_error
 from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, Style, palette
 from .widgets import (
@@ -503,6 +504,7 @@ class ComparisonLogTab:
             defaultextension=".csv",
             initialfile="comparison-history.csv",
             filetypes=[("Comma-separated values", "*.csv"), ("All files", "*.*")],
+            parent=active_window(self.root),
         )
         if not path:
             return
@@ -528,7 +530,7 @@ class ComparisonLogTab:
             f"{record.subject_label} using {record.recording_label}?\n\n"
             "This removes the account of a comparison that was run. The "
             "recording and the speaker profile are not affected.",
-            parent=self.root,
+            parent=active_window(self.root),
         ):
             return
         try:

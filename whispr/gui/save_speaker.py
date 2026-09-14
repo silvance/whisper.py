@@ -22,6 +22,7 @@ from tkinter import ttk
 from typing import Dict, List, Optional, Tuple
 
 from ..speaker_profiles import SpeakerProfile, list_speaker_profiles
+from .dialogs import present
 from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, Style, palette
 from .widgets import primary_button, secondary_button
 
@@ -62,7 +63,6 @@ def ask_save_speaker(
 
     win = tk.Toplevel(root)
     win.title("Save speaker to profile")
-    win.transient(root)  # type: ignore[call-overload]
     win.configure(background=palette().surface)
     win.resizable(False, False)
 
@@ -200,18 +200,8 @@ def ask_save_speaker(
     add = primary_button(buttons, "Add samples", _confirm)
     add.pack(side="right", padx=(0, SPACE_SM))
 
-    win.bind("<Escape>", lambda _e: win.destroy())
     win.bind("<Return>", lambda _e: _confirm())
+    present(win, root, modal=True)
     add.focus_set()
-    win.update_idletasks()
-    # Centred on the window it came from, rather than wherever the window
-    # manager would have dropped it.
-    try:
-        x = root.winfo_rootx() + (root.winfo_width() - win.winfo_width()) // 2
-        y = root.winfo_rooty() + (root.winfo_height() - win.winfo_height()) // 3
-        win.geometry(f"+{max(0, x)}+{max(0, y)}")
-    except tk.TclError:  # no geometry yet; leave it to the window manager
-        pass
-    win.grab_set()
     win.wait_window()
     return chosen["value"]

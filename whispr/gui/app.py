@@ -32,6 +32,7 @@ from ..resources import (
 )
 from ..settings import load_settings, save_settings
 from .comparison_log_tab import ComparisonLogTab
+from .dialogs import present
 from .live_tab import LiveTab
 from .speaker_compare_tab import SpeakerCompareTab
 from .speaker_profiles_tab import SpeakerProfilesTab
@@ -359,7 +360,6 @@ class WhisprApp:
         """A themed read-only window. Escape closes it; Close takes focus."""
         window = tk.Toplevel(self.root)
         window.title(title)
-        window.transient(self.root)  # type: ignore[call-overload]
         window.configure(background=self.theme.palette.background)
         frame = ttk.Frame(window, style=Style.PAGE, padding=SPACE_XL)
         frame.pack(fill="both", expand=True)
@@ -390,7 +390,7 @@ class WhisprApp:
             ttk.Button(buttons, text="Copy", command=_copy, style=Style.SECONDARY).pack(
                 side="right", padx=(0, SPACE_SM)
             )
-        window.bind("<Escape>", lambda _e: window.destroy())
+        present(window, self.root)
         close.focus_set()
 
     def _on_close(self) -> None:

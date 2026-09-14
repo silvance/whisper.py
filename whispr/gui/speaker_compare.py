@@ -23,8 +23,10 @@ from ..profiles import (
 )
 from ..thresholds import COMPARISON_HIGH_BAND, DISCLAIMER
 from ..voiceprints import Voiceprint, compare_voiceprints, similarity_band
+from .dialogs import active_window, present
 from .errors import friendly_error
-from .theme import SPACE_MD, SPACE_XL, Style, palette
+from .theme import SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, Style, palette
+from .widgets import primary_button, secondary_button
 
 # Reports a one-line status/result back to the caller (e.g. a status label).
 StatusFn = Callable[[str], None]
@@ -38,23 +40,29 @@ def choose_speaker(
         return names[0]
     win = tk.Toplevel(root)
     win.title(title)
-    win.transient(root)  # type: ignore[call-overload]
-    win.grab_set()
+    win.configure(background=palette().surface)
+    win.resizable(False, False)
     var = tk.StringVar(value=names[0])
     chosen: Dict[str, Optional[str]] = {"name": None}
-    ttk.Label(win, text="Speaker:").pack(side="left", padx=(12, 6), pady=12)
-    ttk.Combobox(win, textvariable=var, values=names, state="readonly", width=24).pack(
-        side="left", pady=12
+    frame = ttk.Frame(win, padding=SPACE_XL, style=Style.CARD)
+    frame.pack(fill="both", expand=True)
+    ttk.Label(frame, text="Speaker", style=Style.FIELD_LABEL).pack(anchor="w")
+    combo = ttk.Combobox(
+        frame, textvariable=var, values=names, state="readonly", width=32
     )
+    combo.pack(anchor="w", pady=(SPACE_XS, 0))
 
     def _ok() -> None:
         chosen["name"] = var.get()
         win.destroy()
 
-    ttk.Button(win, text="Cancel", command=win.destroy).pack(
-        side="right", padx=(0, 12), pady=12
-    )
-    ttk.Button(win, text="OK", command=_ok).pack(side="right", padx=6, pady=12)
+    row = ttk.Frame(frame, style=Style.CARD_INNER)
+    row.pack(fill="x", pady=(SPACE_MD, 0))
+    secondary_button(row, "Cancel", win.destroy).pack(side="right")
+    primary_button(row, "OK", _ok).pack(side="right", padx=(0, SPACE_SM))
+    win.bind("<Return>", lambda _e: _ok())
+    present(win, root, modal=True)
+    combo.focus_set()
     win.wait_window()
     return chosen["name"]
 
@@ -79,6 +87,7 @@ def export_speaker(
             ("Whispers voiceprint", f"*{VOICEPRINT_SUFFIX}"),
             ("All files", "*.*"),
         ],
+        parent=active_window(root),
     )
     if not path:
         return
@@ -102,6 +111,7 @@ def load_voiceprint_from_file(
             ),
             ("All files", "*.*"),
         ],
+        parent=active_window(root),
     )
     if not path:
         return None
@@ -120,7 +130,6 @@ def open_compare_dialog(root: tk.Misc) -> None:
     """Open a dialog to compare two voiceprints and score their similarity."""
     win = tk.Toplevel(root)
     win.title("Compare voices")
-    win.transient(root)  # type: ignore[call-overload]
     win.configure(background=palette().background)
     frame = ttk.Frame(win, padding=SPACE_XL, style=Style.PAGE)
     frame.pack(fill="both", expand=True)
@@ -195,3 +204,4 @@ def open_compare_dialog(root: tk.Misc) -> None:
     ttk.Button(frame, text="Close", command=win.destroy).grid(
         row=6, column=2, sticky="e", pady=(10, 0)
     )
+    present(win, root)

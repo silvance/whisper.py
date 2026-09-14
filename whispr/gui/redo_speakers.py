@@ -18,6 +18,7 @@ from tkinter import ttk
 from typing import Dict, Optional
 
 from .. import speaker_count
+from .dialogs import present
 from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, Style, palette
 from .widgets import primary_button, secondary_button
 
@@ -39,7 +40,6 @@ def ask_redo_speakers(
     """
     win = tk.Toplevel(root)
     win.title("Redo speaker separation")
-    win.transient(root)  # type: ignore[call-overload]
     win.configure(background=palette().surface)
     win.resizable(False, False)
 
@@ -120,16 +120,8 @@ def ask_redo_speakers(
     go = primary_button(buttons, "Redo separation", _confirm)
     go.pack(side="right", padx=(0, SPACE_SM))
 
-    win.bind("<Escape>", lambda _e: win.destroy())
     win.bind("<Return>", lambda _e: _confirm())
+    present(win, root, modal=True)
     combo.focus_set()
-    win.update_idletasks()
-    try:
-        x = root.winfo_rootx() + (root.winfo_width() - win.winfo_width()) // 2
-        y = root.winfo_rooty() + (root.winfo_height() - win.winfo_height()) // 3
-        win.geometry(f"+{max(0, x)}+{max(0, y)}")
-    except tk.TclError:  # no geometry yet; leave it to the window manager
-        pass
-    win.grab_set()
     win.wait_window()
     return chosen["value"]

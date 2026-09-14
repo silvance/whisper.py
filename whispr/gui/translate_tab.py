@@ -18,6 +18,7 @@ from ..export import text_to_docx
 from ..ocr import OCR_EXTENSIONS, extract_text, is_ocr_file, tesseract_lang
 from ..transcription import CancelledError
 from ..translation import detect_language
+from .dialogs import active_window
 from .errors import friendly_error
 from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, Style
 from .widgets import (
@@ -312,7 +313,9 @@ class TranslateTab:
             ]
         else:
             filetypes = [("Text files", "*.txt"), ("All files", "*.*")]
-        paths = filedialog.askopenfilenames(filetypes=filetypes)
+        paths = filedialog.askopenfilenames(
+            filetypes=filetypes, parent=active_window(self.root)
+        )
         self._add_translate_paths([Path(raw) for raw in paths if raw])
 
     def _add_translate_paths(self, paths: List[Path]) -> None:
@@ -523,6 +526,7 @@ class TranslateTab:
         path = filedialog.askopenfilename(
             title="Choose an image or PDF",
             filetypes=[("Images & PDFs", patterns), ("All files", "*.*")],
+            parent=active_window(self.root),
         )
         if not path:
             return
@@ -573,6 +577,7 @@ class TranslateTab:
             defaultextension=".docx",
             initialfile="translation.docx",
             filetypes=[("Word document", "*.docx")],
+            parent=active_window(self.root),
         )
         if not path:
             return

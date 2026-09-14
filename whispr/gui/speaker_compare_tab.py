@@ -68,8 +68,18 @@ from ..thresholds import (
 )
 from ..transcription import AUDIO_EXTENSIONS
 from ..voiceprints import SpeakerEmbedder
+from .dialogs import active_window, present
 from .errors import friendly_error
-from .theme import SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, Style, theme
+from .theme import (
+    SPACE_LG,
+    SPACE_MD,
+    SPACE_SM,
+    SPACE_XL,
+    SPACE_XS,
+    Style,
+    palette,
+    theme,
+)
 from .widgets import (
     Card,
     Disclosure,
@@ -433,6 +443,7 @@ class SpeakerCompareTab:
         path = filedialog.askopenfilename(
             title="Questioned recording",
             filetypes=[("Audio/Video", patterns), ("All files", "*.*")],
+            parent=active_window(self.root),
         )
         if path:
             self.questioned_var.set(path)
@@ -476,33 +487,43 @@ class SpeakerCompareTab:
     def _choose_cluster(self, totals) -> Optional[str]:
         win = tk.Toplevel(self.root)
         win.title("Which speaker is the questioned speaker?")
-        win.transient(self.root)  # type: ignore[call-overload]
-        win.grab_set()
+        win.configure(background=palette().surface)
+        win.resizable(False, False)
         labels = [f"{name} — {seconds:.0f}s of speech" for name, seconds in totals]
         var = tk.StringVar(value=labels[0])
         chosen: dict = {"value": None}
-        frame = ttk.Frame(win, padding=12)
+        frame = ttk.Frame(win, padding=SPACE_XL, style=Style.CARD)
         frame.pack(fill="both", expand=True)
         ttk.Label(
             frame,
+            text="Which speaker is the questioned speaker?",
+            style=Style.SECTION_TITLE,
+        ).pack(anchor="w")
+        ttk.Label(
+            frame,
             text="Pick the speaker to compare against the reference profile.",
+            style=Style.MUTED,
             wraplength=380,
             justify="left",
-        ).pack(anchor="w", pady=(0, 8))
-        ttk.Combobox(
+        ).pack(anchor="w", pady=(SPACE_XS, SPACE_SM))
+        combo = ttk.Combobox(
             frame, textvariable=var, values=labels, state="readonly", width=42
-        ).pack(anchor="w")
+        )
+        combo.pack(anchor="w")
 
         def _ok() -> None:
             chosen["value"] = totals[labels.index(var.get())][0]
             win.destroy()
 
-        row = ttk.Frame(frame)
-        row.pack(fill="x", pady=(10, 0))
-        ttk.Button(row, text="Cancel", command=win.destroy).pack(side="right")
-        ttk.Button(row, text="Use this speaker", command=_ok).pack(
-            side="right", padx=(0, 6)
+        row = ttk.Frame(frame, style=Style.CARD_INNER)
+        row.pack(fill="x", pady=(SPACE_MD, 0))
+        secondary_button(row, "Cancel", win.destroy).pack(side="right")
+        primary_button(row, "Use this speaker", _ok).pack(
+            side="right", padx=(0, SPACE_SM)
         )
+        win.bind("<Return>", lambda _e: _ok())
+        present(win, self.root, modal=True)
+        combo.focus_set()
         win.wait_window()
         return chosen["value"]
 
@@ -857,16 +878,18 @@ class SpeakerCompareTab:
         """Show the decision thresholds in force (read-only)."""
         window = tk.Toplevel(self.root)
         window.title("Whispers - active thresholds")
-        window.transient(self.root)  # type: ignore[call-overload]
-        text = ScrolledText(
-            window, wrap="word", width=76, height=22, font="TkFixedFont"
-        )
-        text.pack(fill="both", expand=True, padx=8, pady=8)
+        window.configure(background=palette().background)
+        frame = ttk.Frame(window, style=Style.PAGE, padding=SPACE_XL)
+        frame.pack(fill="both", expand=True)
+        text = ScrolledText(frame, wrap="word", width=76, height=22, font=theme().mono)
+        style_text_widget(text)
+        text.pack(fill="both", expand=True)
         text.insert("end", "\n".join(describe_active()))
         text.configure(state="disabled")
-        ttk.Button(window, text="Close", command=window.destroy).pack(
-            side="right", padx=8, pady=(0, 8)
+        secondary_button(frame, "Close", window.destroy).pack(
+            side="right", pady=(SPACE_MD, 0)
         )
+        present(window, self.root)
 
     def _copy_result(self) -> None:
         text = self.result_text.get("1.0", "end-1c")
@@ -915,6 +938,7 @@ class SpeakerCompareTab:
             defaultextension=".docx",
             initialfile="speaker-analysis-report.docx",
             filetypes=[("Word document", "*.docx"), ("Text file", "*.txt")],
+            parent=active_window(self.root),
         )
         if not path:
             return
