@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
 
+from . import hub_cache
 from .resources import bundled_diarization_models, pyannote_cache_dir
 from .thresholds import DIARIZATION_CLUSTERING_THRESHOLD
 from .transcription import (
@@ -253,6 +254,22 @@ def _diarize_pyannote(
     if cache is not None and (cache / "hub").is_dir():
         hub = cache / "hub"
         load_kwargs["cache_dir"] = str(hub)
+        # A bundled cache can hold every weight and still be unreadable offline
+        # (see whispr.hub_cache). Where the missing piece can be restated from
+        # what is on disk, restate it; where it cannot, say so here in plain
+        # words rather than letting huggingface_hub fail several layers down
+        # with advice about checking the internet connection.
+        repaired = hub_cache.repair(hub, hub_cache.PYANNOTE_REPOS)
+        if repaired and progress is not None:
+            progress(f"Repaired the bundled model cache for {len(repaired)} model(s).")
+        problems = hub_cache.unreadable(hub, hub_cache.PYANNOTE_REPOS)
+        if problems:
+            raise RuntimeError(
+                "The bundled speaker models cannot be read. This build needs to "
+                "be rebuilt; nothing you can change on this machine will fix "
+                "it, and the app will not go looking on the internet for them.\n  "
+                + "\n  ".join(problems)
+            )
         try:
             import huggingface_hub.constants as hf_constants
 

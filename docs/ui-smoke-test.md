@@ -26,6 +26,13 @@ which can be a different file on each run.
       predates this check - rebuild before deploying.
 - [ ] `whispr --self-test` then prints the report and exits 0, naming the build
       ID and commit and listing the models actually bundled.
+- [ ] In that report, **Diarization: pyannote model cache** reads
+      `bundled and readable` - not merely `bundled`. A cache can hold every
+      weight and still be unreadable offline, in which case the first
+      transcription with speaker separation fails at the point of loading the
+      pipeline. If it reads `bundled but unreadable offline`, the line names
+      what is wrong; the build has to be redone, and nothing on the deployment
+      machine will fix it.
 
 ## Startup
 

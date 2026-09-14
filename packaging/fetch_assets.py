@@ -31,7 +31,7 @@ from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from whispr import asset_lock  # noqa: E402
+from whispr import asset_lock, hub_cache  # noqa: E402
 from whispr.hashing import sha256_file_or_none  # noqa: E402
 
 ASSETS = Path("whispr_assets")
@@ -240,11 +240,7 @@ def fetch_models(names: List[str]) -> None:
 # pyannote.audio 3.1.1's speaker-diarization-3.1 pipeline and the two gated models
 # it pulls in (segmentation + speaker embedding). These are gated on the Hugging
 # Face Hub: the account behind HF_TOKEN must have accepted each model's license.
-PYANNOTE_REPOS = [
-    "pyannote/speaker-diarization-3.1",
-    "pyannote/segmentation-3.0",
-    "pyannote/wespeaker-voxceleb-resnet34-LM",
-]
+PYANNOTE_REPOS = list(hub_cache.PYANNOTE_REPOS)
 
 
 def fetch_pyannote() -> None:
@@ -280,11 +276,31 @@ def fetch_pyannote() -> None:
         path = snapshot_download(
             repo_id=repo, revision=revision, cache_dir=str(cache), token=token
         )
+        commit = revision
         if revision is None:
-            resolved = _hub_revision(repo, token=token)
-            if resolved:
-                _pin_repo(repo, resolved)
-        print(f"pyannote {repo} -> {path}" + (f" @ {revision}" if revision else ""))
+            commit = _hub_revision(repo, token=token)
+            if commit:
+                _pin_repo(repo, commit)
+        else:
+            # A download pinned to a commit leaves no refs/main behind: the
+            # commit is the revision, so there is no name to record. pyannote
+            # asks for "main" and nothing else, so without it the weights are
+            # present and unreachable. Put the cache in the state an unpinned
+            # download of the same commit would have left it in.
+            hub_cache.write_ref(cache, repo, revision)
+        print(f"pyannote {repo} -> {path}" + (f" @ {commit}" if commit else ""))
+
+    # Checked here, where it can still be fixed. The failure this catches is
+    # silent by nature: every file is present, the build is green, and the
+    # bundle dies on an operator's machine talking about their internet
+    # connection.
+    problems = hub_cache.unreadable(cache, PYANNOTE_REPOS)
+    if problems:
+        raise SystemExit(
+            "the bundled pyannote cache cannot be read offline:\n  "
+            + "\n  ".join(problems)
+        )
+    print(f"pyannote cache is readable offline ({len(PYANNOTE_REPOS)} repos)")
     save_lock()
 
 

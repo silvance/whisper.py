@@ -637,7 +637,16 @@ so the build needs a token. Add a repository secret named **`HF_TOKEN`** (Settin
 accepted the licenses for `pyannote/speaker-diarization-3.1`,
 `pyannote/segmentation-3.0`, and `pyannote/wespeaker-voxceleb-resnet34-LM`. The
 models are downloaded at build time and baked into the bundle's offline cache; the
-deployed app needs neither the token nor network access. Choose the `sherpa`
+deployed app needs neither the token nor network access.
+
+That cache is not just the weights. Each repository also needs `refs/main`, the
+one-line file saying which commit `main` is, because `main` is the only thing
+pyannote asks for and offline there is nothing else to answer with. Pinning the
+revisions removes it — a download pinned to a commit has no name to record — so
+`fetch_assets.py pyannote` writes it back and then refuses to finish if any
+bundled repository cannot be read offline. The app checks the same thing on the
+way in, repairs it where the commit on disk is unambiguous, and otherwise says
+so plainly instead of reaching for the network. Choose the `sherpa`
 diarizer for a smaller, token-free build (no PyTorch).
 
 To build locally instead on a connected machine of each OS:
