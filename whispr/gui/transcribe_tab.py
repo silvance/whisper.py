@@ -20,7 +20,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Callable, Dict, List, Optional, Tuple
 
-from .. import speaker_count
+from .. import folder_batch, speaker_count
 from ..acceleration import (
     DEFAULT_MODE,
     MODE_LABELS,
@@ -55,7 +55,13 @@ from ..provenance import (
 )
 from ..reports import write_analysis_report
 from ..resources import bundled_embedding_model, bundled_models
-from ..run_summary import SkippedRun, completion, much_was_skipped, per_file_note
+from ..run_summary import (
+    FailedRun,
+    SkippedRun,
+    completion,
+    much_was_skipped,
+    per_file_note,
+)
 from ..speaker_count import UNKNOWN as SPEAKERS_UNKNOWN
 from ..speaker_count import UNSET as SPEAKERS_UNSET
 from ..speaker_names import preset_names
@@ -272,12 +278,19 @@ class TranscribeTab:
         self._skipped_much: "List[SkippedRun]" = []
         # Queued recordings that were not there when the run reached them.
         self._missing_files: "List[str]" = []
+        # Recordings this run could not transcribe, and why. A batch carries on
+        # past one of these: a folder left running overnight must not be lost
+        # to a single unreadable file at position three.
+        self._failed_files: "List[FailedRun]" = []
         # Traceability for the displayed result: source hash, models, settings.
         self._result_provenance: Optional[AnalysisProvenance] = None
 
         # Optional batch queue; when non-empty, Run transcribes all of these
         # instead of the single "Audio / video file" above.
         self._batch_files: List[Path] = []
+        # What the last folder walk turned up, so the queue can say what it
+        # left out as well as what it took.
+        self._batch_found = folder_batch.Found()
         self.batch_files_var = tk.StringVar(value="")
 
         # Active operation profile (saved settings + learned speaker voiceprints),
@@ -346,15 +359,23 @@ class TranscribeTab:
     def _build_recording_card(self, parent: tk.Misc) -> None:
         card = Card(parent, "Recording")
         card.pack(fill="x")
-        self._drop_zone = FileDropZone(card.body, self.input_file_var, self.choose_file)
+        self._drop_zone = FileDropZone(
+            card.body,
+            self.input_file_var,
+            self.choose_file,
+            # A folder is now as good as a file here, and an operator who is
+            # not told will keep opening them to drag the contents out.
+            prompt="Drop an audio or video file here — or a whole folder of them",
+        )
         self._drop_zone.pack(fill="x")
 
         # Batch stays available, but a queue is the exception: it sits under the
         # single file it would otherwise compete with.
         batch = ttk.Frame(card.body, style=Style.CARD_INNER)
         batch.pack(fill="x", pady=(SPACE_MD, 0))
+        subtle_button(batch, "Add a folder…", self._add_batch_folder).pack(side="left")
         subtle_button(batch, "Add several files…", self._add_batch_files).pack(
-            side="left"
+            side="left", padx=(SPACE_SM, 0)
         )
         self._batch_clear = subtle_button(batch, "Clear list", self._clear_batch_files)
         self._batch_row = batch
@@ -1084,7 +1105,13 @@ class TranscribeTab:
 
     def _completion_message(self, done: int, total: int) -> "Tuple[str, str]":
         """The one banner a finished run leaves behind, and its kind."""
-        return completion(done, total, self._skipped_much, self._missing_files)
+        return completion(
+            done,
+            total,
+            self._skipped_much,
+            self._missing_files,
+            self._failed_files,
+        )
 
     def _describe_result(self) -> None:
         """The one-line account of what was produced, above the transcript."""
@@ -1280,6 +1307,7 @@ class TranscribeTab:
         self._clear_session_wav()
         self._skipped_much = []
         self._missing_files = []
+        self._failed_files = []
         self._set_result_caveat("")
         try:
             self.transcript_view.set_result(None, {})
@@ -1319,12 +1347,34 @@ class TranscribeTab:
                     save_dir = src.parent
                 else:
                     save_dir = None
-                self._transcribe_one(
-                    src, task, save_dir, prefix, set_view=(index == total)
-                )
+                if total > 1:
+                    self.progress_label_var.set(f"{index} of {total} — {src.name}")
+                try:
+                    # Every finished recording goes on screen, so a long folder
+                    # shows its progress as real transcripts rather than a
+                    # status line - and so a batch whose *last* file fails still
+                    # leaves the work that succeeded in front of the operator.
+                    self._transcribe_one(src, task, save_dir, prefix, set_view=True)
+                except CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - one file, not the run
+                    # A batch is often a folder left running unattended. One
+                    # recording that cannot be read is that recording's
+                    # problem; stopping here would throw away the hours of
+                    # work still queued behind it.
+                    if total == 1:
+                        raise
+                    friendly = friendly_error(exc)
+                    self._failed_files.append(FailedRun(src.name, friendly))
+                    append_line(
+                        self.status,
+                        f"{prefix}Could not transcribe {src.name}: {friendly}",
+                    )
+                    append_line(self.status, traceback.format_exc())
+                    continue
                 done += 1
-            if self._missing_files:
-                final_status = f"Finished {done} of {total} — file(s) not found"
+            if self._missing_files or self._failed_files:
+                final_status = f"Finished {done} of {total} — see Status"
             else:
                 final_status = f"Finished {done} file(s)" if total > 1 else "Finished"
             kind, message = self._completion_message(done, total)
@@ -1332,6 +1382,10 @@ class TranscribeTab:
                 append_line(self.status, message)
             self._announce(kind, message)
             self._set_result_caveat(message if kind == "warning" else "")
+            if self._failed_files:
+                # The banner says how many and why; the detail is a tab away,
+                # and an operator will not think to go looking for it.
+                self._show_status_tab()
             self.root.after(0, self._describe_result)
         except CancelledError:
             append_line(self.status, "Cancelled.")
@@ -1375,9 +1429,9 @@ class TranscribeTab:
     ) -> None:
         """Transcribe one file: convert, transcribe, diarize, save, show.
 
-        ``set_view`` loads the result into the transcript pane (used for the last
-        file of a batch, or the only file). ``save_dir`` writes outputs there when
-        set; ``prefix`` is the ``(i/n)`` batch marker for status lines.
+        ``set_view`` loads the result into the transcript pane. ``save_dir``
+        writes outputs there when set; ``prefix`` is the ``(i/n)`` batch marker
+        for status lines.
         """
         temp_wav: Optional[Path] = None
         try:
@@ -1484,8 +1538,9 @@ class TranscribeTab:
             if self.diarize_var.get():
                 # Kept as transcribed, before any speaker is attached to it, so
                 # the split can be done again from the same words rather than
-                # from the output of the last split. Only for the result that
-                # will be on screen - a batch keeps the last one.
+                # from the output of the last split. It belongs to the result on
+                # screen, which in a batch is the one that finished most
+                # recently.
                 undiarized = copy.deepcopy(result.segments) if set_view else None
                 self._diarize_into(result, src, media_path, media_is_normalized)
                 provenance.diarization = DiarizationProvenance.from_bundle(
@@ -1940,10 +1995,10 @@ class TranscribeTab:
         self.progress_label_var.set(f"Opened {Path(path).name}")
 
     def _on_drop_media(self, paths: List[Path]) -> None:
-        """A dropped file loads as input; several dropped files fill the batch."""
+        """A dropped file loads as input; a folder, or several files, fill the batch."""
         if not paths:
             return
-        if len(paths) == 1:
+        if len(paths) == 1 and not paths[0].is_dir():
             self.input_file_var.set(str(paths[0]))
             self.progress_label_var.set(f"Loaded {paths[0].name}")
         else:
@@ -1959,28 +2014,60 @@ class TranscribeTab:
         )
         self._add_batch_paths([Path(p) for p in paths if p])
 
+    def _add_batch_folder(self) -> None:
+        """Queue every recording in a folder, including the folders inside it."""
+        path = filedialog.askdirectory(
+            title="Folder of recordings to transcribe",
+            parent=active_window(self.root),
+        )
+        if path:
+            self._add_batch_paths([Path(path)])
+
     def _add_batch_paths(self, paths: List[Path]) -> None:
-        for path in paths:
+        """Add files, and the recordings inside any folders, to the queue."""
+        found = folder_batch.expand(paths)
+        added = 0
+        for path in found.recordings:
             if path not in self._batch_files:
                 self._batch_files.append(path)
+                added += 1
+        # Carried so the queue can account for what the walk left behind, and
+        # the Status log can name it - a folder that arrives as a shorter list
+        # than the operator expected has to say why.
+        self._batch_found.folders += found.folders
+        self._batch_found.ignored += found.ignored
+        self._batch_found.unreadable.extend(found.unreadable)
+        self._batch_found.converted.extend(found.converted)
+        for name in found.converted:
+            append_line(
+                self.status,
+                f"Left out {name}: it looks like the WAV a previous run made "
+                "from the video of the same name. Choose it directly if it is "
+                "a separate recording.",
+            )
+        for name in found.unreadable:
+            append_line(self.status, f"Could not read the folder {name}.")
+        if found.folders and not added and not self._batch_files:
+            self.progress_label_var.set("No recordings in that folder")
         self._update_batch_label()
 
     def _clear_batch_files(self) -> None:
         self._batch_files = []
+        self._batch_found = folder_batch.Found()
         self._update_batch_label()
 
     def _update_batch_label(self) -> None:
-        count = len(self._batch_files)
-        if not count:
-            self.batch_files_var.set("")
-            # Nothing to clear, so nothing offering to.
+        summary = folder_batch.describe(self._batch_found, queued=self._batch_files)
+        if not self._batch_files:
+            self.batch_files_var.set(summary)
+            # Nothing queued: the only reason to keep Clear is to dismiss a
+            # "no recordings in that folder" notice.
             self._batch_clear.pack_forget()
+            if summary:
+                self._batch_clear.pack(side="left", padx=(SPACE_SM, 0))
             return
-        names = ", ".join(p.name for p in self._batch_files[:4])
-        more = "" if count <= 4 else f" (+{count - 4} more)"
         self.batch_files_var.set(
-            f"{count} recording(s) queued — {names}{more}. "
-            "Transcribe recording will work through all of them."
+            f"{summary} Transcribe recording will work through all of them."
         )
         self._batch_clear.pack(side="left", padx=(SPACE_SM, 0))
 

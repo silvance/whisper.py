@@ -11,7 +11,7 @@ Kept out of the GUI so the wording can be tested without a display.
 
 from __future__ import annotations
 
-from typing import NamedTuple, Optional, Sequence, Tuple
+from typing import List, NamedTuple, Optional, Sequence, Tuple
 
 
 class SkippedRun(NamedTuple):
@@ -20,6 +20,13 @@ class SkippedRun(NamedTuple):
     name: str
     minutes: float
     kept: float
+
+
+class FailedRun(NamedTuple):
+    """One recording that could not be transcribed, and the plain reason why."""
+
+    name: str
+    reason: str
 
 
 # How little of a recording has to reach the model before the operator is told.
@@ -47,33 +54,21 @@ def completion(
     total: int,
     skipped: "Sequence[SkippedRun]",
     missing: "Sequence[str]" = (),
+    failed: "Sequence[FailedRun]" = (),
 ) -> "Tuple[str, str]":
     """The banner a finished run leaves behind: its kind, and its words.
 
     A run that could not find its recordings did not succeed, whatever the
     count says. "Transcription complete." over a file that was never opened is
-    the worst thing this banner could say, so a missing file makes it amber and
-    names what was not done.
+    the worst thing this banner could say, so a missing or failed file makes it
+    amber and names what was not done.
+
+    Order matters when several are true at once. Not transcribing a recording
+    outranks transcribing one badly: a caveat about the silence filter can wait
+    for the run where every recording actually ran.
     """
-    if missing:
-        names = ", ".join(missing)
-        if done == 0:
-            return (
-                "warning",
-                "Nothing was transcribed — "
-                + (
-                    f"{names} could not be found."
-                    if len(missing) == 1
-                    else f"none of these could be found: {names}."
-                ),
-            )
-        was = "was" if len(missing) == 1 else "were"
-        return (
-            "warning",
-            f"Transcribed {done} of {total} recordings — {names} {was} not "
-            "found. Check the file(s) are still where they were when you added "
-            "them.",
-        )
+    if failed or missing:
+        return _shortfall(done, total, missing, failed)
     if not skipped:
         message = (
             f"Transcription complete — {done} recording(s)."
@@ -99,8 +94,55 @@ def completion(
     )
 
 
+def _shortfall(
+    done: int,
+    total: int,
+    missing: "Sequence[str]",
+    failed: "Sequence[FailedRun]",
+) -> "Tuple[str, str]":
+    """The banner for a run that did not get through everything it was given."""
+    reasons: List[str] = []
+    if missing:
+        names = ", ".join(missing)
+        reasons.append(
+            f"{names} could not be found"
+            if len(missing) == 1
+            else f"{len(missing)} could not be found ({names})"
+        )
+    if failed:
+        reasons.append(_why_failed(failed))
+    detail = "; ".join(reasons)
+    if done == 0:
+        return "warning", f"Nothing was transcribed — {detail}."
+    return (
+        "warning",
+        f"Transcribed {done} of {total} recordings — {detail}. The Status tab "
+        "lists them; the rest were transcribed and saved.",
+    )
+
+
+def _why_failed(failed: "Sequence[FailedRun]") -> str:
+    """One phrase for the failures - grouped, because one cause is one problem.
+
+    A model that is not in the build fails every recording in the folder for
+    the same reason. Fifty lines saying so is not fifty problems, and an
+    operator reading a wall of them learns less than one sentence would.
+    """
+    names = ", ".join(run.name for run in failed)
+    reasons = {run.reason for run in failed}
+    if len(reasons) == 1:
+        only = next(iter(reasons))
+        if len(failed) == 1:
+            return f"{names} could not be transcribed ({only})"
+        return (
+            f"{len(failed)} could not be transcribed — all for the same reason: {only}"
+        )
+    return f"{len(failed)} could not be transcribed ({names})"
+
+
 __all__ = [
     "LOW_KEPT_FRACTION",
+    "FailedRun",
     "SkippedRun",
     "completion",
     "much_was_skipped",
