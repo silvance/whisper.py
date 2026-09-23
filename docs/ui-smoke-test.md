@@ -81,6 +81,33 @@ which can be a different file on each run.
       run of words still reassigns speech.
 - [ ] A batch of several files still runs, and the queue summary appears with a
       **Clear list** action only when there is a queue.
+
+### A folder of recordings
+
+- [ ] Drop a folder onto the window. Every recording in it is queued, including
+      those in its subfolders, and the summary says how many and from how many
+      folders.
+- [ ] **Add a folder…** does the same through a folder picker.
+- [ ] The summary accounts for what it left out: notes, photographs and other
+      non-media files as "ignored", and a subfolder it could not read.
+- [ ] A folder with no recordings in it says so plainly rather than appearing to
+      do nothing.
+- [ ] Put a video and a WAV of the same name in one folder (which is what a
+      previous run leaves behind when *Convert video to WAV* is on). Only the
+      video is queued; the summary and the Status tab both say the WAV was left
+      out, and choosing that WAV directly still queues it.
+- [ ] Nothing counts twice: drop a folder, then drop one of the files inside it.
+- [ ] Run a folder of three or four short recordings end to end. The progress
+      line reads "2 of 4 — <name>", each transcript appears as it finishes, and
+      every file's output is written.
+- [ ] **A recording that cannot be transcribed:** put a file with a media
+      extension but rubbish content (rename a .txt to .wav) in the middle of a
+      folder and run it. The run does **not** stop there — the others are still
+      transcribed — and the end-of-run banner is amber, says how many of how
+      many succeeded, names the one that failed and why, and the Status tab
+      comes to the front with the detail.
+- [ ] With a single file (not a batch), a failure still stops and reports as it
+      always did.
 - [ ] **Skip silence** (Advanced options > Audio and output) carries a note
       saying it can still cut very quiet speech and can be turned off.
 - [ ] On a recording with long gaps, the line above the transcript says what

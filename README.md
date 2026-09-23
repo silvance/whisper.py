@@ -219,10 +219,26 @@ work, so **Save project…** writes the result, your speaker names and correctio
 and the source path to a `.whispr.json` file; **Open project…** loads it back so
 you can keep editing (and re-listening) in a later session.
 
-**Batch.** Add several recordings under **Batch (optional)** (or drop multiple
-files onto the window) and **Run** transcribes them all in sequence. Each file's
-output is written to the chosen output folder, or beside the source when none is
-set; the last file stays open in the transcript for review.
+**Batch.** Drop a whole folder onto the window — or use **Add a folder…** — and
+every recording in it is queued, including the ones in its subfolders. **Add
+several files…** and dropping several files do the same for a hand-picked set.
+**Run** transcribes them in sequence; each file's output is written to the chosen
+output folder, or beside the source when none is set, and each finished
+transcript appears as it is done, so the last one is left open for review.
+
+What a folder actually holds is rarely only recordings, so the queue says what it
+took and what it passed over: the notes and photographs it ignored, any subfolder
+it could not read, and any WAV that looks like the converted copy a previous run
+made of a video of the same name (which would otherwise transcribe the same hour
+twice). Anything left out by that guess can be added back by choosing the file
+directly.
+
+A batch carries on past a recording it cannot transcribe. A folder left running
+unattended must not be lost to one unreadable file at position three, so the
+failure is recorded, the run continues, and the banner at the end says how many
+succeeded and what happened to the rest — with the detail in the Status tab. When
+a whole folder fails for one reason (a model that is not in the build, say), it
+is reported once rather than fifty times.
 
 **Remembered settings.** The Transcribe tab's choices (model, language, output
 folder, diarization and the other options) are saved on exit and restored next

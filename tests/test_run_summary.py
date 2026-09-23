@@ -12,6 +12,7 @@ import pytest
 
 from whispr.run_summary import (
     LOW_KEPT_FRACTION,
+    FailedRun,
     SkippedRun,
     completion,
     much_was_skipped,
@@ -140,4 +141,74 @@ def test_a_run_with_nothing_missing_is_unaffected():
     assert completion(2, 2, [], []) == (
         "success",
         "Transcription complete — 2 recording(s).",
+    )
+
+
+# -- Recordings that could not be transcribed ------------------------------
+#
+# A folder handed over at five o'clock runs unattended. One recording that
+# cannot be read is that recording's problem: the run carries on, and the
+# banner accounts for it afterwards rather than the operator finding an empty
+# output folder in the morning.
+
+
+def test_one_bad_recording_in_a_batch_does_not_read_as_success():
+    kind, message = completion(
+        11, 12, [], [], [FailedRun("carpark.m4a", "The file is not readable.")]
+    )
+    assert kind == "warning"
+    assert "11 of 12" in message
+    assert "carpark.m4a" in message
+    assert "The file is not readable." in message
+
+
+def test_a_partly_failed_batch_says_the_rest_was_saved():
+    """Otherwise the operator cannot tell whether any of it is worth keeping."""
+    _, message = completion(11, 12, [], [], [FailedRun("a.m4a", "Unreadable.")])
+    assert "the rest were transcribed and saved" in message
+
+
+def test_a_whole_folder_failing_for_one_reason_says_it_once():
+    """A model missing fails all fifty the same way. That is one problem."""
+    reason = "The model 'medium' isn't in this build."
+    failed = [FailedRun(f"{n}.m4a", reason) for n in range(50)]
+    kind, message = completion(0, 50, [], [], failed)
+    assert kind == "warning"
+    assert "Nothing was transcribed" in message
+    assert message.count(reason) == 1
+    assert "50 could not be transcribed" in message
+    assert "0.m4a" not in message
+
+
+def test_different_reasons_name_the_recordings():
+    failed = [FailedRun("a.m4a", "Unreadable."), FailedRun("b.m4a", "No audio track.")]
+    _, message = completion(1, 3, [], [], failed)
+    assert "a.m4a" in message and "b.m4a" in message
+
+
+def test_missing_and_failed_are_both_accounted_for():
+    kind, message = completion(
+        8, 10, [], ["gone.m4a"], [FailedRun("bad.m4a", "Unreadable.")]
+    )
+    assert kind == "warning"
+    assert "gone.m4a" in message and "bad.m4a" in message
+
+
+def test_a_failure_outranks_a_silence_caveat():
+    """Both true; not transcribing a recording is the one to lead with."""
+    _, message = completion(
+        1,
+        2,
+        [SkippedRun("first.m4a", 9.0, 0.2)],
+        [],
+        [FailedRun("b.m4a", "Unreadable.")],
+    )
+    assert "b.m4a" in message
+    assert "Skip silence" not in message
+
+
+def test_a_clean_batch_is_unaffected_by_the_new_argument():
+    assert completion(3, 3, [], [], []) == (
+        "success",
+        "Transcription complete — 3 recording(s).",
     )
