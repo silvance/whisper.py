@@ -162,6 +162,11 @@ print(result.text)
 
 ## Graphical interface (Whispers)
 
+> **Using the tool rather than building it?** [`docs/user-guide.md`](docs/user-guide.md)
+> is the guide for operators: what each page is for, in the order you would work
+> in, and what the results do and do not mean. This section is the technical
+> account of the same thing.
+
 This fork ships **Whispers**, a small desktop GUI for transcribing audio/video
 files (and translating text) without the command line. It is built for CPU-only hosts: instead of the
 PyTorch model above it uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
@@ -199,8 +204,8 @@ appear in the *Status* tab, and you can optionally write `.txt` (and `.srt`
 subtitle) output to a folder. Work runs on a background thread so the UI stays
 responsive.
 
-**Custom words.** Enter names, places, jargon or callsigns likely in the audio in
-the **Custom words** box to prime the model toward that vocabulary (Whisper's
+**Expected words.** Enter names, places, jargon or callsigns likely in the audio in
+the **Expected words** box to prime the model toward that vocabulary (Whisper's
 ``initial_prompt``) — a cheap accuracy win on domain-specific recordings where
 proper nouns are otherwise mangled.
 
@@ -249,7 +254,7 @@ launch, so you don't re-set them each time. Stored in a small per-user JSON file
 (Enter = next, Shift+Enter = previous); every hit is highlighted and the current
 one is centred.
 
-When **Convert video to WAV first (ffmpeg)** is enabled (the default), choosing a
+When **Convert video to audio first (ffmpeg)** is enabled (the default), choosing a
 video file (`.mp4`, `.mkv`, `.mov`, `.avi`, `.webm`) extracts its audio to a 16 kHz
 mono WAV with [`ffmpeg`](https://ffmpeg.org/) before transcribing. If an output
 folder is set the WAV is kept there; otherwise it is written to a temporary file
@@ -257,14 +262,22 @@ and removed afterwards. This step requires `ffmpeg` to be installed and on `PATH
 
 ### Speaker identification (diarization)
 
-Enable **Identify speakers (diarization)** to label who spoke when. Each transcript
-line (and `.srt` cue) is prefixed with a speaker tag, e.g. `[SPEAKER_00]`. Leave
-**Number of speakers** blank to auto-detect, or enter a count when you know it (the
-most reliable control). Entering a count also reveals optional **Speaker N** name
-fields, so the transcript comes out labelled with real names instead of
-`SPEAKER_00`/`SPEAKER_01`. In auto mode, **Speaker sensitivity** tunes clustering:
-higher merges more (fewer speakers), lower splits more (more speakers); it has no
-effect when a count is set or when using pyannote.
+Enable **Identify who is speaking** to label who spoke when. Each transcript
+line (and `.srt` cue) is prefixed with a speaker tag, e.g. `[SPEAKER_00]`. **How many people are speaking?** then has to be answered before a run will
+start — a specific count, or *Not sure — work it out*. A count is the most
+reliable control there is, and answering it is what stops a two-person call
+coming back as five speakers. Giving one also reveals optional **Speaker N**
+name fields, so the transcript comes out labelled with real names instead of
+`SPEAKER_00`/`SPEAKER_01`.
+
+If a split does come out wrong, **Redo speaker separation…** under the
+transcript re-splits the existing words with a different count, without
+transcribing the recording again. Speakers are renumbered, so typed names have
+to be put back.
+
+In auto mode, **Grouping sensitivity** tunes clustering: higher merges more
+(fewer speakers), lower splits more (more speakers); it has no effect when a
+count is set or when using pyannote.
 
 **Correcting speakers.** Diarization on hard or overlapping audio is never perfect,
 so the transcript is editable: click any `[speaker]` tag to **rename that speaker
@@ -276,8 +289,8 @@ for when one speaker's sentence is lumped into the middle of another's line
 assigns is arbitrary, so if two names land on the wrong voices it's a one-click
 swap.
 
-**Backends.** Two are supported, chosen with the **Engine** dropdown (default
-**Auto**):
+**Backends.** Two are supported, chosen with the **Method** dropdown under
+*Advanced options* → *Speaker separation* (default **Auto**):
 
 - **pyannote.audio** (`speaker-diarization-3.1`, PyTorch) — much better on hard /
   low-quality / overlapping audio. Loads from a bundled offline model cache at
@@ -290,7 +303,7 @@ swap.
 **Auto** uses pyannote when it's installed/bundled and otherwise falls back to
 sherpa; pick a specific engine to force it (e.g. sherpa for a quick pass on clean
 audio). A `both` bundle (see below) ships both so you can switch per recording.
-**Sensitivity** applies to sherpa only.
+**Grouping sensitivity** applies to sherpa only.
 
 The audio is normalised to 16 kHz mono with ffmpeg first. Speaker labels are
 assigned **per word** (using Whisper word timestamps): a single transcript segment
@@ -334,7 +347,7 @@ model isn't bundled the feature quietly disables itself. Profiles are small JSON
 files stored beside the app settings. One honest limit: voiceprints only sharpen
 *who-said-what* labelling — they do **not** retrain the transcription model, so
 they don't change the words Whisper decodes. For word accuracy, use a larger model
-than `base.en` (try `small.en`/`medium.en`) and the **Custom words** box.
+than `base.en` (try `small.en`/`medium.en`) and the **Expected words** box.
 
 ### Speaker profiles and Speaker Compare
 

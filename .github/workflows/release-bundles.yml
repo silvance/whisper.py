@@ -207,6 +207,13 @@ jobs:
           --commit "${{ github.sha }}"
       - name: Build bundle
         run: pyinstaller --noconfirm packaging/whispr.spec
+      # The guide has to travel with the tool. An air-gapped machine cannot be
+      # sent a link, so a bundle that ships without it leaves the operator with
+      # an executable and nothing to read. Copied in before the inventory so it
+      # is covered by `whispr --verify` like everything else that shipped.
+      - name: Include the user guide
+        shell: bash
+        run: cp docs/user-guide.md "dist/whispr/USER-GUIDE.md"
       # Record what this build shipped, so the copy that reaches an air-gapped
       # machine can be checked against it with `whispr --verify`. A bundle is
       # thousands of files carried on removable media; when one goes missing the
