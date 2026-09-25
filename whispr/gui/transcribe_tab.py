@@ -20,7 +20,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Callable, Dict, List, Optional, Tuple
 
-from .. import folder_batch, speaker_count
+from .. import folder_batch, output_names, speaker_count
 from ..acceleration import (
     DEFAULT_MODE,
     MODE_LABELS,
@@ -183,6 +183,10 @@ def _device_label(mode: str) -> str:
     return MODE_LABELS[0][1]
 
 
+class _SkipWrite(Exception):
+    """The output folder is already known to be gone; do not try to write."""
+
+
 class TranscribeTab:
     """Builds and drives the Transcribe tab inside ``parent``."""
 
@@ -282,6 +286,12 @@ class TranscribeTab:
         # past one of these: a folder left running overnight must not be lost
         # to a single unreadable file at position three.
         self._failed_files: "List[FailedRun]" = []
+        # Recordings that were transcribed but whose output could not be
+        # written. Transcribed and saved are different claims, and a run that
+        # produced nothing on disk must not report itself as finished.
+        self._failed_saves: "List[FailedRun]" = []
+        # source -> the name its output is written under, unique within the run.
+        self._output_names: "Dict[Path, str]" = {}
         # Traceability for the displayed result: source hash, models, settings.
         self._result_provenance: Optional[AnalysisProvenance] = None
 
@@ -1103,7 +1113,9 @@ class TranscribeTab:
         self._skipped_much.append(run)
         append_line(self.status, per_file_note(run))
 
-    def _completion_message(self, done: int, total: int) -> "Tuple[str, str]":
+    def _completion_message(
+        self, done: int, total: int, saved: "Optional[int]" = None
+    ) -> "Tuple[str, str]":
         """The one banner a finished run leaves behind, and its kind."""
         return completion(
             done,
@@ -1111,6 +1123,8 @@ class TranscribeTab:
             self._skipped_much,
             self._missing_files,
             self._failed_files,
+            self._failed_saves,
+            done if saved is None else saved,
         )
 
     def _describe_result(self) -> None:
@@ -1308,6 +1322,8 @@ class TranscribeTab:
         self._skipped_much = []
         self._missing_files = []
         self._failed_files = []
+        self._failed_saves = []
+        self._output_names = {}
         self._set_result_caveat("")
         try:
             self.transcript_view.set_result(None, {})
@@ -1328,6 +1344,23 @@ class TranscribeTab:
             outdir = self.output_dir_var.get() if self.write_output_var.get() else None
             total = len(jobs)
             done = 0
+            saved = 0
+            # Worked out for the whole batch before any of it runs, because
+            # whether two recordings collide is a property of the batch and not
+            # of either file. Two recordings called interview.wav from
+            # different days are two transcripts, never one written twice.
+            self._output_names = output_names.plan(jobs)
+            renamed = [
+                (src, name)
+                for src, name in self._output_names.items()
+                if name != src.name
+            ]
+            for src, name in sorted(renamed, key=lambda pair: str(pair[0])):
+                append_line(
+                    self.status,
+                    f"{src.name} shares its name with another recording in this "
+                    f"run; its output is written as {name}.",
+                )
             for index, src in enumerate(jobs, start=1):
                 if self._cancel_event.is_set():
                     raise CancelledError("Transcription cancelled.")
@@ -1354,7 +1387,9 @@ class TranscribeTab:
                     # shows its progress as real transcripts rather than a
                     # status line - and so a batch whose *last* file fails still
                     # leaves the work that succeeded in front of the operator.
-                    self._transcribe_one(src, task, save_dir, prefix, set_view=True)
+                    written = self._transcribe_one(
+                        src, task, save_dir, prefix, set_view=True
+                    )
                 except CancelledError:
                     raise
                 except Exception as exc:  # noqa: BLE001 - one file, not the run
@@ -1373,16 +1408,18 @@ class TranscribeTab:
                     append_line(self.status, traceback.format_exc())
                     continue
                 done += 1
-            if self._missing_files or self._failed_files:
+                if written is not False:
+                    saved += 1
+            if self._missing_files or self._failed_files or self._failed_saves:
                 final_status = f"Finished {done} of {total} — see Status"
             else:
                 final_status = f"Finished {done} file(s)" if total > 1 else "Finished"
-            kind, message = self._completion_message(done, total)
+            kind, message = self._completion_message(done, total, saved)
             if kind == "warning":
                 append_line(self.status, message)
             self._announce(kind, message)
             self._set_result_caveat(message if kind == "warning" else "")
-            if self._failed_files:
+            if self._failed_files or self._failed_saves:
                 # The banner says how many and why; the detail is a tab away,
                 # and an operator will not think to go looking for it.
                 self._show_status_tab()
@@ -1426,8 +1463,13 @@ class TranscribeTab:
         prefix: str,
         *,
         set_view: bool,
-    ) -> None:
+    ) -> "Optional[bool]":
         """Transcribe one file: convert, transcribe, diarize, save, show.
+
+        Returns False when the transcript could not be written to the output
+        folder. Transcribed and saved are separate claims: a run that produced
+        nothing on disk has not done what was asked of it, however well the
+        model performed.
 
         ``set_view`` loads the result into the transcript pane. ``save_dir``
         writes outputs there when set; ``prefix`` is the ``(i/n)`` batch marker
@@ -1444,7 +1486,12 @@ class TranscribeTab:
             media_is_normalized = False  # True when media_path is our 16 kHz mono WAV
             if self.convert_video_var.get() and is_video(media_path):
                 if save_dir and save_dir.is_dir():
-                    wav_dest: Optional[Path] = save_dir / (media_path.stem + ".wav")
+                    # Named like the rest of this recording's output, so two
+                    # videos called interview.mp4 do not convert over one
+                    # another before either is transcribed.
+                    wav_dest: Optional[Path] = save_dir / (
+                        output_names.converted_audio_name(self._output_base(src))
+                    )
                 else:
                     wav_dest = None  # convert to a temp file we clean up afterwards
                 media_path = convert_to_wav(
@@ -1568,7 +1615,8 @@ class TranscribeTab:
             self._note_if_much_was_skipped(result, src)
 
             if save_dir is not None:
-                self._save_outputs(result, src, save_dir, names)
+                return self._save_outputs(result, src, save_dir, names)
+            return None
         finally:
             if temp_wav is not None:
                 try:
@@ -1648,21 +1696,54 @@ class TranscribeTab:
         source: Path,
         outdir: Path,
         names: Optional[Dict[str, str]] = None,
-    ) -> None:
+    ) -> bool:
+        """Write this recording's output. False, and recorded, if it could not.
+
+        A missing output folder used to be a line in the log and nothing more,
+        so a batch whose destination had gone - an unplugged drive, a share
+        that dropped - finished green with nothing written anywhere.
+        """
+        base = self._output_base(source)
+        reason = ""
         if not outdir.is_dir():
-            append_line(self.status, f"Output folder does not exist: {outdir}")
-            return
-        names = self._speaker_names if names is None else names
-        txt_path = outdir / (source.name + ".txt")
-        txt_path.write_text(
-            result.to_txt(names, blank_lines=self.blank_lines_var.get()),
-            encoding="utf-8",
-        )
-        append_line(self.status, f"Wrote transcript to {txt_path}")
-        if self.srt_var.get():
-            srt_path = outdir / (source.name + ".srt")
-            srt_path.write_text(result.to_srt(names), encoding="utf-8")
-            append_line(self.status, f"Wrote subtitles to {srt_path}")
+            # Said plainly rather than through the general error translator:
+            # an unplugged drive is not a mystery, and dressing it up as one
+            # helps nobody standing in front of the machine.
+            reason = f"the output folder is no longer there ({outdir})"
+        try:
+            if reason:
+                raise _SkipWrite
+            names = self._speaker_names if names is None else names
+            txt_path = outdir / output_names.transcript_name(base)
+            txt_path.write_text(
+                result.to_txt(names, blank_lines=self.blank_lines_var.get()),
+                encoding="utf-8",
+            )
+            append_line(self.status, f"Wrote transcript to {txt_path}")
+            if self.srt_var.get():
+                srt_path = outdir / output_names.subtitle_name(base)
+                srt_path.write_text(result.to_srt(names), encoding="utf-8")
+                append_line(self.status, f"Wrote subtitles to {srt_path}")
+        except _SkipWrite:
+            pass
+        except OSError as exc:
+            reason = friendly_error(exc)
+        if reason:
+            self._failed_saves.append(FailedRun(source.name, reason))
+            append_line(
+                self.status,
+                f"Transcribed {source.name}, but could not write its output: {reason}",
+            )
+            return False
+        return True
+
+    def _output_base(self, source: Path) -> str:
+        """The name this recording's output is written under.
+
+        Planned for the whole batch before it ran; a single file, or an edit
+        re-saved afterwards, falls back to the file's own name.
+        """
+        return self._output_names.get(source, output_names.clean(source.name))
 
     def _save_outputs_if_possible(self) -> None:
         """Re-save after a transcript edit, when an output folder is in use."""

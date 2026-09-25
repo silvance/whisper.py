@@ -55,6 +55,8 @@ def completion(
     skipped: "Sequence[SkippedRun]",
     missing: "Sequence[str]" = (),
     failed: "Sequence[FailedRun]" = (),
+    unsaved: "Sequence[FailedRun]" = (),
+    saved: "Optional[int]" = None,
 ) -> "Tuple[str, str]":
     """The banner a finished run leaves behind: its kind, and its words.
 
@@ -67,8 +69,8 @@ def completion(
     outranks transcribing one badly: a caveat about the silence filter can wait
     for the run where every recording actually ran.
     """
-    if failed or missing:
-        return _shortfall(done, total, missing, failed)
+    if failed or missing or unsaved:
+        return _shortfall(done, total, missing, failed, unsaved, saved)
     if not skipped:
         message = (
             f"Transcription complete — {done} recording(s)."
@@ -99,6 +101,8 @@ def _shortfall(
     total: int,
     missing: "Sequence[str]",
     failed: "Sequence[FailedRun]",
+    unsaved: "Sequence[FailedRun]" = (),
+    saved: "Optional[int]" = None,
 ) -> "Tuple[str, str]":
     """The banner for a run that did not get through everything it was given."""
     reasons: List[str] = []
@@ -111,14 +115,49 @@ def _shortfall(
         )
     if failed:
         reasons.append(_why_failed(failed))
+    if unsaved:
+        reasons.append(_why_unsaved(unsaved))
     detail = "; ".join(reasons)
+    written = done if saved is None else saved
     if done == 0:
+        # Not transcribing anything is the stronger fact, and the one to lead
+        # with; nothing was saved either, but that is a consequence of it.
         return "warning", f"Nothing was transcribed — {detail}."
-    return (
-        "warning",
-        f"Transcribed {done} of {total} recordings — {detail}. The Status tab "
-        "lists them; the rest were transcribed and saved.",
+    if written == 0:
+        # Transcribing and writing none of it is not a partial success: there
+        # is nothing to go and look at afterwards.
+        return "warning", f"Nothing was saved — {detail}."
+    tally = f"Transcribed {done} of {total} recordings"
+    if unsaved:
+        tally = f"Transcribed {done} of {total} recordings and saved {written}"
+    # Only claim the remainder is safely on disk when it is. With failed saves
+    # in the same run that sentence would be contradicting the one before it.
+    closing = (
+        "The Status tab lists them."
+        if unsaved
+        else "The Status tab lists them; the rest were transcribed and saved."
     )
+    return "warning", f"{tally} — {detail}. {closing}"
+
+
+def _why_unsaved(unsaved: "Sequence[FailedRun]") -> str:
+    """One phrase for output that could not be written.
+
+    Kept apart from a transcription failure because the remedy is different:
+    the recording was fine and the destination was not, so the work is not
+    lost, it is just not where it was asked to go.
+    """
+    names = ", ".join(run.name for run in unsaved)
+    reasons = {run.reason for run in unsaved}
+    if len(reasons) == 1:
+        only = next(iter(reasons))
+        if len(unsaved) == 1:
+            return f"the output for {names} could not be written ({only})"
+        return (
+            f"the output for {len(unsaved)} could not be written — "
+            f"all for the same reason: {only}"
+        )
+    return f"the output for {len(unsaved)} could not be written ({names})"
 
 
 def _why_failed(failed: "Sequence[FailedRun]") -> str:
