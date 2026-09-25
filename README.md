@@ -231,6 +231,19 @@ several files…** and dropping several files do the same for a hand-picked set.
 output folder, or beside the source when none is set, and each finished
 transcript appears as it is done, so the last one is left open for review.
 
+Output names are worked out for the whole batch before it starts, because
+whether two recordings collide is a property of the batch rather than of either
+file. A recording whose name is unique keeps it; where two would collide — a
+case folder holding `2026-09-01/interview.wav` and `2026-09-02/interview.wav` —
+each takes as much of its folder path as it needs to be distinct, and the
+Status tab says so. Nothing in a run can overwrite another recording's output.
+
+Transcribed and saved are reported separately. A destination that goes away
+mid-run — an unplugged drive, a share that drops — is a failure of that
+recording's output and not of the transcription, so the banner reads
+"Transcribed 47 of 47 recordings and saved 46" rather than claiming a clean
+finish over an empty folder.
+
 What a folder actually holds is rarely only recordings, so the queue says what it
 took and what it passed over: the notes and photographs it ignored, any subfolder
 it could not read, and any WAV that looks like the converted copy a previous run

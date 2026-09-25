@@ -212,3 +212,71 @@ def test_a_clean_batch_is_unaffected_by_the_new_argument():
         "success",
         "Transcription complete — 3 recording(s).",
     )
+
+
+# -- Output that could not be written --------------------------------------
+#
+# Transcribed and saved are different claims. A batch whose destination went
+# away - an unplugged drive, a share that dropped - used to log a line and
+# finish green, so an operator came back to a folder with nothing in it and a
+# banner saying the run had completed.
+
+
+def test_a_recording_that_could_not_be_written_is_not_a_clean_finish():
+    kind, message = completion(
+        4, 4, [], [], [], [FailedRun("carpark.m4a", "The drive is not there.")], 3
+    )
+    assert kind == "warning"
+    assert "saved 3" in message
+    assert "carpark.m4a" in message
+    assert "The drive is not there." in message
+
+
+def test_transcribing_everything_and_saving_nothing_says_so():
+    """The whole point: a green banner over an empty output folder."""
+    unsaved = [
+        FailedRun(f"{n}.wav", "The output folder is not there.") for n in range(6)
+    ]
+    kind, message = completion(6, 6, [], [], [], unsaved, 0)
+    assert kind == "warning"
+    assert "Nothing was saved" in message
+    assert "complete" not in message.lower()
+
+
+def test_one_reason_for_every_failed_save_is_stated_once():
+    unsaved = [
+        FailedRun(f"{n}.wav", "The output folder is not there.") for n in range(40)
+    ]
+    _, message = completion(40, 40, [], [], [], unsaved, 0)
+    assert message.count("The output folder is not there.") == 1
+    assert "40" in message
+
+
+def test_not_transcribing_anything_outranks_not_saving_it():
+    """Both are true when nothing ran; the first explains the second."""
+    _, message = completion(
+        0, 2, [], ["a.wav"], [FailedRun("b.wav", "Unreadable.")], [], 0
+    )
+    assert "Nothing was transcribed" in message
+    assert "Nothing was saved" not in message
+
+
+def test_a_save_failure_and_a_transcription_failure_are_told_apart():
+    kind, message = completion(
+        3,
+        4,
+        [],
+        [],
+        [FailedRun("bad.wav", "Unreadable.")],
+        [FailedRun("ok.wav", "Disk full.")],
+        2,
+    )
+    assert "could not be transcribed" in message
+    assert "could not be written" in message
+
+
+def test_a_run_that_saved_everything_is_unaffected():
+    assert completion(3, 3, [], [], [], [], 3) == (
+        "success",
+        "Transcription complete — 3 recording(s).",
+    )

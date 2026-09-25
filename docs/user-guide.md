@@ -4,9 +4,15 @@ Whispers turns recordings into text you can read, search and quote, works out
 who was speaking, and measures how similar a voice is to someone you already
 have a reference for.
 
-It runs entirely on the machine in front of you. Nothing is uploaded, nothing
-is sent anywhere, and it does not need — or use — a network connection. The
-models it uses are inside the bundle.
+Analysis happens entirely on the machine in front of you. Nothing is uploaded,
+no recording or transcript leaves the machine, and no cloud service is involved
+at any point — the models are inside the bundle, so no internet connection is
+needed or used for any of the work described here.
+
+The one exception is deliberate and operator-driven: the **Live** page connects
+to a stream you point it at, because that is what listening to a stream means.
+Nothing is sent out; it reads what you asked it to read. Every other page is
+entirely local.
 
 This guide is for the person using the tool. It assumes no technical
 background and follows the order you would actually work in.
@@ -70,11 +76,11 @@ includes:
 | **Speaker Profiles** | Building a reference voice for someone you know. |
 | **Compare Speakers** | Measuring a voice against one of those references. |
 | **Comparison History** | Every comparison this copy has run. |
-| **Live** | Transcribing an incoming stream as it happens. |
+| **Live** | Transcribing an incoming stream as it happens — the one page that uses the network. |
 | **Translate** | Translating text, and pulling text out of images and PDFs. |
 
-The green **Local processing** marker in the header is there to be pointed at:
-it means what it says.
+The green **Local processing** marker in the header means the analysis is done
+here: the models run on this machine and nothing is sent anywhere.
 
 ---
 
@@ -95,8 +101,13 @@ Everything most people need is in the **Options** card:
   each choice means and names the model behind it: *Fast — base.en*,
   *Balanced — small.en*, *More thorough — medium.en*, *Thorough and quick —
   turbo*, *Most thorough, slowest — large-v3*. Slower means better on hard
-  audio, and the difference on a poor phone line is large. Start at *Fast* for
-  English and step up when the result is not good enough.
+  audio, and the difference on a poor phone line is large.
+
+  **Leave it on the default** — *More thorough — medium* — unless you have a
+  reason. That default is a deliberate choice: the recordings this tool is
+  used on are mostly poor, and medium earns its extra time on them. Drop to
+  *Fast* when the audio is clean and you want the run over quickly, and step
+  up when medium is not getting it.
 
   The `.en` models are English only. Non-English audio needs one of the plain
   names (`small`, `medium`, `large-v3`, `turbo`). A note under the box says
@@ -271,10 +282,21 @@ hour again. If one of those is genuinely a separate recording, add it with
 written to the output folder, or beside the source if you have not set one,
 and each transcript appears as it finishes.
 
+**Two recordings with the same name do not overwrite each other.** A case
+folder often holds `2026-09-01/interview.wav` and `2026-09-02/interview.wav`;
+their transcripts are written as `2026-09-01 - interview.wav.txt` and
+`2026-09-02 - interview.wav.txt`, and the Status tab says it has done this.
+Recordings whose names are already unique keep them.
+
 **A recording it cannot read does not stop the run.** The failure is recorded,
 the rest are transcribed, and the banner at the end says how many of how many
 succeeded and what happened to the others. The detail is in the Status tab.
 This matters when you leave a folder running overnight.
+
+**Transcribed and saved are counted separately.** If the output folder goes
+away part-way through — a drive unplugged, a network share dropped — the
+banner says so ("Transcribed 47 of 47 recordings and saved 46") instead of
+reporting a clean finish over a folder with nothing in it.
 
 ---
 
@@ -392,9 +414,15 @@ later be read as cleaner than it was.
 against smoothness: shorter is more live but choppier. The transcript can be
 saved to a file as it goes.
 
+This is the one page that uses the network, and only where you tell it to: it
+reads the **Stream URL** you give it, or waits for an incoming connection when
+you ask this PC to host. Nothing is sent out, and the transcription itself
+still happens here. On a machine that is meant to stay isolated, this is the
+page to leave alone.
+
 **Translate** translates pasted text, and can pull text out of an image or PDF
 first (**Choose an image or PDF**) when the build includes OCR. The result can
-be saved as a Word document. Like everything else here, it is offline.
+be saved as a Word document. It is entirely local.
 
 ---
 

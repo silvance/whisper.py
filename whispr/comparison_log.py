@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 
+from .buildinfo import UNKNOWN as UNKNOWN_BUILD
 from .settings import settings_path
 from .speaker_profiles import ProfileError, SpeakerProfile, write_json_atomic
 
@@ -38,7 +39,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 PathLike = Union[str, Path]
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 RECORD_SUFFIX = ".whispr-comparison.json"
 
 # The two things that get logged.
@@ -161,6 +162,13 @@ class ComparisonRecord:
     # turned on: a record read later has to be readable against its own rules.
     thresholds: Dict[str, float] = field(default_factory=dict)
     app_version: str = ""
+    # Which build decided this. The package version is inherited from upstream
+    # Whisper and is the same string across every Whispers release, so on its
+    # own it cannot tell one operational build from another. The build id and
+    # commit can, and they are what a later question - "which build produced
+    # this score?" - actually needs answering with.
+    build_id: str = ""
+    git_commit: str = ""
     warnings: List[str] = field(default_factory=list)
     schema_version: int = SCHEMA_VERSION
 
@@ -211,6 +219,8 @@ class ComparisonRecord:
             "embedding_model": self.embedding_model,
             "thresholds": dict(self.thresholds),
             "app_version": self.app_version,
+            "build_id": self.build_id,
+            "git_commit": self.git_commit,
             "warnings": list(self.warnings),
         }
 
@@ -261,6 +271,10 @@ class ComparisonRecord:
             embedding_model=str(data.get("embedding_model") or ""),
             thresholds=_thresholds(data.get("thresholds")),
             app_version=str(data.get("app_version") or ""),
+            # Absent from schema 1 records, which is the honest answer for
+            # them: the build was not recorded, so it is not known now.
+            build_id=str(data.get("build_id") or ""),
+            git_commit=str(data.get("git_commit") or ""),
             warnings=[str(w) for w in warnings] if isinstance(warnings, list) else [],
         )
 
@@ -268,14 +282,24 @@ class ComparisonRecord:
 # -- Building a record from a result ---------------------------------------
 
 
-def _app_version() -> str:
-    """Which build decided this. Best-effort: never fail a record over it."""
+def _identity() -> "Tuple[str, str, str]":
+    """``(application version, build id, git commit)`` for this copy.
+
+    Best-effort: a record is worth keeping even when the build cannot say what
+    it is, and an empty string is the truthful answer in that case. Nothing
+    here invents an identity it does not have.
+    """
     try:
         from .buildinfo import build_info
 
-        return build_info().application_version
+        info = build_info()
+        return (
+            info.application_version,
+            "" if info.build_id == UNKNOWN_BUILD else info.build_id,
+            "" if info.git_commit == UNKNOWN_BUILD else info.git_commit,
+        )
     except Exception:  # noqa: BLE001 - provenance is nice to have, not required
-        return ""
+        return "", "", ""
 
 
 def record_from_comparison(
@@ -320,7 +344,9 @@ def record_from_comparison(
         runner_up_name=result.runner_up_name or "",
         embedding_model=result.embedding_model,
         thresholds=result.thresholds.to_dict(),
-        app_version=_app_version(),
+        app_version=_identity()[0],
+        build_id=_identity()[1],
+        git_commit=_identity()[2],
         warnings=list(result.warnings),
     )
 
@@ -379,7 +405,9 @@ def record_from_gallery(
         ),
         embedding_model=embedding_model,
         thresholds=result.thresholds.to_dict(),
-        app_version=_app_version(),
+        app_version=_identity()[0],
+        build_id=_identity()[1],
+        git_commit=_identity()[2],
         warnings=warnings,
     )
 
@@ -500,6 +528,8 @@ def export_csv(records: Sequence[ComparisonRecord], path: PathLike) -> Path:
         "subjects_searched",
         "embedding_model",
         "app_version",
+        "build_id",
+        "git_commit",
         "warnings",
     ]
     out = Path(path)
@@ -534,6 +564,8 @@ def export_csv(records: Sequence[ComparisonRecord], path: PathLike) -> Path:
                     record.subjects_searched,
                     record.embedding_model,
                     record.app_version,
+                    record.build_id,
+                    record.git_commit,
                     " | ".join(record.warnings),
                 ]
             )

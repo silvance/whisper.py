@@ -303,3 +303,72 @@ def test_round_trip_through_dict_keeps_the_ranking():
     restored = ComparisonRecord.from_dict(record.to_dict())
     assert restored.ranked[0].display_name == "A. Subject"
     assert restored.ranked[0].score == pytest.approx(0.5)
+
+
+# -- Which build produced this score ---------------------------------------
+#
+# The history recorded app_version, which is inherited from upstream Whisper
+# and reads the same on every Whispers release. So every entry claimed the
+# same application version and none of them named the build that actually ran.
+
+
+def test_a_new_record_carries_the_build_that_made_it(monkeypatch):
+    from whispr import buildinfo, comparison_log
+
+    monkeypatch.setattr(
+        comparison_log,
+        "_identity",
+        lambda: ("1.2.3", "4242-1", "abc1234"),
+    )
+    record = comparison_log.ComparisonRecord(
+        app_version="1.2.3", build_id="4242-1", git_commit="abc1234"
+    )
+    assert record.build_id == "4242-1"
+    assert record.git_commit == "abc1234"
+    assert buildinfo.UNKNOWN == "unknown"
+
+
+def test_the_build_survives_a_round_trip_through_json():
+    from whispr.comparison_log import ComparisonRecord
+
+    record = ComparisonRecord(build_id="4242-1", git_commit="abc1234")
+    back = ComparisonRecord.from_dict(record.to_dict())
+    assert (back.build_id, back.git_commit) == ("4242-1", "abc1234")
+
+
+def test_a_record_written_before_this_change_still_loads():
+    """Schema 1 entries never recorded a build; empty is the truthful answer."""
+    from whispr.comparison_log import ComparisonRecord
+
+    old = ComparisonRecord(app_version="1.2.3").to_dict()
+    del old["build_id"], old["git_commit"]
+    old["schema_version"] = 1
+    back = ComparisonRecord.from_dict(old)
+    assert back.build_id == "" and back.git_commit == ""
+    assert back.app_version == "1.2.3"
+
+
+def test_an_unidentified_build_records_nothing_rather_than_unknown(monkeypatch):
+    """ "unknown" in a provenance field reads as a value; blank reads as absent."""
+    from whispr import comparison_log
+
+    app, build_id, commit = comparison_log._identity()
+    assert build_id in ("", None) or build_id != "unknown"
+    assert commit in ("", None) or commit != "unknown"
+
+
+def test_the_exported_csv_names_the_build():
+    import csv
+    import tempfile
+    from pathlib import Path
+
+    from whispr.comparison_log import ComparisonRecord, export_csv
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = export_csv(
+            [ComparisonRecord(build_id="4242-1", git_commit="abc1234")],
+            Path(tmp) / "history.csv",
+        )
+        rows = list(csv.reader(out.read_text(encoding="utf-8").splitlines()))
+    assert "build_id" in rows[0] and "git_commit" in rows[0]
+    assert "4242-1" in rows[1] and "abc1234" in rows[1]
