@@ -20,7 +20,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Callable, Dict, List, Optional, Tuple
 
-from .. import folder_batch, output_names, speaker_count
+from .. import enhance, folder_batch, output_names, speaker_count
 from ..acceleration import (
     DEFAULT_MODE,
     MODE_LABELS,
@@ -230,6 +230,9 @@ class TranscribeTab:
         self.task_var = tk.StringVar(value="transcribe")
         self.language_var = tk.StringVar(value="Auto")
         self.vad_var = tk.BooleanVar(value=True)
+        # Off by default, and only offered where the model is bundled. What it
+        # is for, and the case it is not for, is in whispr/enhance.py.
+        self.denoise_var = tk.BooleanVar(value=False)
         # Compute device for transcription. CPU is the supported
         # baseline; a GPU only makes the same work finish sooner.
         self.device_var = tk.StringVar(value=_device_label(DEFAULT_MODE))
@@ -554,6 +557,30 @@ class TranscribeTab:
             wraplength=560,
             justify="left",
         ).pack(anchor="w", pady=(0, SPACE_XS))
+        if enhance.available():
+            ttk.Checkbutton(
+                audio.body,
+                text="Reduce steady background noise",
+                variable=self.denoise_var,
+                style=Style.CHECK,
+            ).pack(anchor="w", pady=(SPACE_XS, 0))
+            ttk.Label(
+                audio.body,
+                text=f"{enhance.HELPS_WITH} {enhance.DOES_NOT}",
+                style=Style.META,
+                wraplength=560,
+                justify="left",
+            ).pack(anchor="w", pady=(0, SPACE_XS))
+            ttk.Label(
+                audio.body,
+                text=(
+                    "The recording itself is never changed — a cleaned copy is "
+                    f"written beside the output. {enhance.NOT_FOR_COMPARISON}"
+                ),
+                style=Style.META,
+                wraplength=560,
+                justify="left",
+            ).pack(anchor="w", pady=(0, SPACE_XS))
         ttk.Checkbutton(
             audio.body,
             text="Convert video to audio first (ffmpeg)",
@@ -1476,6 +1503,8 @@ class TranscribeTab:
         for status lines.
         """
         temp_wav: Optional[Path] = None
+        temp_clean: Optional[Path] = None
+        enhancement: "Optional[enhance.EnhancementReport]" = None
         try:
             language = self.language_var.get().strip()
             language_arg = None if language in ("", "Auto") else language
@@ -1503,6 +1532,38 @@ class TranscribeTab:
                 if wav_dest is None:
                     temp_wav = media_path
                 append_line(self.status, f"Converted to {media_path}")
+
+            # Noise reduction, when it was asked for. The recording itself is
+            # never touched: this works on a normalised copy and writes another
+            # one, and what the run then transcribes is that copy - recorded in
+            # the provenance so a transcript always says which audio produced it.
+            if self.denoise_var.get() and enhance.available():
+                if not media_is_normalized:
+                    media_path = convert_to_wav(
+                        media_path,
+                        None,
+                        progress=lambda msg: append_line(self.status, msg),
+                    )
+                    media_is_normalized = True
+                    temp_wav = media_path
+                if save_dir is not None and save_dir.is_dir():
+                    clean_dest: Optional[Path] = save_dir / (
+                        self._output_base(src) + enhance.SUFFIX
+                    )
+                else:
+                    # Nowhere was asked for, so nothing is kept; the cleaned
+                    # audio still drives the run, it just is not left behind.
+                    clean_dest = None
+                report = enhance.denoise(
+                    media_path,
+                    clean_dest,
+                    progress=lambda msg: append_line(self.status, msg),
+                )
+                cleaned = Path(report.output)
+                if clean_dest is None:
+                    temp_clean = cleaned
+                media_path = cleaned
+                enhancement = report
 
             # Resolve a bundled model name to its local directory so we never
             # try to download on an air-gapped machine.
@@ -1572,6 +1633,10 @@ class TranscribeTab:
                     detected_language=result.language,
                     vad=self.vad_var.get(),
                     initial_prompt=self.vocab_var.get().strip(),
+                    denoised=enhancement is not None,
+                    denoiser_sha256=(
+                        enhancement.model_sha256 if enhancement is not None else ""
+                    ),
                 ),
             )
 
@@ -1618,9 +1683,11 @@ class TranscribeTab:
                 return self._save_outputs(result, src, save_dir, names)
             return None
         finally:
-            if temp_wav is not None:
+            for scratch in (temp_wav, temp_clean):
+                if scratch is None:
+                    continue
                 try:
-                    temp_wav.unlink()
+                    scratch.unlink()
                 except OSError:
                     pass
 

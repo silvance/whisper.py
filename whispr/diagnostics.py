@@ -120,6 +120,17 @@ def gather() -> List[Check]:
         )
     )
     checks.append(_pyannote_cache_check())
+    denoiser = resources.bundled_denoiser_model()
+    checks.append(
+        Check(
+            "Noise reduction model",
+            denoiser is not None,
+            # Not a failure when absent: a build without it simply cannot offer
+            # the option. Named rather than silent so an operator who expected
+            # it knows which build they have.
+            "bundled" if denoiser else "not bundled (the option is hidden)",
+        )
+    )
     sherpa = _installed("sherpa_onnx")
     checks.append(
         Check(

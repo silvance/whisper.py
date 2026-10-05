@@ -214,6 +214,19 @@ def bundled_embedding_model() -> Optional[Path]:
     return None
 
 
+def bundled_denoiser_model() -> Optional[Path]:
+    """Return the bundled noise-reduction model, if this build ships one.
+
+    Optional, like every other model here: a build without it simply cannot
+    offer the option, and says so rather than reaching for the network.
+    """
+    for base in asset_dirs():
+        model = base / "enhancement" / "denoiser.onnx"
+        if model.is_file():
+            return model
+    return None
+
+
 def bundled_embedding_model_name() -> Optional[str]:
     """Name of the bundled speaker-embedding model, if recorded at build time.
 

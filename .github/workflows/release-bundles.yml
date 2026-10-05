@@ -183,6 +183,8 @@ jobs:
         run: python packaging/fetch_assets.py models ${{ github.event.inputs.models || 'base.en,medium' }}
       - name: Fetch speaker embedding model (voiceprints + comparison)
         run: python packaging/fetch_assets.py embedding ${{ env.EMBEDDING }}
+      - name: Fetch noise-reduction model
+        run: python packaging/fetch_assets.py enhancement
       - name: Fetch diarization segmentation model (sherpa-onnx)
         if: env.DIARIZER != 'pyannote'
         run: python packaging/fetch_assets.py segmentation

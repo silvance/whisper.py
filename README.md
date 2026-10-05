@@ -209,6 +209,33 @@ the **Expected words** box to prime the model toward that vocabulary (Whisper's
 ``initial_prompt``) — a cheap accuracy win on domain-specific recordings where
 proper nouns are otherwise mangled.
 
+**Noise reduction.** *Advanced options → Audio and output* offers **Reduce
+steady background noise** where the build includes the model (a ~0.5 MB GTCRN
+denoiser, run on CPU through the sherpa-onnx already present). It earns its
+place on a bad line, hum, hiss, traffic, an engine or machinery.
+
+It is **not** a voice separator, and it is worth being blunt about the case
+people ask for. Measured against clean speech with noise mixed in at a known
+level, it moved the speech-to-noise margin by +21.5 dB on mains hum at -5 dB
+in, and +10.8 dB on broadband hiss at 0 dB in — but **-1.7 dB on crowd babble
+at 0 dB in, and -5.0 dB at -5 dB**. Where the background is other people
+talking it does nothing useful and can make the recording worse, because the
+interference is itself speech and a model trained to keep speech has no basis
+for preferring one voice over another. Those figures come from synthetic
+mixtures, which is a proxy; the number to believe is the one from your own
+recordings.
+
+The recording is never altered. Cleaning works on a normalised copy and writes
+another, named `<recording>.cleaned.wav` beside the output, and the run
+transcribes that copy — recorded in the analysis provenance (`denoised`, plus
+the model's SHA-256) so a transcript can always say which audio produced it.
+
+Cleaned audio is kept out of **Speaker Profiles** and **Compare Speakers**:
+noise reduction alters exactly the spectral detail a voiceprint measures, so a
+profile built from original audio and a questioned sample that has been cleaned
+are not measuring the same thing. Both pages recognise the `.cleaned.wav`
+naming and say so rather than scoring it.
+
 **Confidence highlighting.** Tick **Highlight low-confidence words** to colour the
 parts the model was unsure about (per-word when available, otherwise per
 segment), so an analyst can jump straight to what needs verifying on low-quality

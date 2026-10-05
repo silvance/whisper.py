@@ -19,6 +19,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Callable, List, Optional, Sequence, Tuple
 
+from .. import enhance
 from ..enrollment import (
     enroll_from_wav,
     parse_time_ranges,
@@ -523,6 +524,15 @@ class SpeakerProfilesTab:
             parent=active_window(self.root),
         )
         if not path:
+            return
+        if enhance.looks_cleaned(path):
+            # A reference voice is the thing every later comparison is measured
+            # against; building one from cleaned audio quietly biases all of it.
+            self._status(
+                "That is a cleaned copy, not the recording. A reference voice "
+                "must be built from original audio — noise reduction changes "
+                "the detail a voiceprint measures."
+            )
             return
         choice = self._ask_mode()
         if choice is None:

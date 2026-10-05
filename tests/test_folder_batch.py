@@ -200,3 +200,23 @@ def test_a_long_queue_names_the_first_few_and_counts_the_rest(tmp_path):
 def test_nothing_dropped_at_all_says_nothing(tmp_path):
     """An empty queue on a fresh page has no story to tell."""
     assert describe(Found()) == ""
+
+
+def test_a_cleaned_copy_is_not_queued_as_a_recording(tmp_path):
+    """Noise reduction writes its copy beside the recording; a later folder run
+    must not transcribe that copy as though it were a separate recording."""
+    from whispr import enhance
+
+    make(tmp_path, "carpark.m4a", "carpark.m4a" + enhance.SUFFIX)
+    found = expand([tmp_path])
+    assert names(found) == ["carpark.m4a"]
+    assert found.converted == ["carpark.m4a" + enhance.SUFFIX]
+
+
+def test_a_cleaned_copy_chosen_directly_is_still_honoured(tmp_path):
+    """The operator who points at one knows what it is."""
+    from whispr import enhance
+
+    name = "carpark.m4a" + enhance.SUFFIX
+    make(tmp_path, name)
+    assert names(expand([tmp_path / name])) == [name]
