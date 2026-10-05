@@ -123,7 +123,7 @@ you need it. What is in there:
 
 | Card | Holds |
 | --- | --- |
-| **Audio and output** | Skip silence, low-confidence highlighting, `.srt` subtitles, video conversion |
+| **Audio and output** | Skip silence, noise reduction, low-confidence highlighting, `.srt` subtitles, video conversion |
 | **Language and vocabulary** | **Task** (*transcribe* keeps the language, *translate* produces English) and **Expected words** |
 | **Speaker separation** | Method and grouping sensitivity — used only when *Identify who is speaking* is on |
 | **Processing hardware** | CPU or GPU. *Auto* is right unless you are testing something |
@@ -150,6 +150,36 @@ throughout, and **Cancel** stops the run.
   second screen at full size while the settings stay where they are. **Put it
   back on this page** returns it.
 - **Hide settings** gives the transcript the whole page.
+
+### Reducing background noise
+
+If this build includes it, *Advanced options → Audio and output* has **Reduce
+steady background noise**. It is off by default.
+
+**What it is for:** a bad phone line, mains hum, hiss, traffic, an engine, air
+conditioning, machinery — noise that is steady and is not speech.
+
+**What it is not for, and this is the important part:** it does **not** separate
+one conversation from another. In a bar, a restaurant or any crowd, the
+background is other people talking, and on that it does nothing useful and can
+make the recording *worse*. It will not rescue speech you cannot already hear —
+these models redistribute what is in the recording, they do not add anything
+that was never captured.
+
+When you use it:
+
+- The recording itself is never changed. A cleaned copy is written beside the
+  output as `<recording>.cleaned.wav`, and the transcript comes from that copy.
+- The analysis report records that the audio was cleaned, and which model did
+  it, so a transcript can always say what produced it.
+- **Listen to both.** The tool will not tell you it improved anything, because
+  without knowing what was said there is no honest way for it to know. It tells
+  you how much of the recording it removed and leaves the judgement to you.
+- **Do not use a cleaned copy for voice comparison or for building a reference
+  profile.** Cleaning alters the fine detail a voiceprint measures, so a score
+  from it is not comparable with a profile built from original audio. Speaker
+  Profiles and Compare Speakers both refuse a file named `.cleaned.wav` and say
+  why.
 
 ### About Skip silence
 

@@ -90,6 +90,11 @@ class TranscriptionProvenance:
     vad: bool = True
     beam_size: int = 5
     initial_prompt: str = ""
+    # Whether the words came from a cleaned copy rather than the recording, and
+    # which model cleaned it. A transcript has to be able to say this: cleaning
+    # changes the audio the model heard.
+    denoised: bool = False
+    denoiser_sha256: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -102,6 +107,8 @@ class TranscriptionProvenance:
             "vad": self.vad,
             "beam_size": self.beam_size,
             "initial_prompt": self.initial_prompt,
+            "denoised": self.denoised,
+            "denoiser_sha256": self.denoiser_sha256,
         }
 
     @classmethod
@@ -118,6 +125,8 @@ class TranscriptionProvenance:
             vad=bool(data.get("vad", True)),
             beam_size=int(data.get("beam_size") or 5),
             initial_prompt=str(data.get("initial_prompt") or ""),
+            denoised=bool(data.get("denoised") or False),
+            denoiser_sha256=str(data.get("denoiser_sha256") or ""),
         )
 
 

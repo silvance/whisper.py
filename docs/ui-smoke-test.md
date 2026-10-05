@@ -131,6 +131,27 @@ which can be a different file on each run.
 - [ ] Turning **Skip silence** off transcribes the whole recording and the
       "% listened to" note disappears.
 
+### Reducing background noise
+
+Only present when the build bundles the model; **System status** says which.
+
+- [ ] *Advanced options → Audio and output* shows **Reduce steady background
+      noise**, off by default, with text saying what it is for *and* that it
+      does not separate conversations and can make a crowded recording worse.
+- [ ] On a build without the model the option is absent entirely — not greyed
+      out, not failing when pressed.
+- [ ] Run a recording with it on and an output folder set. A
+      `<recording>.cleaned.wav` appears beside the transcript, the original is
+      untouched, and the Status tab says how much was removed.
+- [ ] The status line does **not** claim the recording improved — only what was
+      removed, and a warning about crowd noise.
+- [ ] **Analysis report…** records that the audio was cleaned.
+- [ ] Take that `.cleaned.wav` to **Compare Speakers** and choose it as the
+      questioned recording: it says it is a cleaned copy and that a score from
+      it is not comparable. The same on **Speaker Profiles → Add a recording**.
+- [ ] Listen to both files on a genuinely noisy recording and judge for
+      yourself whether it helped. On a crowded one, expect it not to.
+
 ### How many people are speaking
 
 - [ ] With **Identify who is speaking** ticked, the question sits directly under

@@ -395,6 +395,29 @@ def fetch_segmentation() -> None:
     print(f"diarization segmentation -> {segmentation_dest}")
 
 
+# The noise-reduction model (GTCRN, ~0.5 MB). Small enough that bundling it is
+# not a decision; what it is good for - and emphatically not good for - is
+# written down in whispr/enhance.py.
+DENOISER_URL = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+    "speech-enhancement-models/gtcrn_simple.onnx"
+)
+
+
+def fetch_enhancement() -> None:
+    """Download the noise-reduction model into whispr_assets/enhancement."""
+    out = ASSETS / "enhancement"
+    out.mkdir(parents=True, exist_ok=True)
+    dest = out / "denoiser.onnx"
+    print(f"downloading denoiser from {DENOISER_URL}")
+    urllib.request.urlretrieve(DENOISER_URL, dest)
+    # A plain URL serves whatever is there today; the digest is what makes
+    # "the same model" checkable on a later build.
+    _verify_or_pin_file(DENOISER_URL, dest)
+    save_lock()
+    print(f"noise reduction -> {dest} ({dest.stat().st_size / 1e6:.2f} MB)")
+
+
 def fetch_diarization(embedding: str = DEFAULT_EMBEDDING) -> None:
     """Download both sherpa-onnx diarization models (segmentation + embedding)."""
     fetch_embedding(embedding)
@@ -579,8 +602,8 @@ def main(argv: List[str]) -> None:
     if not argv:
         raise SystemExit(
             "usage: fetch_assets.py [ffmpeg | models <names> | embedding <model> | "
-            "segmentation | diarization <embedding> | pyannote | argos <codes> | "
-            "tesseract <codes>]"
+            "segmentation | diarization <embedding> | pyannote | enhancement | "
+            "argos <codes> | tesseract <codes>]"
         )
     command = argv[0]
     if command == "ffmpeg":
@@ -598,6 +621,8 @@ def main(argv: List[str]) -> None:
         fetch_diarization(embedding or DEFAULT_EMBEDDING)
     elif command == "pyannote":
         fetch_pyannote()
+    elif command == "enhancement":
+        fetch_enhancement()
     elif command == "argos":
         codes = argv[1].split(",") if len(argv) > 1 else ARGOS_DEFAULT_LANGS
         fetch_argos([c.strip() for c in codes if c.strip()])
