@@ -160,8 +160,11 @@ def available() -> bool:
 
 
 def _denoiser(threads: int = 2) -> Any:
-    import sherpa_onnx
-
+    # Both of these are checked before anything is imported for real work,
+    # because both are answered the same way - rebuild the bundle - and an
+    # operator on an air-gapped machine needs to be told that in words. The
+    # import used to come first, so a build without the library answered the
+    # question with a ModuleNotFoundError traceback instead.
     model = model_path()
     if model is None:
         raise EnhancementError(
@@ -169,6 +172,14 @@ def _denoiser(threads: int = 2) -> Any:
             "cannot be cleaned. Nothing on this machine will add it; the "
             "bundle has to be rebuilt with it included."
         )
+    try:
+        import sherpa_onnx
+    except ImportError as exc:
+        raise EnhancementError(
+            "This build does not include the library that runs noise "
+            "reduction, so audio cannot be cleaned. Nothing on this machine "
+            "will add it; the bundle has to be rebuilt with it included."
+        ) from exc
     return sherpa_onnx.OfflineSpeechDenoiser(
         sherpa_onnx.OfflineSpeechDenoiserConfig(
             model=sherpa_onnx.OfflineSpeechDenoiserModelConfig(
