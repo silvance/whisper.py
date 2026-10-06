@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Sequence, Set
 
-from . import enhance
+from . import listening
 from .transcription import AUDIO_EXTENSIONS, VIDEO_EXTENSIONS
 
 # Files that are not recordings and never worth mentioning as "ignored" - the
@@ -92,10 +92,11 @@ def _walk(folder: Path, found: Found, seen: Set[Path], *, recursive: bool) -> No
             path = here / name
             if name.lower() in LITTER or name.startswith("."):
                 continue
-            if enhance.looks_cleaned(path):
-                # A copy this application wrote by cleaning a recording in this
-                # same folder. Queueing it would transcribe the same hour again
-                # and, worse, under a name that hides which audio it came from.
+            if listening.derived_kind(path) is not None:
+                # A copy this application wrote from a recording in this same
+                # folder, by cleaning it or by preparing it for listening.
+                # Queueing it would transcribe the same hour again and, worse,
+                # under a name that hides which audio it came from.
                 found.converted.append(name)
                 continue
             if not is_media(path):

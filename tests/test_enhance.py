@@ -112,6 +112,24 @@ def test_asking_anyway_fails_with_something_an_operator_can_act_on(monkeypatch):
     assert "download" not in message.lower() and "internet" not in message.lower()
 
 
+def test_a_build_without_the_library_also_says_something_act_on_able(monkeypatch):
+    """The other half of "asking anyway", and the half that used to traceback.
+
+    A bundle can be missing the library rather than the model, and before this
+    the import ran before the model check, so that build answered with a
+    ModuleNotFoundError instead of telling the operator to rebuild.
+    """
+    monkeypatch.setattr(
+        enhance.resources, "bundled_denoiser_model", lambda: Path("denoiser.onnx")
+    )
+    monkeypatch.setitem(__import__("sys").modules, "sherpa_onnx", None)
+    with pytest.raises(enhance.EnhancementError) as caught:
+        enhance._denoiser()
+    message = str(caught.value)
+    assert "rebuilt" in message
+    assert "download" not in message.lower() and "internet" not in message.lower()
+
+
 def test_a_recording_that_is_not_there_says_so(tmp_path):
     with pytest.raises(enhance.EnhancementError):
         enhance.denoise(tmp_path / "missing.wav")
