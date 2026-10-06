@@ -2353,9 +2353,7 @@ class TranscribeTab:
 
         def _worker() -> None:
             try:
-                self._player.play_segment(
-                    source, start, end, settings=settings
-                )
+                self._player.play_segment(source, start, end, settings=settings)
                 self.progress_label_var.set(
                     f"Playing {self._clock(start)}–{self._clock(end)}"
                     f"{' (filtered)' if filtered else ''}…"

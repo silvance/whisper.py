@@ -107,15 +107,15 @@ NO_HUM = "Off"
 
 # --- Fixed filter geometry. Changing these changes what the tool does, so they
 # --- are named and in one place rather than buried in the arithmetic.
-_HIGHPASS_HZ = 85.0        # below a low male voice; rumble lives under it
-_HIGHPASS_ORDER = 4        # 24 dB/octave
-_MUD_HZ = 350.0            # room boom, which masks the consonant band
+_HIGHPASS_HZ = 85.0  # below a low male voice; rumble lives under it
+_HIGHPASS_ORDER = 4  # 24 dB/octave
+_MUD_HZ = 350.0  # room boom, which masks the consonant band
 _MUD_DB = -3.0
 _MUD_Q = 1.1
-_PRESENCE_HZ = 2600.0      # where consonants are, and intelligibility with them
+_PRESENCE_HZ = 2600.0  # where consonants are, and intelligibility with them
 _PRESENCE_DB = 5.0
 _PRESENCE_Q = 1.3
-_HISS_HZ = 7000.0          # speech is essentially complete below this
+_HISS_HZ = 7000.0  # speech is essentially complete below this
 _HISS_DB_PER_OCTAVE = -9.0
 
 # Hum notches. Depth is limited on purpose: a notch to zero rings audibly
@@ -146,8 +146,8 @@ _TARGET_DBFS = -20.0
 # on a covert recording whose target talker sits at -49 dBFS that gate did
 # nothing at all - it refused to help in exactly the case the tool is for.
 _GATE_ABOVE_FLOOR_DB = 6.0
-_FLOOR_PERCENTILE = 10.0   # frames this quiet are taken to be the noise floor
-_SILENCE_DBFS = -70.0      # and below this there is nothing to lift
+_FLOOR_PERCENTILE = 10.0  # frames this quiet are taken to be the noise floor
+_SILENCE_DBFS = -70.0  # and below this there is nothing to lift
 _RATIO = 3.0
 _MAX_LIFT_DB = 24.0
 _MAX_CUT_DB = -12.0
@@ -358,8 +358,7 @@ def _dbfs(value: float) -> float:
     return 20.0 * math.log10(max(float(value), 1e-12))
 
 
-def response_db(freqs: Any, scale: float = 1.0,
-                notches: Sequence[float] = ()) -> Any:
+def response_db(freqs: Any, scale: float = 1.0, notches: Sequence[float] = ()) -> Any:
     """The speech-focus magnitude response, in dB, on the given frequencies.
 
     Public because it is the honest description of this tool: anyone wondering
@@ -373,8 +372,8 @@ def response_db(freqs: Any, scale: float = 1.0,
     # High-pass: rumble, HVAC, handling, wind. Not scaled by strength - there
     # is nothing below 85 Hz that helps anyone understand speech.
     ratio = f / _HIGHPASS_HZ
-    power = ratio ** _HIGHPASS_ORDER
-    db += 20.0 * np.log10(power / np.sqrt(1.0 + power ** 2))
+    power = ratio**_HIGHPASS_ORDER
+    db += 20.0 * np.log10(power / np.sqrt(1.0 + power**2))
 
     def bell(centre: float, gain_db: float, q: float) -> Any:
         return gain_db * np.exp(-((np.log2(f / centre) * q) ** 2) * 2.0)
@@ -427,11 +426,11 @@ def _convolve(samples: Any, kernel: Any) -> Any:
     out = np.zeros(len(samples) + taps - 1, dtype="float32")
     spectrum = np.fft.rfft(kernel, block)
     for start in range(0, len(samples), step):
-        chunk = samples[start:start + step]
+        chunk = samples[start : start + step]
         segment = np.fft.irfft(np.fft.rfft(chunk, block) * spectrum, block)
         room = len(out) - start
-        out[start:start + len(segment)] += segment[:room]
-    return out[lag:lag + len(samples)]
+        out[start : start + len(segment)] += segment[:room]
+    return out[lag : lag + len(samples)]
 
 
 def _window_spectra(samples: Any, rate: int, windows: int = 48) -> "tuple[Any, Any]":
@@ -454,7 +453,7 @@ def _window_spectra(samples: Any, rate: int, windows: int = 48) -> "tuple[Any, A
     window = np.hanning(size)
     stack = np.empty((len(starts), size // 2 + 1), dtype="float64")
     for index, start in enumerate(starts):
-        block = samples[start:start + size].astype("float64") * window
+        block = samples[start : start + size].astype("float64") * window
         stack[index] = np.abs(np.fft.rfft(block)) ** 2
     return np.fft.rfftfreq(size, 1.0 / rate), stack
 
@@ -508,8 +507,7 @@ def detect_hum(samples: Any, rate: int) -> "tuple[float, int]":
             # enough leaks a steady line into the 60 Hz bin, and on a count
             # both candidates then look equally good.
             strength += prominence
-        if (has_fundamental and found >= _HUM_MIN_HARMONICS
-                and strength > best[2]):
+        if has_fundamental and found >= _HUM_MIN_HARMONICS and strength > best[2]:
             best = (mains, found, strength)
     return best[0], best[1]
 
@@ -590,8 +588,7 @@ def _level(samples: Any, rate: int, scale: float) -> Any:
     db = 20.0 * np.log10(np.maximum(rms, 1e-9))
     gate = _gate_dbfs(db)
     reduction = 1.0 - 1.0 / max(_RATIO, 1.0001)
-    want = np.clip((_TARGET_DBFS - db) * reduction * scale,
-                   _MAX_CUT_DB, _MAX_LIFT_DB)
+    want = np.clip((_TARGET_DBFS - db) * reduction * scale, _MAX_CUT_DB, _MAX_LIFT_DB)
     # Below the gate the gain holds where it was instead of dropping to zero.
     # Driving it to zero in the gaps looks right and is badly wrong: speech is
     # modulated at a syllable rate, so the gain collapsed several times a
@@ -655,9 +652,7 @@ def _measure_spans(length: int, rate: int) -> "tuple[List[int], int]":
     # top of each other. Replaying one line is a few seconds of audio, and 200
     # overlapping spans would measure sixty times the clip to level it.
     count = max(1, min(_MEASURE_SPANS, length // span))
-    starts = np.unique(
-        np.linspace(0, length - span, num=count).astype(int)
-    )
+    starts = np.unique(np.linspace(0, length - span, num=count).astype(int))
     return [int(start) for start in starts], span
 
 
@@ -672,8 +667,7 @@ def _band_kernel(rate: int) -> Any:
     return (impulse * np.hanning(_BAND_TAPS)).astype("float32")
 
 
-def _speech_frame_db(samples: Any, rate: int, starts: Sequence[int],
-                     span: int) -> Any:
+def _speech_frame_db(samples: Any, rate: int, starts: Sequence[int], span: int) -> Any:
     """Frame levels in the speech band, in dB, over the sampled spans.
 
     In the speech band because the question is how loud the *speech* is.
@@ -688,10 +682,10 @@ def _speech_frame_db(samples: Any, rate: int, starts: Sequence[int],
     skirt = _BAND_TAPS
     levels: List[Any] = []
     for start in starts:
-        chunk = np.asarray(samples[start:start + span], dtype="float32")
+        chunk = np.asarray(samples[start : start + span], dtype="float32")
         if len(chunk) < skirt * 2 + hop:
             continue
-        inner = _convolve(chunk, kernel)[skirt:len(chunk) - skirt]
+        inner = _convolve(chunk, kernel)[skirt : len(chunk) - skirt]
         usable = len(inner) - len(inner) % hop
         if usable < hop:
             continue
@@ -780,8 +774,9 @@ def polish(
             f"{channels} channels were mixed to one before processing."
         )
     if progress is not None:
-        progress(f"Preparing a listening copy of {src.name} "
-                 f"({report.seconds / 60:.1f} min)…")
+        progress(
+            f"Preparing a listening copy of {src.name} ({report.seconds / 60:.1f} min)…"
+        )
 
     notches: List[float] = []
     if config.hum == AUTO_HUM:
@@ -814,7 +809,8 @@ def polish(
     processed = _limit(processed, rate)
 
     report.quiet_dbfs_after = _quiet_dbfs(
-        _speech_frame_db(processed, rate, starts, span), voiced)
+        _speech_frame_db(processed, rate, starts, span), voiced
+    )
     report.peak_dbfs_after = _dbfs(float(np.abs(processed).max()))
 
     _write_wav(out, processed, rate)

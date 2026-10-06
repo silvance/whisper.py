@@ -29,6 +29,7 @@ RATE = 16000
 
 # --- Signals with known answers ---------------------------------------------
 
+
 def speechlike(seconds, f0=120.0, amp=1.0, rate=RATE, seed=7):
     """A voiced-speech-shaped signal: harmonics under a formant envelope."""
     rng = np.random.default_rng(seed)
@@ -39,17 +40,20 @@ def speechlike(seconds, f0=120.0, amp=1.0, rate=RATE, seed=7):
         f = f0 * k
         if f > rate * 0.47:
             break
-        env = sum(math.exp(-((f - c) / bw) ** 2) for c, bw in
-                  ((500, 180), (1500, 250), (2500, 300)))
-        sig += env * np.sin(2 * np.pi * f * t + rng.uniform(0, 6.28)) / k ** 0.3
+        env = sum(
+            math.exp(-(((f - c) / bw) ** 2))
+            for c, bw in ((500, 180), (1500, 250), (2500, 300))
+        )
+        sig += env * np.sin(2 * np.pi * f * t + rng.uniform(0, 6.28)) / k**0.3
     sig *= 0.5 + 0.5 * np.maximum(0, np.sin(2 * np.pi * 4.0 * t))
     return amp * sig / (np.abs(sig).max() + 1e-9)
 
 
 def hum(seconds, mains=50.0, amp=0.08, rate=RATE, harmonics=3):
     t = np.arange(int(seconds * rate)) / rate
-    return amp * sum(np.sin(2 * np.pi * mains * k * t) / k
-                     for k in range(1, harmonics + 1))
+    return amp * sum(
+        np.sin(2 * np.pi * mains * k * t) / k for k in range(1, harmonics + 1)
+    )
 
 
 def write_wav(path, samples, rate=RATE):
@@ -78,6 +82,7 @@ def band_db(x, lo, hi, rate=RATE):
 
 # --- The response is the one the module documents ----------------------------
 
+
 def test_the_filter_cuts_rumble_and_lifts_the_consonant_band():
     freqs = np.fft.rfftfreq(8192, 1.0 / RATE)
     db = listening.response_db(freqs)
@@ -95,10 +100,12 @@ def test_the_filter_cuts_rumble_and_lifts_the_consonant_band():
 
 def test_strength_scales_the_shaping_but_never_the_high_pass():
     freqs = np.array([40.0, 2600.0])
-    gentle = listening.response_db(freqs, listening.ListeningSettings(
-        strength=listening.GENTLE).scale)
-    strong = listening.response_db(freqs, listening.ListeningSettings(
-        strength=listening.STRONG).scale)
+    gentle = listening.response_db(
+        freqs, listening.ListeningSettings(strength=listening.GENTLE).scale
+    )
+    strong = listening.response_db(
+        freqs, listening.ListeningSettings(strength=listening.STRONG).scale
+    )
     assert strong[1] > gentle[1], "Strong lifts presence further"
     assert gentle[0] == pytest.approx(strong[0], abs=0.01), (
         "nothing below 85 Hz helps anyone understand speech, at any strength"
@@ -106,6 +113,7 @@ def test_strength_scales_the_shaping_but_never_the_high_pass():
 
 
 # --- Load-bearing property: the audio must not move -------------------------
+
 
 def test_the_output_is_sample_aligned_with_the_input():
     """A shifted output silently breaks every transcript timestamp."""
@@ -126,10 +134,11 @@ def test_a_whole_file_keeps_its_length_and_its_timing(tmp_path):
     """
     samples = speechlike(4.0, amp=0.05)
     marker = RATE * 2
-    samples[marker:marker + 400] += 0.6 * np.exp(-np.arange(400) / 80.0)
+    samples[marker : marker + 400] += 0.6 * np.exp(-np.arange(400) / 80.0)
     src = write_wav(tmp_path / "a.wav", samples)
-    report = listening.polish(src, tmp_path / "out.wav",
-                              settings=listening.ListeningSettings(level=False))
+    report = listening.polish(
+        src, tmp_path / "out.wav", settings=listening.ListeningSettings(level=False)
+    )
     out, rate = read_wav(report.output)
     assert rate == RATE
     assert len(out) == len(samples)
@@ -138,6 +147,7 @@ def test_a_whole_file_keeps_its_length_and_its_timing(tmp_path):
 
 
 # --- Load-bearing property: it cannot invent signal -------------------------
+
 
 def test_silence_in_gives_silence_out(tmp_path):
     src = write_wav(tmp_path / "quiet.wav", np.zeros(RATE * 2))
@@ -149,16 +159,17 @@ def test_silence_in_gives_silence_out(tmp_path):
 def test_processing_does_not_reach_beyond_where_there_was_sound(tmp_path):
     """A burst in the middle must not grow speech into the silence around it."""
     samples = np.zeros(RATE * 3)
-    samples[RATE:RATE * 2] = speechlike(1.0, amp=0.5)
+    samples[RATE : RATE * 2] = speechlike(1.0, amp=0.5)
     src = write_wav(tmp_path / "burst.wav", samples)
     out, _ = read_wav(listening.polish(src, tmp_path / "o.wav").output)
     # Allow the filter kernel's quarter-second skirt, and nothing more.
     skirt = RATE // 2
-    assert float(np.abs(out[:RATE - skirt]).max()) < 0.02
-    assert float(np.abs(out[RATE * 2 + skirt:]).max()) < 0.02
+    assert float(np.abs(out[: RATE - skirt]).max()) < 0.02
+    assert float(np.abs(out[RATE * 2 + skirt :]).max()) < 0.02
 
 
 # --- Load-bearing property: babble is untouched, and provably --------------
+
 
 def test_it_cannot_change_the_ratio_between_one_talker_and_others():
     """The claim in the module docstring, as a test.
@@ -168,12 +179,15 @@ def test_it_cannot_change_the_ratio_between_one_talker_and_others():
     recording, this fails - which is the point.
     """
     target = speechlike(5.0, f0=115, amp=0.06, seed=1)
-    others = sum(speechlike(5.0, f0=f, amp=0.05, seed=i)
-                 for i, f in enumerate((98.0, 142.0, 171.0, 205.0, 231.0)))
+    others = sum(
+        speechlike(5.0, f0=f, amp=0.05, seed=i)
+        for i, f in enumerate((98.0, 142.0, 171.0, 205.0, 231.0))
+    )
     kernel = listening._kernel(RATE, 1.0, [])
     before = band_db(target, 300, 3400) - band_db(others, 300, 3400)
-    after = (band_db(listening._convolve(target, kernel), 300, 3400)
-             - band_db(listening._convolve(others, kernel), 300, 3400))
+    after = band_db(listening._convolve(target, kernel), 300, 3400) - band_db(
+        listening._convolve(others, kernel), 300, 3400
+    )
     assert abs(after - before) < 0.2, (
         "filtering cannot separate one conversation from another"
     )
@@ -189,8 +203,18 @@ def test_the_report_cannot_grow_a_claim_that_it_helped():
     """The lesson of the denoiser's level-margin figure, held shut here too."""
     report = listening.ListeningReport()
     fields = set(report.to_dict())
-    for word in ("improve", "improved", "improvement", "clarity", "clearer",
-                 "intelligibility", "quality", "score", "better", "snr"):
+    for word in (
+        "improve",
+        "improved",
+        "improvement",
+        "clarity",
+        "clearer",
+        "intelligibility",
+        "quality",
+        "score",
+        "better",
+        "snr",
+    ):
         assert not any(word in name for name in fields), (
             f"{word!r} appeared in the report: it would be claiming an outcome "
             "this processing cannot measure"
@@ -198,6 +222,7 @@ def test_the_report_cannot_grow_a_claim_that_it_helped():
 
 
 # --- Hum removal -----------------------------------------------------------
+
 
 def test_mains_hum_is_found_and_told_apart_from_the_other_candidate():
     speech = speechlike(6.0, amp=0.05)
@@ -233,28 +258,37 @@ def test_hum_is_measurably_removed(tmp_path):
     assert report.hum_harmonics >= 2
     before, _ = read_wav(src)
     after, _ = read_wav(report.output)
+
     # Relative to the speech band, because the leveller deliberately raises
     # the whole recording and absolute band levels would hide that.
     def relative(x):
         return band_db(x, 40, 160) - band_db(x, 300, 3400)
+
     assert relative(after) < relative(before) - 20.0
 
 
 def test_hum_removal_can_be_turned_off_and_forced(tmp_path):
     src = write_wav(tmp_path / "h.wav", speechlike(6.0, amp=0.05) + hum(6.0, 50.0))
-    off = listening.polish(src, tmp_path / "off.wav",
-                           settings=listening.ListeningSettings(hum=listening.NO_HUM))
+    off = listening.polish(
+        src,
+        tmp_path / "off.wav",
+        settings=listening.ListeningSettings(hum=listening.NO_HUM),
+    )
     assert off.hum_harmonics == 0
-    forced = listening.polish(src, tmp_path / "f.wav",
-                              settings=listening.ListeningSettings(hum=60.0))
+    forced = listening.polish(
+        src, tmp_path / "f.wav", settings=listening.ListeningSettings(hum=60.0)
+    )
     assert forced.hum_hz == 60.0
 
 
 def test_a_nonsense_mains_frequency_is_refused_in_plain_words(tmp_path):
     src = write_wav(tmp_path / "h.wav", speechlike(1.0, amp=0.1))
     with pytest.raises(listening.ListeningError) as caught:
-        listening.polish(src, tmp_path / "o.wav",
-                         settings=listening.ListeningSettings(hum="sometimes"))
+        listening.polish(
+            src,
+            tmp_path / "o.wav",
+            settings=listening.ListeningSettings(hum="sometimes"),
+        )
     assert "mains frequency" in str(caught.value)
 
 
@@ -279,17 +313,23 @@ def test_the_lift_is_measured_on_the_speech_and_not_on_the_hum(tmp_path):
 def test_taking_the_hum_out_is_what_lets_the_leveller_work(tmp_path):
     """The knock-on effect, as a number: the hum was using up the headroom."""
     rng = np.random.default_rng(7)
-    noisy = (speechlike(6.0, amp=0.03) + hum(6.0, 50.0)
-             + 0.004 * rng.standard_normal(RATE * 6))
+    noisy = (
+        speechlike(6.0, amp=0.03)
+        + hum(6.0, 50.0)
+        + 0.004 * rng.standard_normal(RATE * 6)
+    )
     src = write_wav(tmp_path / "h.wav", noisy)
     notched = listening.polish(src, tmp_path / "a.wav")
     left_in = listening.polish(
-        src, tmp_path / "b.wav",
-        settings=listening.ListeningSettings(hum=listening.NO_HUM))
+        src,
+        tmp_path / "b.wav",
+        settings=listening.ListeningSettings(hum=listening.NO_HUM),
+    )
     assert notched.quiet_lift_db > left_in.quiet_lift_db + 5.0
 
 
 # --- The leveller ----------------------------------------------------------
+
 
 def test_a_quiet_talker_comes_up_and_a_bang_comes_down(tmp_path):
     quiet = speechlike(4.0, amp=0.02)
@@ -309,8 +349,8 @@ def test_a_quiet_talker_comes_up_and_a_bang_comes_down(tmp_path):
 def test_the_leveller_can_be_turned_off(tmp_path):
     src = write_wav(tmp_path / "a.wav", speechlike(3.0, amp=0.02))
     report = listening.polish(
-        src, tmp_path / "o.wav",
-        settings=listening.ListeningSettings(level=False))
+        src, tmp_path / "o.wav", settings=listening.ListeningSettings(level=False)
+    )
     assert report.levelled is False
     assert abs(report.quiet_lift_db) < 3.0
 
@@ -349,7 +389,7 @@ def test_the_chain_works_in_single_precision():
 
 
 def test_a_long_recording_is_processed_without_falling_over(tmp_path):
-    speech = np.tile(speechlike(5.0, amp=0.1), 24)   # two minutes
+    speech = np.tile(speechlike(5.0, amp=0.1), 24)  # two minutes
     src = write_wav(tmp_path / "long.wav", speech)
     report = listening.polish(src, tmp_path / "o.wav")
     out, _ = read_wav(report.output)
@@ -370,8 +410,7 @@ def test_a_short_clip_is_not_measured_sixty_times_over():
 def test_a_playback_length_segment_is_processed_promptly(tmp_path):
     """The shape SegmentPlayer hands it: a few seconds of 22 kHz mono."""
     rate = 22050
-    signal = (speechlike(3.0, amp=0.04, rate=rate)
-              + hum(3.0, 50.0, rate=rate))
+    signal = speechlike(3.0, amp=0.04, rate=rate) + hum(3.0, 50.0, rate=rate)
     src = write_wav(tmp_path / "span.wav", signal, rate=rate)
     report = listening.polish(src, tmp_path / "o.wav")
     assert report.hum_hz == 50.0, "hum must still be found in a short span"
@@ -382,6 +421,7 @@ def test_a_playback_length_segment_is_processed_promptly(tmp_path):
 
 
 # --- Naming, guards and the report ----------------------------------------
+
 
 def test_a_listening_copy_is_named_so_it_can_be_recognised(tmp_path):
     out = listening.listening_path(tmp_path / "carpark.m4a")
