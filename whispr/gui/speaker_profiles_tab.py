@@ -19,7 +19,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Callable, List, Optional, Sequence, Tuple
 
-from .. import enhance
+from .. import listening
 from ..enrollment import (
     enroll_from_wav,
     parse_time_ranges,
@@ -525,13 +525,15 @@ class SpeakerProfilesTab:
         )
         if not path:
             return
-        if enhance.looks_cleaned(path):
+        kind = listening.derived_kind(path)
+        if kind is not None:
             # A reference voice is the thing every later comparison is measured
-            # against; building one from cleaned audio quietly biases all of it.
+            # against; building one from processed audio quietly biases all of
+            # it, whichever kind of processing produced the file.
             self._status(
-                "That is a cleaned copy, not the recording. A reference voice "
-                "must be built from original audio — noise reduction changes "
-                "the detail a voiceprint measures."
+                f"That is a {kind}, not the recording. A reference voice must "
+                "be built from original audio — processing changes the detail "
+                "a voiceprint measures."
             )
             return
         choice = self._ask_mode()

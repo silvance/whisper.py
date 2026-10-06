@@ -25,7 +25,7 @@ from tkinter import filedialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Any, Callable, List, Optional, Tuple
 
-from .. import enhance
+from .. import listening
 from ..comparison_log import (
     ProfileError as _LogError,
 )
@@ -451,20 +451,23 @@ class SpeakerCompareTab:
             self._warn_if_cleaned(path)
 
     def _warn_if_cleaned(self, path: str) -> None:
-        """Say so when the chosen file is one this application cleaned.
+        """Say so when the chosen file is one this application derived.
 
-        Cleaning alters exactly the spectral detail a voiceprint measures, so a
+        Both kinds of processing alter exactly the spectral detail a voiceprint
+        measures - noise reduction by removing what it takes for noise, a
+        listening copy by deliberately changing the balance of the voice - so a
         profile built from a recording and a questioned sample that has been
-        cleaned are not measuring the same thing. The embedding-model check
-        already refuses that class of mismatch; this one cannot refuse, because
-        the only evidence is a file name - so it says why, clearly, and leaves
-        the judgement with the operator.
+        through either are not measuring the same thing. The embedding-model
+        check already refuses that class of mismatch; this one cannot refuse,
+        because the only evidence is a file name - so it says why, clearly, and
+        leaves the judgement with the operator.
         """
-        if not enhance.looks_cleaned(path):
+        kind = listening.derived_kind(path)
+        if kind is None:
             return
         self._status(
-            "That is a cleaned copy, not the recording. Noise reduction changes "
-            "the detail a voice comparison measures, so a score from it is not "
+            f"That is a {kind}, not the recording. Processing changes the "
+            "detail a voice comparison measures, so a score from it is not "
             "comparable with a profile built from original audio. Use the "
             "recording itself."
         )

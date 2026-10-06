@@ -16,6 +16,7 @@ from pathlib import Path
 from shutil import which
 from typing import List, Optional, Union
 
+from . import listening
 from .resources import find_ffmpeg
 
 PathLike = Union[str, Path]
@@ -55,11 +56,25 @@ class SegmentPlayer:
     """Plays one segment at a time, replacing any currently-playing audio."""
 
     def __init__(self) -> None:
-        self._temp: Optional[Path] = None
+        self._temp: List[Path] = []
         self._proc: Optional[subprocess.Popen] = None
 
-    def play_segment(self, source: PathLike, start: float, end: float) -> None:
-        """Extract ``[start, end]`` from ``source`` and play it (async)."""
+    def play_segment(
+        self,
+        source: PathLike,
+        start: float,
+        end: float,
+        *,
+        settings: "Optional[listening.ListeningSettings]" = None,
+    ) -> None:
+        """Extract ``[start, end]`` from ``source`` and play it (async).
+
+        With ``settings``, the extracted span is put through the listening
+        filters before it is played: hum out, rumble out, the consonant band
+        up, and a quiet talker brought to a level you can hear. The recording
+        is untouched - this only affects what comes out of the speakers, which
+        is the point of being able to turn it off and hear the span again raw.
+        """
         ffmpeg = find_ffmpeg()
         if ffmpeg is None:
             raise PlaybackError("ffmpeg was not found, so audio can't be played.")
@@ -98,7 +113,20 @@ class SegmentPlayer:
             raise PlaybackError(
                 result.stderr.strip() or "ffmpeg failed to extract the audio segment."
             )
-        self._temp = out
+        self._temp.append(out)
+        if settings is not None:
+            handle, polished = tempfile.mkstemp(suffix=listening.SUFFIX)
+            os.close(handle)
+            try:
+                listening.polish(out, polished, settings=settings)
+            except listening.ListeningError as exc:
+                try:
+                    Path(polished).unlink()
+                except OSError:
+                    pass
+                raise PlaybackError(str(exc)) from exc
+            out = Path(polished)
+            self._temp.append(out)
         self._start_playback(out)
 
     def _start_playback(self, wav: Path) -> None:
@@ -137,9 +165,9 @@ class SegmentPlayer:
             except Exception:  # noqa: BLE001 - best-effort stop
                 pass
             self._proc = None
-        if self._temp is not None:
+        for temp in self._temp:
             try:
-                self._temp.unlink()
+                temp.unlink()
             except OSError:
                 pass
-            self._temp = None
+        self._temp = []

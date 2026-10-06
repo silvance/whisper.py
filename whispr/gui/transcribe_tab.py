@@ -20,7 +20,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
 from typing import Callable, Dict, List, Optional, Tuple
 
-from .. import enhance, folder_batch, output_names, speaker_count
+from .. import enhance, folder_batch, listening, output_names, speaker_count
 from ..acceleration import (
     DEFAULT_MODE,
     MODE_LABELS,
@@ -233,6 +233,12 @@ class TranscribeTab:
         # Off by default, and only offered where the model is bundled. What it
         # is for, and the case it is not for, is in whispr/enhance.py.
         self.denoise_var = tk.BooleanVar(value=False)
+        self.listening_var = tk.BooleanVar(value=False)
+        self.listening_strength_var = tk.StringVar(value=listening.STANDARD)
+        # Whether clicking a line plays the span through the listening filters.
+        # Separate from writing a copy: most of the use for this is replaying
+        # one hard line over and over, which needs no file at all.
+        self.listening_playback_var = tk.BooleanVar(value=False)
         # Compute device for transcription. CPU is the supported
         # baseline; a GPU only makes the same work finish sooner.
         self.device_var = tk.StringVar(value=_device_label(DEFAULT_MODE))
@@ -576,6 +582,58 @@ class TranscribeTab:
                 text=(
                     "The recording itself is never changed — a cleaned copy is "
                     f"written beside the output. {enhance.NOT_FOR_COMPARISON}"
+                ),
+                style=Style.META,
+                wraplength=560,
+                justify="left",
+            ).pack(anchor="w", pady=(0, SPACE_XS))
+        ttk.Checkbutton(
+            audio.body,
+            text="Save a copy that is easier to listen to",
+            variable=self.listening_var,
+            style=Style.CHECK,
+        ).pack(anchor="w", pady=(SPACE_XS, 0))
+        ttk.Label(
+            audio.body,
+            text=f"{listening.HELPS_WITH} {listening.DOES_NOT}",
+            style=Style.META,
+            wraplength=560,
+            justify="left",
+        ).pack(anchor="w", pady=(0, SPACE_XS))
+        strength_row = ttk.Frame(audio.body)
+        strength_row.pack(anchor="w", pady=(0, SPACE_XS))
+        ttk.Label(strength_row, text="Strength:", style=Style.META).pack(side="left")
+        ttk.Combobox(
+            strength_row,
+            textvariable=self.listening_strength_var,
+            values=list(listening.STRENGTHS),
+            state="readonly",
+            width=12,
+        ).pack(side="left", padx=(SPACE_XS, 0))
+        ttk.Label(
+            audio.body,
+            text=(
+                "The recording itself is never changed — a separate listening "
+                f"copy is written beside the output. {listening.NOT_FOR_COMPARISON}"
+            ),
+            style=Style.META,
+            wraplength=560,
+            justify="left",
+        ).pack(anchor="w", pady=(0, SPACE_XS))
+        if self._playback_ok:
+            ttk.Checkbutton(
+                audio.body,
+                text="Use those filters when playing a line back",
+                variable=self.listening_playback_var,
+                style=Style.CHECK,
+            ).pack(anchor="w", pady=(SPACE_XS, 0))
+            ttk.Label(
+                audio.body,
+                text=(
+                    "Affects only what comes out of the speakers, and needs no "
+                    "saved copy. Turn it off to hear the same line raw — which "
+                    "is the only way to tell whether the filters are helping "
+                    "you or just making a different sound."
                 ),
                 style=Style.META,
                 wraplength=560,
@@ -1504,7 +1562,9 @@ class TranscribeTab:
         """
         temp_wav: Optional[Path] = None
         temp_clean: Optional[Path] = None
+        temp_listen: Optional[Path] = None
         enhancement: "Optional[enhance.EnhancementReport]" = None
+        polished: "Optional[listening.ListeningReport]" = None
         try:
             language = self.language_var.get().strip()
             language_arg = None if language in ("", "Auto") else language
@@ -1564,6 +1624,51 @@ class TranscribeTab:
                     temp_clean = cleaned
                 media_path = cleaned
                 enhancement = report
+
+            # A listening copy, when it was asked for. Unlike cleaning, this
+            # does not drive the run. The filters are tuned for a person's ears
+            # and nothing has measured what they do to recognition accuracy, so
+            # the words still come from the audio above and this is written for
+            # someone to listen to. If cleaning also ran it is applied on top
+            # of it, which is the order that sounds best; the provenance
+            # records both so the copy can be accounted for either way.
+            if self.listening_var.get():
+                if save_dir is None or not save_dir.is_dir():
+                    append_line(
+                        self.status,
+                        "No output folder, so no listening copy was written. "
+                        "Pick a folder to save one.",
+                    )
+                else:
+                    # Deliberately a separate variable: the listening copy
+                    # needs 16-bit PCM WAV, but the transcriber does not, and
+                    # swapping what it reads would change the words as a side
+                    # effect of asking for a copy to listen to.
+                    listen_src = media_path
+                    if not media_is_normalized:
+                        listen_src = convert_to_wav(
+                            media_path,
+                            None,
+                            progress=lambda msg: append_line(self.status, msg),
+                        )
+                        temp_listen = listen_src
+                    try:
+                        polished = listening.polish(
+                            listen_src,
+                            save_dir / (self._output_base(src) + listening.SUFFIX),
+                            settings=self._listening_settings(),
+                            progress=lambda msg: append_line(self.status, msg),
+                        )
+                    except (listening.ListeningError, OSError) as exc:
+                        # A listening copy is a convenience beside the
+                        # transcript, not the transcript. Losing an hour of
+                        # finished recognition because a spare WAV could not be
+                        # written would be the wrong trade every time.
+                        append_line(
+                            self.status,
+                            f"No listening copy: {friendly_error(exc)} "
+                            "The transcription itself is unaffected.",
+                        )
 
             # Resolve a bundled model name to its local directory so we never
             # try to download on an air-gapped machine.
@@ -1637,6 +1742,12 @@ class TranscribeTab:
                     denoiser_sha256=(
                         enhancement.model_sha256 if enhancement is not None else ""
                     ),
+                    listening_copy=(
+                        Path(polished.output).name if polished is not None else ""
+                    ),
+                    listening_filters=(
+                        polished.filters() if polished is not None else ""
+                    ),
                 ),
             )
 
@@ -1683,7 +1794,7 @@ class TranscribeTab:
                 return self._save_outputs(result, src, save_dir, names)
             return None
         finally:
-            for scratch in (temp_wav, temp_clean):
+            for scratch in (temp_wav, temp_clean, temp_listen):
                 if scratch is None:
                     continue
                 try:
@@ -2221,6 +2332,12 @@ class TranscribeTab:
 
     # -- Audio playback ----------------------------------------------------
 
+    def _listening_settings(self) -> "listening.ListeningSettings":
+        """The listening filters as the operator has them set."""
+        return listening.ListeningSettings(
+            strength=self.listening_strength_var.get() or listening.STANDARD
+        )
+
     def _play_segment(self, start: float, end: float) -> None:
         """Play the source audio between ``start`` and ``end`` (off the UI thread)."""
         source = self._result_source
@@ -2228,11 +2345,20 @@ class TranscribeTab:
             self.progress_label_var.set("Run a transcription first.")
             return
 
+        # Read off the Tk variables here, on the UI thread, and hand the
+        # worker plain values: the rest of this method already captures
+        # ``source`` the same way rather than reaching back into the widgets.
+        filtered = self.listening_playback_var.get()
+        settings = self._listening_settings() if filtered else None
+
         def _worker() -> None:
             try:
-                self._player.play_segment(source, start, end)
+                self._player.play_segment(
+                    source, start, end, settings=settings
+                )
                 self.progress_label_var.set(
-                    f"Playing {self._clock(start)}–{self._clock(end)}…"
+                    f"Playing {self._clock(start)}–{self._clock(end)}"
+                    f"{' (filtered)' if filtered else ''}…"
                 )
             except PlaybackError as exc:
                 self.progress_label_var.set(friendly_error(exc))

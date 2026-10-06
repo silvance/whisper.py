@@ -181,9 +181,77 @@ When you use it:
   Profiles and Compare Speakers both refuse a file named `.cleaned.wav` and say
   why.
 
+### Making a recording easier to listen to
+
+*Advanced options → Audio and output* also has **Save a copy that is easier to
+listen to**, with a **Strength** setting of Gentle, Standard or Strong. It is
+off by default, and unlike noise reduction it is in every build — it needs no
+model file.
+
+This is the one to reach for when the problem is that a recording is simply
+*hard work to listen to*. It does four things:
+
+- **Takes out mains hum.** The steady buzz from bad power, a ground loop or a
+  fluorescent fitting. It works out whether the recording has 50 Hz or 60 Hz
+  hum, removes that and its harmonics, and leaves the speech alone. This is the
+  single most effective thing in the list and it costs the speech almost
+  nothing.
+- **Takes out rumble.** Traffic, air conditioning, wind, the thump of the
+  recorder being handled or put down on a table.
+- **Lifts the consonants.** A few decibels in the band where consonants live,
+  which is what makes mumbled speech easier to make out, and a small cut where
+  room boom masks it.
+- **Evens out the volume.** This is the big one for covert recordings. If the
+  person you want is very quiet and something else in the room is very loud,
+  it brings the quiet speech up and holds the loud parts down, and stops sudden
+  bangs being painful when you are wearing headphones for an hour. On a test
+  recording with the talker at the very bottom of the range it brought the
+  quiet speech up by 16 dB and cut the gap to a loud bang from 28 dB to 10 dB.
+
+**What it is not for.** Exactly as with noise reduction: it does **not**
+separate one conversation from another. In a bar or a crowd it turns the other
+voices up by precisely as much as the one you want — this is arithmetic, not a
+limitation of the settings, and no strength setting changes it. It will not
+rescue speech you cannot already hear.
+
+**It cannot invent words.** This matters if a transcript may ever be
+questioned. There is no model in this step guessing what a muffled word
+probably was: it is a fixed filter and a volume curve, so every bit of sound
+that comes out was in the recording. The report records exactly what was
+applied — for example *"85 Hz high-pass; -3.0 dB at 350 Hz; +5.0 dB at 2.6 kHz;
+50 Hz hum and 3 harmonics notched -40 dB; 3:1 toward -20 dBFS above 6 dB over
+the noise floor"* — so it can be stated in writing rather than described
+vaguely.
+
+When you use it:
+
+- The recording itself is never changed, and neither is the transcript. A
+  separate copy is written beside the output as `<recording>.listening.wav`,
+  for you to listen to. The words still come from the original audio.
+- You need an output folder set, because the copy has to go somewhere. If
+  there isn't one, the status log says so.
+- **Do not use a listening copy for voice comparison or for building a
+  reference profile.** It deliberately changes the balance of the voice, which
+  is part of what a voiceprint measures. Speaker Profiles and Compare Speakers
+  both refuse a file named `.listening.wav` and say why, and a whole-folder run
+  skips it rather than transcribing the same hour twice.
+
+### Replaying one line through the filters
+
+If audio playback works on your machine, there is a second tick: **Use those
+filters when playing a line back**. With it on, clicking a line in the
+transcript plays that span through the same filters without writing any file.
+
+This is usually the more useful of the two. When you are stuck on one hard
+line and playing it over and over, turn it on and off and listen to the same
+span both ways. If the filtered version is easier, use it; if it just sounds
+different, you have learned that in ten seconds rather than after processing an
+hour of audio. **Being able to hear it raw is the point** — it is the only way
+to tell whether the filters are helping you or just flattering themselves.
+
 ### About Skip silence
 
-**Skip silence** (*Advanced options* → *Audio and output*) passes over silent
+**Skip silence** (*Advanced options → Audio and output*) passes over silent
 stretches so a long recording with little talking finishes sooner.
 
 On a quiet or surreptitious recording it can cut speech that is only slightly

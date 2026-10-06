@@ -95,6 +95,14 @@ class TranscriptionProvenance:
     # changes the audio the model heard.
     denoised: bool = False
     denoiser_sha256: str = ""
+    # A listening copy written from this recording, if one was. It did not
+    # produce these words - the transcript is made from the recording, or from
+    # the cleaned copy above - so this records an artefact that exists rather
+    # than a step the words went through. It is here so that a file found
+    # beside a transcript months later can be accounted for, and so the filters
+    # that made it can be read back rather than guessed at.
+    listening_copy: str = ""
+    listening_filters: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -109,6 +117,8 @@ class TranscriptionProvenance:
             "initial_prompt": self.initial_prompt,
             "denoised": self.denoised,
             "denoiser_sha256": self.denoiser_sha256,
+            "listening_copy": self.listening_copy,
+            "listening_filters": self.listening_filters,
         }
 
     @classmethod
@@ -127,6 +137,8 @@ class TranscriptionProvenance:
             initial_prompt=str(data.get("initial_prompt") or ""),
             denoised=bool(data.get("denoised") or False),
             denoiser_sha256=str(data.get("denoiser_sha256") or ""),
+            listening_copy=str(data.get("listening_copy") or ""),
+            listening_filters=str(data.get("listening_filters") or ""),
         )
 
 

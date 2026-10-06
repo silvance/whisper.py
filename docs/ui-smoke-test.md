@@ -152,6 +152,55 @@ Only present when the build bundles the model; **System status** says which.
 - [ ] Listen to both files on a genuinely noisy recording and judge for
       yourself whether it helped. On a crowded one, expect it not to.
 
+### Making a recording easier to listen to
+
+Present in every build — it needs no model file. **None of this has been seen
+rendered:** it was built in a container without tkinter, so the layout and
+wording below are from reading the code, not from looking at it. Walk it
+properly and expect to find something.
+
+- [ ] *Advanced options → Audio and output* shows **Save a copy that is easier
+      to listen to**, off by default, with a **Strength** dropdown offering
+      Gentle, Standard and Strong, and text saying what it is for *and* that it
+      does not separate conversations.
+- [ ] The dropdown sits on its own row and does not collide with the text above
+      or below it. Check this at a narrow window width too.
+- [ ] Run a recording with it on and an output folder set. A
+      `<recording>.listening.wav` appears beside the transcript, and the
+      original is byte-for-byte untouched.
+- [ ] The transcript still comes from the original audio, not from the
+      listening copy — the words should be identical to a run with the option
+      off.
+- [ ] Run it with **no** output folder set. The Status tab says no listening
+      copy was written and why, and the transcription itself still completes.
+- [ ] **Analysis report…** names the listening copy and lists the filters that
+      were applied, including the hum frequency when one was found.
+- [ ] On a recording with mains hum, the status line names the frequency it
+      found (50 or 60 Hz). On a recording without hum, it must **not** claim to
+      have found any.
+- [ ] Take that `.listening.wav` to **Compare Speakers** as the questioned
+      recording: it says it is a listening copy and that a score from it is not
+      comparable. The same on **Speaker Profiles → Add a recording**.
+- [ ] Put the `.listening.wav` in a folder and run **a whole folder**: it is
+      skipped and counted as a derived copy, not queued for transcription.
+- [ ] Listen to both files. On a recording with hum or a very quiet talker,
+      expect a real difference. On a crowded one, expect none.
+
+### Replaying a line through the filters
+
+- [ ] With playback available, *Advanced options → Audio and output* shows
+      **Use those filters when playing a line back**, off by default. On a
+      machine with no player it is absent.
+- [ ] Turn it on and click a transcript line. It plays, and the status line
+      says `(filtered)`.
+- [ ] Turn it off and click the same line. It plays raw, and the status line
+      does not say filtered. **The two must sound different**; if they do not,
+      the setting is not reaching the player.
+- [ ] Click a line, then immediately click another: the first stops and the
+      second plays. No temporary files are left behind in the system temp
+      folder after closing the application.
+- [ ] Change **Strength** and replay the same line: it should audibly change.
+
 ### How many people are speaking
 
 - [ ] With **Identify who is speaking** ticked, the question sits directly under
